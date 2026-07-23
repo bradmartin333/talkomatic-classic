@@ -5394,7 +5394,7 @@ function registerSocketHandlers() {
       safe(async (data) => {
         if (!requireStaff(socket)) return;
         audit.setAuditSub(socket, true);
-        const limit = Math.min(Number(data?.limit) || 800, 2000);
+        const limit = Math.max(1, Math.min(Number(data?.limit) || 800, 20000));
         socket.emit("audit snapshot", {
           entries: audit.recent(limit, !!socket.isDev, socket.modLevel || 2),
           me: {

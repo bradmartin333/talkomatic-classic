@@ -657,7 +657,7 @@ function createEmoteNode(emoteCode, isOverlay = false) {
   img.referrerPolicy = "no-referrer";
   img.src = emoteList[emoteCode];
   img.alt = isOverlay ? `;${emoteCode};` : `:${emoteCode}:`;
-  img.title = img.alt;
+  // img.title = img.alt;
   img.className = isOverlay ? "emote emote-overlay" : "emote";
   img.dataset.emoteCode = emoteCode;
   if (isOverlay) img.dataset.emoteOverlay = "true";
@@ -720,29 +720,28 @@ function replaceEmotes(element) {
         j++;
       }
 
-      if (stack.length > 1) {
-        const stackWrap = document.createElement("span");
-        stackWrap.className = "emote-stack";
-        stack.forEach((token, idx) => {
-          const img = createEmoteNode(token.code, token.isOverlay);
-          img.style.zIndex = String(idx + 1);
-          stackWrap.appendChild(img);
-        });
-        frag.appendChild(stackWrap);
-        changed = true;
-        lastIndex = consumedEnd;
-        i = j - 1;
-        continue;
-      }
-
-      frag.appendChild(createEmoteNode(code, false));
+      const stackWrap = document.createElement("span");
+      stackWrap.className = "emote-stack";
+      stackWrap.title = stack
+        .map((token) => (token.isOverlay ? `;${token.code};` : `:${token.code}:`))
+        .join(" ");
+      stack.forEach((token, idx) => {
+        const img = createEmoteNode(token.code, token.isOverlay);
+        img.style.zIndex = String(idx + 1);
+        stackWrap.appendChild(img);
+      });
+      frag.appendChild(stackWrap);
       changed = true;
-      lastIndex = tokenEnd;
+      lastIndex = consumedEnd;
+      i = j - 1;
       continue;
     }
 
-    // stray overlay emotes render as normal emotes unless they are attached to a normal emote on their left.
-    frag.appendChild(createEmoteNode(code, false));
+    const stackWrap = document.createElement("span");
+    stackWrap.className = "emote-stack";
+    stackWrap.title = `;${code};`;
+    stackWrap.appendChild(createEmoteNode(code, false));
+    frag.appendChild(stackWrap);
     changed = true;
     lastIndex = tokenEnd;
   }
@@ -2709,7 +2708,7 @@ function createUserRow(user, container) {
     const noteBtn = document.createElement("button");
     noteBtn.className = "staff-action-button note-action-button";
     noteBtn.innerHTML = '<i class="fas fa-sticky-note"></i>';
-    noteBtn.title = user.id === currentUserId ? "View/edit your note" : "View/edit note";
+    noteBtn.title = "View/edit note";
     noteBtn.addEventListener("click", () => {
       const note = row.dataset.note || "";
       openUserNoteDialog({ ...user, note }, { viewOnly: false });
@@ -3821,7 +3820,7 @@ function createModBadge(level) {
   const badge = document.createElement("span");
   badge.className = lvl === 1 ? "mod-badge mod-badge-jr" : "mod-badge";
   badge.textContent = lvl === 1 ? "JR MOD" : "MOD";
-  badge.title = lvl === 1 ? "Junior moderator (level 1)" : "Moderator";
+  badge.title = lvl === 1 ? "Junior Moderator (L1)" : "Moderator (L2)";
   badge.dataset.level = String(lvl);
   return badge;
 }
@@ -3836,7 +3835,7 @@ function makeStaffConcealedMarker(user) {
   if (user.isVanished) states.push("vanished");
   if (user.isHidden) states.push("hidden");
   span.dataset.state = states.join("+");
-  span.title = "Staff " + states.join(" + ") + " (visible to devs only)";
+  span.title = "Staff " + states.join(" + ");
   const icon = document.createElement("i");
   icon.className = user.isVanished ? "fas fa-ghost" : "fas fa-eye-slash";
   span.appendChild(icon);

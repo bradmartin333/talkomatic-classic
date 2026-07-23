@@ -2560,7 +2560,7 @@
   }
 
   // ── Socket wiring ──
-  socket.on("connect", () => socket.emit("staff get audit", { limit: 1500 }));
+  socket.on("connect", () => socket.emit("staff get audit", { limit: 20000 }));
 
   socket.on("audit snapshot", (data) => {
     authorized = true;
@@ -2609,7 +2609,6 @@
   socket.on("audit entry", (e) => {
     if (!e) return;
     entries.push(e);
-    if (entries.length > 5000) entries = entries.slice(-3000);
     if (
       e.type === "notification" &&
       !(tab === "activity" && feedFilter === "notification")

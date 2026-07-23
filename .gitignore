@@ -124,3 +124,5 @@ ehthumbs.db
 Thumbs.db
 	
 test.py
+test/
+scripts/

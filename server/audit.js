@@ -17,9 +17,8 @@ const { state } = require("./state");
 
 const AUDIT_PATH = path.join(__dirname, "..", "audit-log.jsonl");
 const MODLOG_PATH = path.join(__dirname, "..", "modlog.txt");
-const MAX_ENTRIES = 2000;
 
-let entries = []; // ring buffer, oldest first
+let entries = []; // append-only history, oldest first
 let seq = 0;
 // userId -> { username, location } - last known identity, to detect changes
 const lastIdentity = new Map();
@@ -54,11 +53,7 @@ function broadcast(entry) {
   }
 }
 
-// All disk writes share one chain so an append and a compaction can never
-// interleave and drop or duplicate a line.
 let writeChain = Promise.resolve();
-let appendsSinceCompact = 0;
-const COMPACT_EVERY = 500; // rewrite the file from the ring after this many appends
 
 function enqueueWrite(fn) {
   writeChain = writeChain
@@ -67,30 +62,15 @@ function enqueueWrite(fn) {
   return writeChain;
 }
 
-// Mirror one entry to disk, then periodically compact. The file is append-only,
-// but load() only ever reads back the last MAX_ENTRIES lines - everything older
-// is dead weight that still has to be read into memory at every boot. So after a
-// batch of appends we rewrite the file from the in-memory ring (already capped
-// to MAX_ENTRIES), keeping the live history and nothing more. New events push
-// old ones out; disk use and boot-time memory stay bounded with no change to
-// what the dashboard ever sees.
 function persist(entry) {
   enqueueWrite(async () => {
     await fsp.appendFile(AUDIT_PATH, JSON.stringify(entry) + "\n");
-    if (++appendsSinceCompact >= COMPACT_EVERY) {
-      appendsSinceCompact = 0;
-      const body = entries.map((e) => JSON.stringify(e)).join("\n");
-      const tmp = AUDIT_PATH + ".tmp";
-      await fsp.writeFile(tmp, body ? body + "\n" : "");
-      await fsp.rename(tmp, AUDIT_PATH);
-    }
   });
 }
 
 function push(entry) {
   entry.id = ++seq;
   entries.push(entry);
-  if (entries.length > MAX_ENTRIES) entries.shift();
   persist(entry);
   broadcast(entry);
   return entry;
@@ -236,7 +216,7 @@ function recordComment({ entryId, role, label, text, ip }) {
 }
 
 function recent(limit = 500, includeIp = true, modLevel = 2) {
-  const n = Math.min(Math.max(1, limit), MAX_ENTRIES);
+  const n = Math.max(1, Number(limit) || 500);
   const slice = entries.slice(-n);
   // Devs see everything; mods get IP-redacted entries with dev-only ones and
   // anything above their level removed.
@@ -254,7 +234,7 @@ function setAuditSub(socket, on) {
 function load() {
   try {
     const raw = fs.readFileSync(AUDIT_PATH, "utf8");
-    const lines = raw.split("\n").filter(Boolean).slice(-MAX_ENTRIES);
+    const lines = raw.split("\n").filter(Boolean);
     entries = lines
       .map((l) => {
         try {
