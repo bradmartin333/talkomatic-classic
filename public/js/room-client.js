@@ -2639,6 +2639,18 @@ function createUserRow(user, container) {
     info.appendChild(makeStaffConcealedMarker(user));
   }
 
+  if (user.avatar) {
+    const url = discordAvatarUrl(user.avatar, 32);
+    if (url) {
+      const pfp = document.createElement("img");
+      pfp.className = "user-pfp";
+      pfp.alt = "";
+      pfp.src = url;
+      pfp.onerror = () => (pfp.style.display = "none");
+      info.appendChild(pfp);
+    }
+  }
+
   const nameEl = document.createElement("span");
   nameEl.className = "ui-name";
   nameEl.textContent = `${user.username} / ${user.location}`;
@@ -3511,6 +3523,31 @@ socket.on("dev kick success", (data) => {
 
 // ── 17. INITIALIZATION ──────────────────────────────────────────────────────
 
+// Discord avatar helpers (mirror of the lobby's): the URL is only ever built
+// from a validated snowflake id + CDN hash, never taken from data directly.
+const PFP_ID_RE = /^\d{17,20}$/;
+const PFP_HASH_RE = /^(?:a_)?[a-f0-9]{32}$/i;
+
+function discordAvatarUrl(av, size) {
+  if (!av) return null;
+  const id = av.discordId || av.id;
+  if (!PFP_ID_RE.test(id || "") || !PFP_HASH_RE.test(av.hash || "")) return null;
+  return (
+    "https://cdn.discordapp.com/avatars/" + id + "/" + av.hash +
+    ".webp?size=" + (size || 64) + (av.animated ? "&animated=true" : "")
+  );
+}
+
+function storedAvatar() {
+  try {
+    if (localStorage.getItem("talkomaticPfpEnabled") !== "1") return null;
+    const c = JSON.parse(localStorage.getItem("talkomaticPfp") || "null");
+    if (c && PFP_ID_RE.test(c.discordId) && PFP_HASH_RE.test(c.hash))
+      return { discordId: c.discordId, hash: c.hash, animated: !!c.animated };
+  } catch (e) {}
+  return null;
+}
+
 function joinRoom(roomId, accessCode = null) {
   // Re-announce identity from this browser before joining. "join room" carries
   // no name and trusts the server session, but the session is in-memory: a
@@ -3543,7 +3580,11 @@ function joinRoom(roomId, accessCode = null) {
   const announceThenJoin = () => {
     socket.once("signin status", doJoin);
     setTimeout(doJoin, 1500);
-    socket.emit("join lobby", { username: uname, location: uloc });
+    socket.emit("join lobby", {
+      username: uname,
+      location: uloc,
+      avatar: storedAvatar(),
+    });
   };
 
   if (socket.connected) announceThenJoin();
@@ -3597,7 +3638,11 @@ socket.io.on("reconnect", () => {
   };
   socket.once("signin status", doJoin);
   setTimeout(doJoin, 1500);
-  socket.emit("join lobby", { username: uname, location: uloc });
+  socket.emit("join lobby", {
+    username: uname,
+    location: uloc,
+    avatar: storedAvatar(),
+  });
 });
 
 // Reads roomId from the URL and scrubs any legacy ?accessCode= parameter

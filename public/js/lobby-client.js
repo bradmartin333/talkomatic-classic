@@ -533,10 +533,73 @@ function setSignInState(username, location, shouldPersist = true) {
   }
 }
 
+// ── Discord avatar (pfp) ────────────────────────────────────────────────────
+// Only a validated snowflake id + CDN hash are stored and sent; the image URL
+// is rebuilt from those two, so no arbitrary URL can ever be injected.
+const PFP_ID_RE = /^\d{17,20}$/;
+const PFP_HASH_RE = /^(?:a_)?[a-f0-9]{32}$/i;
+
+function storedAvatar() {
+  try {
+    if (localStorage.getItem("talkomaticPfpEnabled") !== "1") return null;
+    const c = JSON.parse(localStorage.getItem("talkomaticPfp") || "null");
+    if (c && PFP_ID_RE.test(c.discordId) && PFP_HASH_RE.test(c.hash))
+      return { discordId: c.discordId, hash: c.hash, animated: !!c.animated };
+  } catch (e) {}
+  return null;
+}
+
+function avatarUrl(av, size) {
+  const id = av.discordId || av.id;
+  if (!PFP_ID_RE.test(id || "") || !PFP_HASH_RE.test(av.hash || "")) return null;
+  return (
+    "https://cdn.discordapp.com/avatars/" + id + "/" + av.hash +
+    ".webp?size=" + (size || 64) + (av.animated ? "&animated=true" : "")
+  );
+}
+
+// Fetch the profile from pfpgrab once, then cache the hash for a day (the
+// recommended pattern: images always come straight from Discord's CDN).
+async function resolveAvatar(discordId) {
+  try {
+    const c = JSON.parse(localStorage.getItem("talkomaticPfp") || "null");
+    if (
+      c && c.discordId === discordId &&
+      Date.now() - (c.fetchedAt || 0) < 24 * 60 * 60 * 1000
+    )
+      return c;
+  } catch (e) {}
+  const res = await fetch(
+    "https://pfpgrab.com/api/v1/users/" + discordId + "?size=64",
+  );
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const code = body && body.error && body.error.code;
+    throw new Error(
+      code === "user_not_found"
+        ? "No Discord account has that ID."
+        : code === "rate_limited"
+          ? "Avatar service is busy, try again in a minute."
+          : "Could not look up that Discord ID.",
+    );
+  }
+  if (!body || !body.avatar || body.avatar.is_default || !body.avatar.hash)
+    throw new Error("That Discord account has no profile picture set.");
+  const av = {
+    discordId,
+    hash: body.avatar.hash,
+    animated: !!body.avatar.animated,
+    fetchedAt: Date.now(),
+  };
+  localStorage.setItem("talkomaticPfp", JSON.stringify(av));
+  return av;
+}
+
 function emitJoinLobby(username, location) {
   const payload = {
     username,
     location,
+    avatar: storedAvatar(),
   };
 
   if (socket.connected) {
@@ -983,7 +1046,7 @@ roomTypeRadios.forEach((radio) => {
   });
 });
 
-logForm.addEventListener("submit", (e) => {
+logForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const newUsername = usernameInput.value.trim().slice(0, MAX_USERNAME_LENGTH);
   const newLocation =
@@ -992,6 +1055,35 @@ logForm.addEventListener("submit", (e) => {
   if (newUsername) {
     localStorage.setItem("talkomaticUsername", newUsername);
     localStorage.setItem("talkomaticLocation", newLocation);
+
+    // Discord avatar: resolve the entered ID before joining so the avatar is
+    // part of this sign-in. A lookup failure never blocks signing in.
+    const pfpEnable = document.getElementById("pfpEnable");
+    const pfpIdInput = document.getElementById("pfpDiscordId");
+    if (pfpEnable && pfpEnable.checked) {
+      const rawId = (pfpIdInput ? pfpIdInput.value : "").trim();
+      if (!PFP_ID_RE.test(rawId)) {
+        lobbyNotify(
+          "That does not look like a Discord user ID (17-20 digits).",
+          "error",
+          { timeout: 6000 },
+        );
+        localStorage.removeItem("talkomaticPfpEnabled");
+      } else {
+        try {
+          await resolveAvatar(rawId);
+          localStorage.setItem("talkomaticPfpEnabled", "1");
+        } catch (err) {
+          localStorage.removeItem("talkomaticPfpEnabled");
+          lobbyNotify(err.message || "Could not load that avatar.", "error", {
+            timeout: 6000,
+          });
+        }
+      }
+    } else {
+      localStorage.removeItem("talkomaticPfpEnabled");
+    }
+    updatePfpPreview();
 
     if (currentUsername) {
       signInButton.textContent = "Changed";
@@ -1007,25 +1099,55 @@ logForm.addEventListener("submit", (e) => {
     currentLocation = newLocation;
     isSignedIn = true;
 
-    if (socket.connected) {
-      socket.emit("join lobby", {
-        username: currentUsername,
-        location: currentLocation,
-      });
-    } else {
-      socket.once("connect", () => {
-        socket.emit("join lobby", {
-          username: currentUsername,
-          location: currentLocation,
-        });
-      });
-    }
+    emitJoinLobby(currentUsername, currentLocation);
 
     showRoomList();
   } else {
     window.showErrorModal("Please enter a username.");
   }
 });
+
+// Pfp form wiring: checkbox reveals the ID input; both restore from storage.
+function updatePfpPreview() {
+  const img = document.getElementById("pfpPreview");
+  if (!img) return;
+  const av = storedAvatar();
+  const url = av && avatarUrl(av, 32);
+  if (url) {
+    img.src = url;
+    img.style.display = "inline-block";
+  } else {
+    img.removeAttribute("src");
+    img.style.display = "none";
+  }
+}
+
+(function initPfpControls() {
+  const box = document.getElementById("pfpEnable");
+  const input = document.getElementById("pfpDiscordId");
+  const body = document.getElementById("pfpBody");
+  const helpBtn = document.getElementById("pfpHelpBtn");
+  const help = document.getElementById("pfpHelp");
+  if (!box || !input) return;
+  const card = document.querySelector(".pfp-card");
+  const sync = () => {
+    if (body) body.style.display = box.checked ? "block" : "none";
+    if (!box.checked && help) help.style.display = "none";
+    if (card) card.classList.toggle("pfp-on", box.checked);
+  };
+  box.addEventListener("change", sync);
+  if (helpBtn && help)
+    helpBtn.addEventListener("click", () => {
+      help.style.display = help.style.display === "none" ? "block" : "none";
+    });
+  try {
+    if (localStorage.getItem("talkomaticPfpEnabled") === "1") box.checked = true;
+    const c = JSON.parse(localStorage.getItem("talkomaticPfp") || "null");
+    if (c && PFP_ID_RE.test(c.discordId)) input.value = c.discordId;
+  } catch (e) {}
+  sync();
+  updatePfpPreview();
+})();
 
 goChatButton.addEventListener("click", () => {
   if (!socket.connected) {
@@ -1306,6 +1428,18 @@ function createRoomElement(room) {
       mb.textContent = jr ? "JR MOD" : "MOD";
       mb.title = jr ? "Junior moderator (level 1)" : "Moderator";
       userDiv.appendChild(mb);
+    }
+
+    if (user.avatar) {
+      const url = avatarUrl(user.avatar, 32);
+      if (url) {
+        const pfp = document.createElement("img");
+        pfp.className = "lobby-pfp";
+        pfp.alt = "";
+        pfp.src = url;
+        pfp.onerror = () => (pfp.style.display = "none");
+        userDiv.appendChild(pfp);
+      }
     }
 
     userDiv.appendChild(userNameSpan);
@@ -2452,7 +2586,9 @@ const suggestBoxLink = document.getElementById("suggestBoxLink");
 if (suggestBoxLink)
   suggestBoxLink.addEventListener("click", (e) => {
     e.preventDefault();
-    openSuggestBox();
+    // Community board modal (suggest-board.js); old prompt is the fallback.
+    if (window.SuggestBoard) window.SuggestBoard.open();
+    else openSuggestBox();
   });
 socket.on("suggestion result", (d) => {
   if (!d) return;

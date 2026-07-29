@@ -2802,3 +2802,22 @@ html {
     width: auto;
   }
 }
+
+/* ── Discord avatar next to names in the user header row ── */
+.user-pfp {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  object-fit: cover;
+  margin-right: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .user-pfp {
+    width: 16px;
+    height: 16px;
+    margin-right: 4px;
+  }
+}

@@ -1591,3 +1591,215 @@ button:disabled {
   margin-right: 4px;
   vertical-align: middle;
 }
+
+/* ── Discord avatar card in the sign-in form ── */
+.pfp-card {
+  margin-bottom: 15px;
+  border: 1px solid #ddd3bd;
+  border-radius: 10px;
+  background: #ffffff;
+  font-family: talkoSS, Arial, sans-serif;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.pfp-card.pfp-on {
+  border-color: #5865f2;
+  box-shadow: 0 1px 8px rgba(88, 101, 242, 0.22);
+}
+
+.pfp-card-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 13px;
+}
+
+.pfp-ico {
+  display: block;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #6a76f5, #4752c4);
+  box-shadow: 0 2px 6px rgba(88, 101, 242, 0.35);
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.pfp-ico i {
+  font-size: 20px;
+  color: #fff;
+  line-height: 38px;
+  margin: 0;
+}
+
+.pfp-card-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.pfp-card-title {
+  font-size: 13px;
+  font-weight: bold;
+  color: #111;
+  letter-spacing: 0.2px;
+}
+
+.pfp-card-sub {
+  font-size: 11px;
+  color: #777;
+  line-height: 1.35;
+  margin-top: 1px;
+}
+
+.pfp-preview {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 2px solid #5865f2;
+  flex-shrink: 0;
+}
+
+/* Toggle switch */
+.pfp-switch {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+#logform .pfp-switch input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.pfp-slider {
+  position: absolute;
+  inset: 0;
+  background: #ccc;
+  border-radius: 22px;
+  transition: background 0.2s ease;
+}
+
+.pfp-slider::before {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 3px;
+  top: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s ease;
+}
+
+.pfp-switch input:checked + .pfp-slider {
+  background: #5865f2;
+}
+
+.pfp-switch input:checked + .pfp-slider::before {
+  transform: translateX(16px);
+}
+
+/* Expanded body: ID input + help */
+.pfp-card-body {
+  padding: 10px 13px 13px;
+  border-top: 1px solid #efe8d6;
+  background: #fafaff;
+}
+
+#logform .pfp-card-body #pfpDiscordId {
+  margin-bottom: 8px;
+  font-size: 14px;
+  padding: 10px 12px;
+  border: 1px solid #cfd3ee;
+  border-radius: 7px;
+  background: #fff;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+#logform .pfp-card-body #pfpDiscordId:focus {
+  outline: none;
+  border-color: #5865f2;
+  box-shadow: 0 0 0 3px rgba(88, 101, 242, 0.12);
+}
+
+#logform .pfp-help-btn {
+  position: static;
+  width: auto;
+  padding: 0;
+  background: none;
+  border: none;
+  color: #5865f2;
+  font-size: 12px;
+  font-weight: bold;
+  cursor: pointer;
+  font-family: talkoSS, Arial, sans-serif;
+}
+
+#logform .pfp-help-btn:hover {
+  background: none;
+  text-decoration: underline;
+  color: #4752c4;
+}
+
+.pfp-help {
+  margin-top: 9px;
+  background: #fff;
+  border: 1px solid #dfe2f5;
+
+  border-radius: 7px;
+  padding: 11px 13px;
+  font-size: 12px;
+  color: #333;
+  line-height: 1.55;
+}
+
+.pfp-help ol {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.pfp-help li {
+  margin-bottom: 5px;
+}
+
+.pfp-help li::marker {
+  color: #5865f2;
+  font-weight: bold;
+}
+
+.pfp-help p {
+  margin: 0;
+  color: #777;
+}
+
+/* Avatar shown next to names in the lobby room list */
+.lobby-pfp {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  object-fit: cover;
+  vertical-align: middle;
+  margin-right: 4px;
+  border: 1px solid var(--card-border-color, #444);
+}
+
+.fa-circle-question {
+  margin-right: 8px;
+}

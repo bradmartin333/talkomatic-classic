@@ -1,0 +1,518 @@
+/* Suggestion Board modal, styled like the lobby itself: flat dark tiles
+   (#1b1b1b), #616161 borders, black cards, cream section strips, colorful
+   icons, orange fills on hover. No gradients, no glows. talkoSS font. */
+
+.sb-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.sb-overlay.show {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: sbFadeIn 0.2s ease-out;
+}
+
+@keyframes sbFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.sb-modal {
+  background: var(--background-color, #202020);
+  border: 2px solid var(--primary, #ff9800);
+  border-radius: 8px;
+  width: 96%;
+  max-width: 1150px;
+  height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+
+.sb-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+  border-bottom: 1px solid #616161;
+  flex-shrink: 0;
+}
+
+.sb-title-wrap { min-width: 0; }
+
+.sb-title {
+  color: var(--primary, #ff9800);
+  font-size: 24px;
+  font-weight: bold;
+}
+
+.sb-title i {
+  margin-right: 10px;
+  color: #ffc107;
+}
+
+.sb-sub {
+  color: #01ffff;
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+/* Stat tiles, same look as the lobby menu tiles */
+
+.sb-stats {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.sb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: bold;
+  color: #fff;
+  background: #1b1b1b;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 8px 13px;
+}
+
+.sb-chip i { color: #ffc107; }
+.sb-chip-impl i { color: var(--primary, #ff9800); }
+.sb-chip-appr i { color: #4caf50; }
+
+.sb-sort {
+  display: flex;
+  gap: 6px;
+}
+
+.sb-sort-btn {
+  background: #1b1b1b;
+  color: #fff;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: bold;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.sb-sort-btn:hover { background: #242424; border-color: #616161; }
+
+.sb-sort-btn.active {
+  background: var(--primary, #ff9800);
+  color: #000;
+}
+
+.sb-close {
+  background: none;
+  border: none;
+  color: #ccc;
+  font-size: 30px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  transition: color 0.15s ease;
+}
+
+.sb-close:hover { color: var(--primary, #ff9800); }
+
+/* ── Cream section strips, same as "Be Known As..." ── */
+
+.sb-strip {
+  background: var(--known-as-section-background-color, #fdf5e6);
+  color: var(--known-as-section-color, #000);
+  font-size: 16px;
+  font-weight: bold;
+  padding: 9px 24px;
+  flex-shrink: 0;
+}
+
+/* ── Composer ── */
+
+.sb-compose {
+  padding: 14px 24px 16px;
+  flex-shrink: 0;
+}
+
+.sb-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 9px;
+}
+
+.sb-tool {
+  background: #1b1b1b;
+  color: #fff;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  width: 34px;
+  height: 30px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.sb-tool:hover { background: #242424; border-color: #616161; }
+
+.sb-remain {
+  margin-left: auto;
+  font-size: 12px;
+  color: #cccccc;
+}
+
+.sb-remain-empty { color: #ff5252; }
+
+.sb-input {
+  width: 100%;
+  background: #000;
+  color: #fff;
+  border: 1px solid #616161;
+  border-radius: 5px;
+  padding: 12px 14px;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.sb-input:focus { outline: none; border-color: var(--primary, #ff9800); }
+
+/* Live preview of the post being written */
+
+.sb-preview-wrap {
+  margin-top: 9px;
+  border: 1px dashed #616161;
+  border-radius: 5px;
+  padding: 10px 14px;
+  background: #000;
+}
+
+.sb-preview-label {
+  font-size: 10px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #cccccc;
+  margin-bottom: 6px;
+}
+
+.sb-preview-label i { margin-right: 4px; color: var(--primary, #ff9800); }
+
+.sb-preview {
+  color: #fff;
+  font-size: 15px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.sb-preview code,
+.sb-text code {
+  background: #1b1b1b;
+  border: 1px solid #616161;
+  border-radius: 3px;
+  padding: 0 5px;
+  font-size: 13px;
+  color: var(--primary, #ff9800);
+}
+
+.sb-compose-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 9px;
+}
+
+.sb-count { font-size: 12px; color: #cccccc; }
+
+.sb-post-btn {
+  background: #000;
+  color: #fff;
+  border: 1px solid var(--primary, #ff9800);
+  border-radius: 5px;
+  padding: 10px 26px;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.sb-post-btn:hover:not(:disabled) {
+  background: var(--primary, #ff9800);
+  color: #000;
+}
+
+.sb-post-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── List & cards ── */
+
+.sb-list {
+  overflow-y: auto;
+  padding: 14px 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+.sb-list::-webkit-scrollbar { width: 10px; }
+.sb-list::-webkit-scrollbar-track { background: transparent; }
+.sb-list::-webkit-scrollbar-thumb { background: #616161; border-radius: 5px; }
+.sb-list::-webkit-scrollbar-thumb:hover { background: var(--primary, #ff9800); }
+
+.sb-empty {
+  text-align: center;
+  color: #cccccc;
+  padding: 50px 0;
+  font-size: 15px;
+}
+
+.sb-empty i { font-size: 40px; color: #ffc107; }
+
+.sb-empty p { margin: 14px 0 0; }
+
+.sb-card {
+  display: flex;
+  gap: 14px;
+  background: var(--room-background-color, #000);
+  border: 1px solid #616161;
+  border-radius: 5px;
+  padding: 14px 16px;
+  transition: border-color 0.15s ease;
+}
+
+.sb-card:hover { border-color: var(--primary, #ff9800); }
+
+.sb-card.sb-declined { opacity: 0.55; }
+
+/* A post that arrived live while the board was open */
+.sb-card.sb-fresh { animation: sbFresh 2s ease-out; }
+
+@keyframes sbFresh {
+  0% { border-color: var(--primary, #ff9800); }
+  70% { border-color: var(--primary, #ff9800); }
+  100% { border-color: #616161; }
+}
+
+/* Vote column */
+
+.sb-votes {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+}
+
+.sb-vote-btn {
+  background: #1b1b1b;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: #fff;
+  width: 34px;
+  height: 28px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.sb-vote-btn:hover { background: #242424; border-color: #616161; }
+
+.sb-vote-btn.active-up {
+  background: var(--primary, #ff9800);
+  color: #000;
+}
+
+.sb-vote-btn.active-down {
+  background: #64b5f6;
+  color: #000;
+}
+
+.sb-score { font-weight: bold; font-size: 16px; color: #fff; }
+.sb-score.pos { color: var(--primary, #ff9800); }
+.sb-score.neg { color: #64b5f6; }
+
+/* Main column */
+
+.sb-main { flex: 1; min-width: 0; }
+
+.sb-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+/* Discord avatar, shown only when that user enabled the pfp feature */
+.sb-pfp {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  object-fit: cover;
+  border: 1px solid #616161;
+  flex-shrink: 0;
+}
+
+.sb-pfp-sm { width: 20px; height: 20px; }
+
+.sb-name {
+  color: var(--user-detail-color, #ff9800);
+  font-weight: bold;
+  font-size: 15px;
+  word-break: break-word;
+}
+
+.sb-mine {
+  font-size: 10px;
+  color: #000;
+  background: #ccc;
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+.sb-time { color: #888; font-size: 12px; }
+
+.sb-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  border-radius: 3px;
+  padding: 2px 7px;
+}
+
+.sb-badge-dev {
+  color: #000;
+  background: var(--primary, #ff9800);
+}
+
+.sb-badge-dev img { width: 14px; height: 14px; }
+
+.sb-status {
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  border-radius: 4px;
+  padding: 3px 10px;
+  text-transform: uppercase;
+  margin-left: auto;
+  background: #000;
+}
+
+.sb-st-approved { color: #4caf50; border: 1px solid #4caf50; }
+.sb-st-implemented { color: var(--primary, #ff9800); border: 1px solid var(--primary, #ff9800); }
+.sb-st-declined { color: #ff5252; border: 1px solid #ff5252; }
+
+.sb-text {
+  color: #fff;
+  font-size: 15px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.sb-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.sb-link {
+  background: #1b1b1b;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 6px 13px;
+  font-family: inherit;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.sb-link:hover { background: #242424; border-color: var(--primary, #ff9800); }
+
+.sb-dev-controls {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sb-dev-link { color: #ccc; font-size: 11px; padding: 5px 11px; }
+
+.sb-danger:hover { color: #ff5252; border-color: #ff5252; }
+
+/* Replies */
+
+.sb-replies {
+  margin-top: 10px;
+  border-left: 2px solid #616161;
+  padding-left: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sb-reply .sb-meta { margin-bottom: 4px; }
+
+.sb-reply-text { font-size: 14px; color: #f0f0f0; }
+
+.sb-reply-input {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.sb-input-sm { padding: 8px 12px; font-size: 14px; }
+
+.sb-reply-send {
+  background: #1b1b1b;
+  color: var(--primary, #ff9800);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  width: 42px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.sb-reply-send:hover { background: #242424; border-color: var(--primary, #ff9800); }
+
+/* ── Mobile ── */
+
+@media (max-width: 640px) {
+  .sb-modal {
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border-radius: 0;
+    border: none;
+  }
+  .sb-head { padding: 12px 14px; flex-wrap: wrap; gap: 10px; }
+  .sb-title { font-size: 20px; }
+  .sb-stats { order: 3; margin-left: 0; }
+  .sb-strip { padding: 8px 14px; }
+  .sb-compose { padding: 10px 14px 12px; }
+  .sb-list { padding: 10px 14px 16px; }
+  .sb-card { padding: 12px; gap: 10px; }
+  .sb-dev-controls { margin-left: 0; }
+  .sb-status { margin-left: 0; }
+}

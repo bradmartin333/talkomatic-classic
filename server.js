@@ -202,7 +202,13 @@ const helmetMiddleware = helmet({
         "https://cdnjs.cloudflare.com",
         "https://classic.talkomatic.co",
       ],
-      connectSrc: ["'self'", "https://classic.talkomatic.co", "https://raw.githubusercontent.com"],
+      connectSrc: [
+        "'self'",
+        "https://classic.talkomatic.co",
+        "https://raw.githubusercontent.com",
+        // Discord avatar lookups (pfp feature) are made from the browser
+        "https://pfpgrab.com",
+      ],
       mediaSrc: ["'self'", "data:"],
       frameAncestors: ["'self'", "*"],
       frameSrc: ["'self'"], // same-origin only (the in-room puzzle iframe)

@@ -800,6 +800,37 @@ function broadcastSuggestionsList() {
       s.emit("staff suggestions", buildSuggestionsList(!!s.isDev));
 }
 
+// ── Community suggestion board ──────────────────────────────────────────────
+// Roles are stamped server-side from the socket, so board badges cannot be
+// faked by a client.
+function boardRole(socket) {
+  if (socket.isDev) return "dev";
+  if (socket.isMod) return (socket.modLevel || 2) >= 2 ? "mod" : "jr";
+  return "user";
+}
+
+function boardPayloadFor(socket) {
+  return {
+    posts: suggestions.publicList({
+      deviceId: socket.deviceId || null,
+      isDev: !!socket.isDev,
+    }),
+    remaining: suggestions.remainingPosts(
+      socket.deviceId || null,
+      socket.clientIp || null,
+    ),
+    canModerate: !!socket.isDev,
+    role: boardRole(socket),
+  };
+}
+
+// Only sockets that currently have the board modal open receive live updates.
+function broadcastBoard() {
+  if (!io()) return;
+  for (const [, s] of io().sockets.sockets)
+    if (s.boardOpen) s.emit("board data", boardPayloadFor(s));
+}
+
 // Called from the HTTP appeal route after an appeal is filed: drop a staff
 // notification (full mods + devs) and live-update any open dashboards.
 function announceAppeal(id) {
@@ -1200,6 +1231,9 @@ function formatUserForSocket(user, recipientSocket) {
     location: user.location,
     deviceType: user.deviceType || "unknown",
   };
+  // Discord avatar: validated snowflake id + CDN hash only; clients rebuild
+  // the cdn.discordapp.com URL themselves.
+  if (user.avatar) formatted.avatar = user.avatar;
   // Top inviter trophy (1/2/3). Computed live; the device id itself is never
   // sent to clients.
   const inviteRank = invites.rankBadge(user.deviceId);
@@ -2076,6 +2110,7 @@ function joinRoom(socket, roomId, userId) {
       isVanished: !!socket.isVanished,
       deviceType: socket.deviceType || "unknown",
       deviceId: socket.deviceId || null,
+      avatar: socket.handshake.session?.avatar || null,
     });
 
     if (socket.isDev) {
@@ -2420,8 +2455,20 @@ function registerSocketHandlers() {
         const valErr = validateObject(data, {
           username: { rule: "username" },
           location: { rule: "location" },
+          avatar: { rule: "avatar" },
         });
         if (valErr) return socket.emit("validation_error", valErr);
+
+        // Optional Discord avatar. Only the validated snowflake + hash are
+        // kept; sending avatar:null (or omitting it) clears the stored one.
+        const avatar =
+          data.avatar && typeof data.avatar === "object"
+            ? {
+                id: String(data.avatar.discordId),
+                hash: String(data.avatar.hash).toLowerCase(),
+                animated: !!data.avatar.animated,
+              }
+            : null;
 
         // Identity fields are sanitized (zalgo/RTL stripped) before the
         // word filter runs, so obfuscated slurs are cleaned then caught
@@ -2488,9 +2535,20 @@ function registerSocketHandlers() {
           location,
           userId,
           isIPBased: false,
+          avatar,
         });
         await promisifySessionSave(socket.handshake.session);
         state.users.set(userId, { id: userId, username, location });
+
+        // If they are already in a room, update their live user record so the
+        // avatar shows without a rejoin.
+        for (const room of state.rooms.values()) {
+          const u = (room.users || []).find((x) => x.id === userId);
+          if (u && u.avatar !== avatar) {
+            u.avatar = avatar;
+            emitRoomSnapshot(room);
+          }
+        }
 
         // Accountability: log the chosen name + IP, and any later change to it
         audit.recordIdentity({
@@ -2527,6 +2585,7 @@ function registerSocketHandlers() {
           isMod: !!socket.isMod,
           modLevel: socket.isMod ? socket.modLevel || 2 : 0,
           isHidden: !!socket.isHidden,
+          avatar,
         });
       }),
     );
@@ -5574,6 +5633,189 @@ function registerSocketHandlers() {
         );
         broadcastSuggestionsList();
         socket.emit("staff suggestions", buildSuggestionsList(!!socket.isDev));
+      }),
+    );
+
+    // ── Community suggestion board: everyone reads/posts/replies/votes from
+    // the lobby modal; devs set status tags. Word filter is ALWAYS applied
+    // here, independent of the global toggle. ──
+    socket.on(
+      "board open",
+      safe(async () => {
+        socket.boardOpen = true;
+        socket.emit("board data", boardPayloadFor(socket));
+      }),
+    );
+
+    socket.on(
+      "board close",
+      safe(async () => {
+        socket.boardOpen = false;
+      }),
+    );
+
+    socket.on(
+      "board post",
+      safe(async (data) => {
+        const now = Date.now();
+        const fail = (error) =>
+          socket.emit("board result", { ok: false, action: "post", error });
+        if (now - (socket._lastBoardPost || 0) < 15000)
+          return fail("Please wait a bit before posting again.");
+        const name = socket.handshake.session?.username || null;
+        if (!name) return fail("Sign in first to post.");
+        if (!socket.deviceId) return fail("Could not identify this browser.");
+        let text = sanitizeMessage(
+          typeof data?.text === "string" ? data.text : "",
+        ).slice(0, 600);
+        text = wordFilter.filterText(text);
+        if (text.trim().length < 8) return fail("Please write a little more.");
+        const r = suggestions.post({
+          deviceId: socket.deviceId,
+          ip: socket.clientIp || null,
+          userId: socket.handshake.session?.userId || null,
+          name,
+          role: boardRole(socket),
+          avatar: socket.handshake.session?.avatar || null,
+          text,
+        });
+        if (!r.ok)
+          return fail(
+            r.code === "limit"
+              ? "You can post 3 suggestions per day. Try again tomorrow."
+              : "Could not post your suggestion.",
+          );
+        socket._lastBoardPost = now;
+        audit.recordNotification({
+          kind: "suggestion",
+          text: `${name} posted on the board: ${text.slice(0, 200)}`,
+          by: name,
+          minLevel: 2,
+        });
+        socket.emit("board result", {
+          ok: true,
+          action: "post",
+          remaining: r.remaining,
+        });
+        broadcastBoard();
+      }),
+    );
+
+    socket.on(
+      "board reply",
+      safe(async (data) => {
+        const now = Date.now();
+        const fail = (error) =>
+          socket.emit("board result", { ok: false, action: "reply", error });
+        if (now - (socket._lastBoardReply || 0) < 5000)
+          return fail("Please wait a moment between replies.");
+        const name = socket.handshake.session?.username || null;
+        if (!name) return fail("Sign in first to reply.");
+        if (!socket.deviceId) return fail("Could not identify this browser.");
+        let text = sanitizeMessage(
+          typeof data?.text === "string" ? data.text : "",
+        ).slice(0, 300);
+        text = wordFilter.filterText(text);
+        if (text.trim().length < 2) return fail("Please write a little more.");
+        const r = suggestions.reply({
+          id: Number(data?.id),
+          deviceId: socket.deviceId,
+          ip: socket.clientIp || null,
+          userId: socket.handshake.session?.userId || null,
+          name,
+          role: boardRole(socket),
+          avatar: socket.handshake.session?.avatar || null,
+          text,
+        });
+        if (!r.ok)
+          return fail(
+            r.code === "limit"
+              ? "You have hit the daily reply limit."
+              : r.code === "full"
+                ? "This thread is full."
+                : "Could not post your reply.",
+          );
+        socket._lastBoardReply = now;
+        socket.emit("board result", { ok: true, action: "reply" });
+        broadcastBoard();
+      }),
+    );
+
+    socket.on(
+      "board vote",
+      safe(async (data) => {
+        const id = Number(data?.id);
+        const dir = [1, -1, 0].includes(data?.dir) ? data.dir : null;
+        if (!id || dir === null) return;
+        const fail = (error) =>
+          socket.emit("board result", { ok: false, action: "vote", error });
+        if (!socket.deviceId) return fail("Could not register your vote.");
+        const now = Date.now();
+        if (now - (socket._lastBoardVote || 0) < 700) return;
+        socket._lastBoardVote = now;
+        const r = suggestions.vote({
+          id,
+          deviceId: socket.deviceId,
+          ip: socket.clientIp || null,
+          dir,
+        });
+        if (!r.ok)
+          return fail(
+            r.code === "ip_cap"
+              ? "Vote limit reached for your network on this post."
+              : "Could not register your vote.",
+          );
+        socket.emit("board result", {
+          ok: true,
+          action: "vote",
+          id,
+          up: r.up,
+          down: r.down,
+          myVote: r.myVote,
+        });
+        broadcastBoard();
+      }),
+    );
+
+    socket.on(
+      "board status",
+      safe(async (data) => {
+        if (!requireDev(socket)) return;
+        const s = suggestions.setStatus(
+          Number(data?.id),
+          String(data?.status || ""),
+          socket.staffLabel || "dev",
+        );
+        if (!s)
+          return socket.emit(
+            "error",
+            createErrorResponse(ERROR_CODES.BAD_REQUEST, "No such suggestion."),
+          );
+        logStaff(
+          socket,
+          `suggestion ${s.status}`,
+          { name: s.name || "?", id: s.userId || "-" },
+          "-",
+        );
+        broadcastBoard();
+      }),
+    );
+
+    socket.on(
+      "board delete",
+      safe(async (data) => {
+        if (!requireDev(socket)) return;
+        const id = Number(data?.id);
+        const replyId = data?.replyId ? Number(data.replyId) : null;
+        const s = suggestions.get(id);
+        if (!s || !suggestions.remove(id, replyId)) return;
+        logStaff(
+          socket,
+          replyId ? "delete board reply" : "delete board post",
+          { name: s.name || "?", id: s.userId || "-" },
+          "-",
+        );
+        broadcastBoard();
       }),
     );
 

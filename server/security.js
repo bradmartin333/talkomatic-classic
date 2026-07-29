@@ -414,6 +414,18 @@ const validationRules = {
     }
     return null;
   },
+  // Optional Discord avatar: only a snowflake id + CDN hash ever cross the
+  // wire; clients rebuild the cdn.discordapp.com URL from these two, so an
+  // arbitrary URL can never be injected.
+  avatar: (v) => {
+    if (v === undefined || v === null) return null;
+    if (typeof v !== "object") return "Avatar must be an object.";
+    if (!/^\d{17,20}$/.test(String(v.discordId || "")))
+      return "Avatar Discord ID must be 17-20 digits.";
+    if (!/^(?:a_)?[a-f0-9]{32}$/i.test(String(v.hash || "")))
+      return "Avatar hash is invalid.";
+    return null;
+  },
 };
 
 function validate(field, value, context) {
