@@ -51,28 +51,46 @@ Before you begin, ensure you have met the following requirements:
 
 ## Configuration
 
-The application works without configuration, but you can customize it using an optional `.env` file:
+The application works without configuration, but you can customize it using an optional `.env` file. Copy `.env.example` to `.env` and fill in what you need:
 
-1. Create a `.env` file in the root directory of the project (if desired).
-2. Add any of the following environment variables:
-
-   ```
-   NODE_ENV=development
-   SESSION_SECRET=your_session_secret_here
-   ALLOWED_ORIGINS=http://localhost:3000
-   PORT=3000
-   ```
-
-   Replace `your_session_secret_here` with a strong, unique secret for session management.
+| Variable          | Default              | Purpose                                                                                    |
+| ----------------- | -------------------- | ------------------------------------------------------------------------------------------ |
+| `SESSION_SECRET`  | random per boot      | Set this in production so sessions and room access codes survive restarts                  |
+| `PORT`            | `3000`               | Port the server listens on                                                                 |
+| `HOST`            | `0.0.0.0`            | Bind address                                                                               |
+| `ALLOWED_ORIGINS` | (none)               | Comma-separated public URLs of your instance, required when deploying on your own domain   |
+| `DATA_DIR`        | repo root            | Where runtime JSON state (rooms, bans, identity, logs) is written                          |
+| `TRUST_PROXY`     | `1`                  | Reverse-proxy hops to trust; set `0` if the server is exposed directly                     |
+| `DEV_KEY_HASH`    | (none)               | SHA-256 hash of the owner dev key                                                          |
 
 ## Running the Application
 
 To run Talkomatic:
 
 ```bash
-node server.js
+npm start
 ```
 The application will be available at `http://localhost:3000` (or the port specified in your `.env` file if you created one).
+
+## Deploying with Docker / Dokploy
+
+The repo ships with a `Dockerfile` and `docker-compose.yml`. The container listens on port `3000`, binds `0.0.0.0`, and keeps all runtime state in a volume at `/app/data`.
+
+**Docker Compose:**
+
+```bash
+docker compose up -d --build
+```
+
+**Dokploy:**
+
+1. Create an **Application** in Dokploy pointing at this Git repository.
+2. Set the build type to **Dockerfile** (or use Docker Compose with the included `docker-compose.yml`).
+3. Set environment variables:
+   - `SESSION_SECRET` — a long random string (`openssl rand -hex 32`)
+   - `ALLOWED_ORIGINS` — the URL you will serve the app at, e.g. `https://chat.example.com` (use `http://SERVER_IP:3000` if you have no domain yet)
+4. If deploying via Dockerfile, add a volume mount for `/app/data` so rooms, bans, and identity data survive redeploys.
+5. Point your domain at the app with container port `3000`. Dokploy's Traefik proxy handles HTTPS; the server already trusts one proxy hop.
 
 ## Usage
 

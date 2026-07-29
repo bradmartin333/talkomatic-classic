@@ -15,7 +15,9 @@ const path = require("path");
 const fs = require("fs");
 const fsp = require("fs").promises;
 
-const STORE_PATH = path.join(__dirname, "..", "reports.json");
+const { DATA_DIR } = require("./datadir");
+
+const STORE_PATH = path.join(DATA_DIR, "reports.json");
 
 const WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // keep a target's reports for 7 days
 const MAX_TARGETS = 5000;

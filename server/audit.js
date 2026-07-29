@@ -15,8 +15,10 @@ const fs = require("fs");
 const fsp = require("fs").promises;
 const { state } = require("./state");
 
-const AUDIT_PATH = path.join(__dirname, "..", "audit-log.jsonl");
-const MODLOG_PATH = path.join(__dirname, "..", "modlog.txt");
+const { DATA_DIR } = require("./datadir");
+
+const AUDIT_PATH = path.join(DATA_DIR, "audit-log.jsonl");
+const MODLOG_PATH = path.join(DATA_DIR, "modlog.txt");
 
 let entries = []; // append-only history, oldest first
 let seq = 0;

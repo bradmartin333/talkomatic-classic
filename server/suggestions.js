@@ -6,7 +6,9 @@ const path = require("path");
 const fs = require("fs");
 const fsp = require("fs").promises;
 
-const STORE_PATH = path.join(__dirname, "..", "suggestions.json");
+const { DATA_DIR } = require("./datadir");
+
+const STORE_PATH = path.join(DATA_DIR, "suggestions.json");
 const MAX = 2000;
 const WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 

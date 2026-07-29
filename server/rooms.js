@@ -5,6 +5,7 @@
 
 const path = require("path");
 const fs = require("fs").promises;
+const { DATA_DIR } = require("./datadir");
 const {
   CONFIG,
   ERROR_CODES,
@@ -201,7 +202,7 @@ function sanitizeGradient(g) {
 // in-progress ones) to disk so a restart or redeploy keeps the drawing instead
 // of wiping it. Mirrors the room save: atomic tmp+rename, debounced during
 // normal use, with a synchronous flush on a clean shutdown.
-const BOARD_PATH = path.join(__dirname, "..", "board.json");
+const BOARD_PATH = path.join(DATA_DIR, "board.json");
 let boardSavePending = false;
 
 function serializeBoards() {
@@ -1573,8 +1574,8 @@ async function saveRooms(force = false) {
         },
       ];
     });
-    const tmp = path.join(__dirname, "..", "rooms.json.tmp");
-    const final = path.join(__dirname, "..", "rooms.json");
+    const tmp = path.join(DATA_DIR, "rooms.json.tmp");
+    const final = path.join(DATA_DIR, "rooms.json");
     await fs.writeFile(tmp, JSON.stringify(data), "utf8");
     await fs.rename(tmp, final);
     state.lastSaveTimestamp = now;
@@ -1582,7 +1583,7 @@ async function saveRooms(force = false) {
   } catch (err) {
     console.error("Error saving rooms:", err);
     try {
-      await fs.unlink(path.join(__dirname, "..", "rooms.json.tmp"));
+      await fs.unlink(path.join(DATA_DIR, "rooms.json.tmp"));
     } catch (_) { }
   }
 }
@@ -1608,10 +1609,7 @@ async function loadRooms() {
     return;
   }
   try {
-    const raw = await fs.readFile(
-      path.join(__dirname, "..", "rooms.json"),
-      "utf8",
-    );
+    const raw = await fs.readFile(path.join(DATA_DIR, "rooms.json"), "utf8");
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) {
       state.rooms = new Map();

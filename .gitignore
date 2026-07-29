@@ -1,3 +1,6 @@
+# Runtime state directory (when DATA_DIR is set)
+data/
+
 rooms.json
 rooms.json.tmp
 board.json

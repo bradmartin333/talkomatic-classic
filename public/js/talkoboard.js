@@ -14,7 +14,7 @@
 //       between the two snapshots straddling that time, and HELD (never
 //       extrapolated) on starvation. That removes the per-packet snapping the
 //       old "jump straight to the latest packet" cursor had. See
-//       talkoboard-realtime.md for the full write-up.
+//       docs/talkoboard-realtime.md for the full write-up.
 // v3.1: Talkomatic palette (#202020 / #1a1a1a / #616161 / #ff9800) with
 //       FontAwesome icons. No toolbar title.
 // v3.0: Color panel (palette, custom picker, eyedropper, recents, teammates'

@@ -11,7 +11,9 @@ const path = require("path");
 const fs = require("fs");
 const fsp = require("fs").promises;
 
-const APPS_PATH = path.join(__dirname, "..", "mod-applications.json");
+const { DATA_DIR } = require("./datadir");
+
+const APPS_PATH = path.join(DATA_DIR, "mod-applications.json");
 const MAX = 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DAILY_LIMIT = 3; // submissions per device per rolling 24h

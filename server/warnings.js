@@ -7,7 +7,9 @@ const path = require("path");
 const fs = require("fs");
 const fsp = require("fs").promises;
 
-const STORE_PATH = path.join(__dirname, "..", "warnings.json");
+const { DATA_DIR } = require("./datadir");
+
+const STORE_PATH = path.join(DATA_DIR, "warnings.json");
 const MAX_PER_DEVICE = 5;
 const TTL = 30 * 24 * 60 * 60 * 1000; // drop undelivered after 30 days
 

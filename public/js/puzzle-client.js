@@ -1,5 +1,5 @@
 // public/js/puzzle-client.js
-// Opens the collaborative puzzle (public/puzzle.html) in a room modal and
+// Opens the collaborative puzzle (public/pages/puzzle.html) in a room modal and
 // bridges its messages over the room's existing socket. The puzzle page runs in
 // a sandboxed same-origin iframe so its canvas/UI can't collide with the room
 // page, but all traffic still flows on the room socket - no second connection.

@@ -1,0 +1,41 @@
+# VCS / editor / local tooling
+.git
+.github
+.vscode
+.claude
+node_modules
+Dockerfile
+docker-compose.yml
+.dockerignore
+GitHub.lnk
+*.lnk
+
+# Secrets
+.env
+.env.*
+
+# Local runtime state - never bake into the image (lives in DATA_DIR volume)
+data
+rooms.json
+rooms.json.tmp
+board.json
+board.json.tmp
+users.json
+mod-keys.json
+modlog.txt
+audit-log.jsonl
+key-activity.json
+anniversary.json
+identity.json
+invites.json
+mod-applications.json
+reports.json
+blocklist.json
+warnings.json
+appeals.json
+suggestions.json
+ban-history.json
+
+# Logs
+logs
+*.log

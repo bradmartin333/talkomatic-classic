@@ -18,10 +18,10 @@
   
   /* Note styling - Blue theme */
   --mk-note-bg: #eef6ff;
-  --mk-note-border: #3b82f6;
+  --mk-note-border: #3b82f6;                      
   --mk-note-icon-color: #3b82f6;
   --mk-note-dark-bg: rgba(59, 130, 246, 0.1);
-  
+
   /* Warning styling - Red theme */
   --mk-warning-bg: #fff5f5;
   --mk-warning-border: #ef4444;

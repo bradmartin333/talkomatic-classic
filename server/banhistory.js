@@ -15,7 +15,9 @@ const path = require("path");
 const fs = require("fs");
 const fsp = require("fs").promises;
 
-const STORE_PATH = path.join(__dirname, "..", "ban-history.json");
+const { DATA_DIR } = require("./datadir");
+
+const STORE_PATH = path.join(DATA_DIR, "ban-history.json");
 const MAX = 5000;
 
 // oldest first: { id, ip, name, action: "ban"|"unban", by, at, reason, duration }

@@ -1,0 +1,16 @@
+services:
+  talkomatic:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      # Set these in a .env file next to this compose file (see .env.example)
+      - SESSION_SECRET=${SESSION_SECRET:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
+      - DEV_KEY_HASH=${DEV_KEY_HASH:-}
+    volumes:
+      - talkomatic-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  talkomatic-data:

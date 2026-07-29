@@ -125,10 +125,20 @@ process.on("beforeExit", gracefulFlush);
 const app = express();
 const server = http.createServer(app);
 
+// Behind a reverse proxy (Dokploy/Traefik, Cloudflare, nginx) the proxy is the
+// TCP peer; trust one hop so req.ip, req.protocol, and secure cookies reflect
+// the real client. Set TRUST_PROXY=0 to disable when exposed directly.
+app.set("trust proxy", Number(process.env.TRUST_PROXY ?? 1));
+
+// Extra origins (e.g. the domain you deploy on) via ALLOWED_ORIGINS, comma-separated.
 const allowedOrigins = [
   "http://localhost:3000",
   "http://127.0.0.1:3000",
   "https://classic.talkomatic.co",
+  ...(process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
 ];
 const corsOptions = {
   origin: (origin, cb) =>
@@ -272,8 +282,12 @@ const sessionMiddleware = session({
   secret: SESSION_SECRET || crypto.randomBytes(32).toString("hex"),
   resave: false,
   saveUninitialized: true,
+  proxy: true,
   cookie: {
-    secure: process.env.NODE_ENV === "production",
+    // "auto": secure only when the request actually came in over HTTPS (direct
+    // or via a trusted proxy's X-Forwarded-Proto). Keeps sessions working on
+    // plain-HTTP local/docker runs without weakening HTTPS deployments.
+    secure: "auto",
     httpOnly: true,
     maxAge: 14 * 24 * 60 * 60 * 1000,
     sameSite: "lax",
@@ -508,9 +522,46 @@ app.use(
   }),
 );
 
+// ── Pages ───────────────────────────────────────────────────────────────────
+// The HTML pages live in public/pages/ but are served at their original
+// top-level URLs (/index.html, /room.html, ...) so no link or redirect changes.
+// Same no-cache header the static handler gives HTML (see comment above).
+
+const PAGES_DIR = path.join(__dirname, "public", "pages");
+const PAGE_HEADERS = { "Cache-Control": "no-cache, must-revalidate" };
+const PAGES = [
+  "about",
+  "app-directory",
+  "browser",
+  "contributors",
+  "documentation",
+  "index",
+  "mod",
+  "puzzle",
+  "room",
+  "sponsors",
+  "themes",
+];
+for (const page of PAGES) {
+  app.get(`/${page}.html`, (req, res) =>
+    res.sendFile(path.join(PAGES_DIR, `${page}.html`), {
+      headers: PAGE_HEADERS,
+    }),
+  );
+}
+app.get("/", (req, res) =>
+  res.sendFile(path.join(PAGES_DIR, "index.html"), { headers: PAGE_HEADERS }),
+);
+
 // ── API Routes ──────────────────────────────────────────────────────────────
 
 const API = `/api/${CONFIG.VERSIONS.API}`;
+
+// Liveness probe for Docker/Dokploy. Registered before the antibot middleware
+// on purpose: healthcheck agents (wget/curl) are not browsers and would 401.
+app.get("/healthz", (req, res) => {
+  res.json({ status: "ok", uptime: process.uptime() });
+});
 
 app.post(`${API}/bot-tokens/request`, handleBotTokenRequest);
 app.get(`${API}/bot-tokens/info`, handleBotTokenInfo);
@@ -658,7 +709,7 @@ app.post(
 
       // Client-side nsfwjs must have run and passed. Enforcement is client-side
       // by design; the server re-checks the reported scores. Thresholds mirror
-      // the browser scan in public/puzzle.html - keep the two in sync.
+      // the browser scan in public/pages/puzzle.html - keep the two in sync.
       let att = null;
       try { att = JSON.parse(req.get("x-nsfw-scan") || "null"); } catch { att = null; }
       const sc = (att && att.scores) || {};
@@ -925,11 +976,12 @@ async function start() {
   }, 2000);
 
   const PORT = process.env.PORT || 3000;
-  server.listen(PORT, () => {
+  const HOST = process.env.HOST || "0.0.0.0";
+  server.listen(PORT, HOST, () => {
     const stats = rooms.getRoomStatistics();
     console.log(`
 ══════════════════════════════════════════════════════
-  Talkomatic Server v${CONFIG.VERSIONS.SERVER} started on port ${PORT}
+  Talkomatic Server v${CONFIG.VERSIONS.SERVER} listening on ${HOST}:${PORT}
   Node.js ${process.version}
   Rooms: ${stats.totalRooms}/${stats.currentLimit} | Users: ${stats.totalUsers}
   Antibot: ${CONFIG.FEATURES.ENABLE_STRICT_ANTIBOT ? "ON" : "OFF"} | Bot Tokens: ${CONFIG.FEATURES.ENABLE_BOT_TOKENS ? "ON" : "OFF"}

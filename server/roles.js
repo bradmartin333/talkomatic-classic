@@ -12,9 +12,11 @@ const fsp = require("fs").promises;
 const crypto = require("crypto");
 const { CONFIG } = require("./state");
 
-const MOD_KEYS_PATH = path.join(__dirname, "..", "mod-keys.json");
-const MODLOG_PATH = path.join(__dirname, "..", "modlog.txt");
-const KEY_ACTIVITY_PATH = path.join(__dirname, "..", "key-activity.json");
+const { DATA_DIR } = require("./datadir");
+
+const MOD_KEYS_PATH = path.join(DATA_DIR, "mod-keys.json");
+const MODLOG_PATH = path.join(DATA_DIR, "modlog.txt");
+const KEY_ACTIVITY_PATH = path.join(DATA_DIR, "key-activity.json");
 
 // In-memory mirror of mod-keys.json: [{ hash, label, level, grantedBy, grantedAt }]
 let modKeys = [];

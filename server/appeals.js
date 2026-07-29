@@ -16,7 +16,9 @@ const path = require("path");
 const fs = require("fs");
 const fsp = require("fs").promises;
 
-const STORE_PATH = path.join(__dirname, "..", "appeals.json");
+const { DATA_DIR } = require("./datadir");
+
+const STORE_PATH = path.join(DATA_DIR, "appeals.json");
 const MAX = 2000;
 const WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // keep appeals for 30 days
 

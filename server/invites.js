@@ -18,7 +18,9 @@ const fs = require("fs");
 const fsp = require("fs").promises;
 const crypto = require("crypto");
 
-const INV_PATH = path.join(__dirname, "..", "invites.json");
+const { DATA_DIR } = require("./datadir");
+
+const INV_PATH = path.join(DATA_DIR, "invites.json");
 const MAX_DEVICES = 50000;
 const MAX_IPS = 8;
 const MILESTONE_MOD = 10; // active invites → auto-files a mod application

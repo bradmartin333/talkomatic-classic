@@ -12,7 +12,9 @@ const path = require("path");
 const fs = require("fs");
 const fsp = require("fs").promises;
 
-const STORE_PATH = path.join(__dirname, "..", "identity.json");
+const { DATA_DIR } = require("./datadir");
+
+const STORE_PATH = path.join(DATA_DIR, "identity.json");
 
 // "Active" thresholds - tunable. A device is active once it has been seen on
 // at least 2 distinct days, accumulated >= 15 minutes of presence, and shown

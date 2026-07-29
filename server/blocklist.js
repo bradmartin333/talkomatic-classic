@@ -9,7 +9,9 @@ const fs = require("fs");
 const fsp = require("fs").promises;
 const { state } = require("./state");
 
-const STORE_PATH = path.join(__dirname, "..", "blocklist.json");
+const { DATA_DIR } = require("./datadir");
+
+const STORE_PATH = path.join(DATA_DIR, "blocklist.json");
 let saveTimer = null;
 
 function snapshot() {
