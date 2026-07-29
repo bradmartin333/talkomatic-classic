@@ -12,7 +12,10 @@
       crossorigin="anonymous"
       referrerpolicy="no-referrer"
     />
-    <link rel="stylesheet" href="stylesheets/room.css?v=2.5.12" />
+    <link rel="stylesheet" href="stylesheets/room.css?v=2.6.1" />
+    <!-- Applies the saved custom theme before first paint -->
+    <link rel="stylesheet" href="stylesheets/effects.css?v=1.1.0" />
+    <script src="js/theme-engine.js?v=2.1.0"></script>
     <link rel="icon" type="image/png" href="images/icons/favicon.png" />
     <style>
       /* Emote system */
@@ -59,7 +62,7 @@
       .emotes-button {
         padding: 5px 10px;
         background-color: #444;
-        color: white;
+        color: var(--tk-text);
         border: none;
         border-radius: 4px;
         cursor: pointer;
@@ -99,14 +102,14 @@
       }
       .emote-item span {
         font-size: 10px;
-        color: white;
+        color: var(--tk-text);
         margin-top: 5px;
         text-align: center;
         word-break: break-all;
       }
       .chat-input {
-        background-color: black !important;
-        color: orange !important;
+        background-color: var(--tk-chat-bg, #000) !important;
+        color: var(--tk-chat-text, orange) !important;
         overflow-x: hidden !important;
         overflow-y: auto !important;
         outline: none !important;
@@ -125,7 +128,7 @@
       .app-directory-toggle {
         background: none;
         border: none;
-        color: white;
+        color: var(--tk-text);
         cursor: pointer;
         padding: 8px 12px;
         border-radius: 4px;
@@ -139,7 +142,7 @@
         margin-right: 8px;
       }
       .app-directory-toggle:hover {
-        background-color: rgba(255, 152, 0, 0.1);
+        background-color: color-mix(in srgb, var(--tk-accent) 10%, transparent);
       }
       .app-directory-toggle img {
         width: 18px;
@@ -149,8 +152,8 @@
         position: absolute;
         top: 100%;
         right: 120px;
-        background-color: #202020;
-        border: 1px solid #616161;
+        background-color: var(--tk-bg);
+        border: 1px solid var(--tk-border);
         border-radius: 8px;
         box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
         z-index: 10000;
@@ -175,12 +178,12 @@
         }
       }
       .app-directory-header {
-        color: #ff9800;
+        color: var(--tk-accent);
         font-size: 16px;
         font-weight: bold;
         margin-bottom: 1rem;
         padding-bottom: 0.5rem;
-        border-bottom: 1px solid #616161;
+        border-bottom: 1px solid var(--tk-border);
       }
       .app-grid {
         display: grid;
@@ -192,16 +195,16 @@
         align-items: center;
         padding: 12px;
         border-radius: 6px;
-        background-color: #000000;
-        border: 1px solid #616161;
+        background-color: var(--tk-card);
+        border: 1px solid var(--tk-border);
         cursor: pointer;
         transition: all 0.2s ease;
         text-decoration: none;
-        color: white;
+        color: var(--tk-text);
       }
       .app-item:hover {
-        border-color: #ff9800;
-        background-color: #1a1a1a;
+        border-color: var(--tk-accent);
+        background-color: var(--tk-tile);
         transform: translateY(-1px);
       }
       .app-item.disabled {
@@ -209,8 +212,8 @@
         cursor: not-allowed;
       }
       .app-item.disabled:hover {
-        border-color: #616161;
-        background-color: #000000;
+        border-color: var(--tk-border);
+        background-color: var(--tk-card);
         transform: none;
       }
       .app-icon {
@@ -224,7 +227,7 @@
         padding: 4px;
       }
       .app-icon.placeholder {
-        background: linear-gradient(135deg, #ff9800, #ff8c42);
+        background: linear-gradient(135deg, var(--tk-accent), #ff8c42);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -237,7 +240,7 @@
       .app-name {
         font-size: 14px;
         font-weight: bold;
-        color: white;
+        color: var(--tk-text);
         margin-bottom: 2px;
       }
       .app-description {
@@ -254,21 +257,21 @@
         margin-left: 8px;
       }
       .status-available {
-        background: #ff9800;
+        background: var(--tk-accent);
         color: #000000;
       }
       .status-coming-soon {
-        background: #616161;
+        background: var(--tk-border);
         color: #ffffff;
       }
       .app-directory-footer {
         margin-top: 1rem;
         padding-top: 1rem;
-        border-top: 1px solid #616161;
+        border-top: 1px solid var(--tk-border);
         text-align: center;
       }
       .view-all-link {
-        color: #ff9800;
+        color: var(--tk-accent);
         text-decoration: none;
         font-size: 12px;
         font-weight: bold;
@@ -330,7 +333,7 @@
       }
       .feature-announce-box {
         background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
-        border: 2px solid #ff9800;
+        border: 2px solid var(--tk-accent);
         border-radius: 14px;
         padding: 28px 32px;
         max-width: 420px;
@@ -355,7 +358,7 @@
       }
       .feature-announce-tag {
         display: inline-block;
-        background: #ff9800;
+        background: var(--tk-accent);
         color: #000;
         font-size: 11px;
         font-weight: bold;
@@ -381,12 +384,12 @@
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        background: rgba(255, 152, 0, 0.1);
+        background: color-mix(in srgb, var(--tk-accent) 10%, transparent);
         border: 1px solid rgba(255, 152, 0, 0.3);
         border-radius: 8px;
         padding: 8px 14px;
         margin: 12px 0 20px;
-        color: #ff9800;
+        color: var(--tk-accent);
         font-size: 13px;
         font-weight: 500;
       }
@@ -399,7 +402,7 @@
         margin: 0 0 18px;
       }
       .feature-announce-btn {
-        background: #ff9800;
+        background: var(--tk-accent);
         color: #000;
         border: none;
         padding: 10px 32px;
@@ -565,11 +568,12 @@
     <script src="js/word-filter-client.js?v=2.1.3"></script>
     <script src="js/identity.js?v=1.0.2"></script>
     <script src="js/connection-overlay.js?v=1.1.3"></script>
-    <script src="js/room-client.js?v=3.12.1"></script>
+    <script src="js/room-client.js?v=3.13.0"></script>
     <script src="js/talkoboard.js?v=1.6.4"></script>
     <script src="js/piano-client.js?v=2.1.13"></script>
     <script src="js/pong-client.js?v=2.1.1"></script>
     <script src="js/puzzle-client.js?v=1.1.0"></script>
+    <script src="js/theme-editor.js?v=2.1.0"></script>
 
     <script src="js/games-client.js?v=1.0.6"></script>
 

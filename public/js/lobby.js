@@ -293,7 +293,14 @@ document.addEventListener("DOMContentLoaded", async () => {
       const db = await dbPromise;
       await db.delete("settings", "currentTheme");
     } catch (_) {}
-  } else if (saved && saved.content) {
+  } else if (
+    saved &&
+    saved.content &&
+    // A custom token theme from the visual editor takes precedence over the
+    // old full-CSS gallery themes (their literal colors would fight it).
+    !localStorage.getItem("talkomaticThemeTokens") &&
+    !localStorage.getItem("talkomaticThemeV2")
+  ) {
     const styleEl = document.createElement("style");
     (document.head || document.getElementsByTagName("head")[0]).appendChild(
       styleEl,

@@ -1,0 +1,89 @@
+[
+  {
+    "title": "Mocha",
+    "desc": "Cozy Catppuccin browns and pinks. Easy on the eyes at night.",
+    "by": "Talkomatic",
+    "image": "themes/mocha.png",
+    "state": {
+      "lobby": {
+        "tokens": {
+          "accent": "#f2cdcd", "accent-hover": "#eba0ac", "detail": "#89dceb",
+          "bg": "#313244", "text": "#cdd6f4", "muted": "#a6adc8", "border": "#585b70",
+          "panel": "#45475a", "tile": "#1e1e2e", "tile-hover": "#313244",
+          "card": "#11111b", "cream": "#f5e0dc", "cream-text": "#11111b"
+        },
+        "effect": "",
+        "fonts": {}
+      },
+      "room": {
+        "tokens": {
+          "accent": "#f2cdcd", "accent-hover": "#eba0ac", "detail": "#89dceb",
+          "bg": "#313244", "text": "#cdd6f4", "muted": "#a6adc8", "border": "#585b70",
+          "tile": "#1e1e2e", "tile-hover": "#313244",
+          "card": "#11111b", "cream": "#f5e0dc", "cream-text": "#11111b",
+          "chat-text": "#f2cdcd", "chat-bg": "#11111b"
+        },
+        "effect": "",
+        "fonts": {}
+      }
+    }
+  },
+  {
+    "title": "Aura",
+    "desc": "Deep purple night sky with soft glass panels.",
+    "by": "Talkomatic",
+    "image": "themes/aura.png",
+    "state": {
+      "lobby": {
+        "tokens": {
+          "accent": "#b388ff", "accent-hover": "#9575cd", "detail": "#80deea",
+          "bg": "#0f0b1e", "text": "#ede7f6", "muted": "#b0a6cc", "border": "#4a3f6b",
+          "panel": "#2a2140", "tile": "#191230", "tile-hover": "#241a3d",
+          "card": "#0a0716", "cream": "#ede7f6", "cream-text": "#1a1033"
+        },
+        "effect": "glass",
+        "fonts": {}
+      },
+      "room": {
+        "tokens": {
+          "accent": "#b388ff", "accent-hover": "#9575cd", "detail": "#80deea",
+          "bg": "#0f0b1e", "text": "#ede7f6", "muted": "#b0a6cc", "border": "#4a3f6b",
+          "tile": "#191230", "tile-hover": "#241a3d",
+          "card": "#0a0716", "cream": "#ede7f6", "cream-text": "#1a1033",
+          "chat-text": "#b388ff", "chat-bg": "#0a0716"
+        },
+        "effect": "glass",
+        "fonts": {}
+      }
+    }
+  },
+  {
+    "title": "Vanilla",
+    "desc": "A warm light theme. Paper background, classic orange accent.",
+    "by": "Talkomatic",
+    "image": "themes/vanilla.png",
+    "state": {
+      "lobby": {
+        "tokens": {
+          "accent": "#e65100", "accent-hover": "#bf360c", "detail": "#00838f",
+          "bg": "#f5f1e8", "text": "#1a1a1a", "muted": "#5a5a5a", "border": "#b5ac98",
+          "panel": "#d8d0bd", "tile": "#efe9db", "tile-hover": "#e5dccb",
+          "card": "#fffdf6", "cream": "#2f2a20", "cream-text": "#f5f1e8"
+        },
+        "effect": "",
+        "fonts": {}
+      },
+      "room": {
+        "tokens": {
+          "accent": "#e65100", "accent-hover": "#bf360c", "detail": "#00838f",
+          "bg": "#f5f1e8", "text": "#1a1a1a", "muted": "#5a5a5a", "border": "#b5ac98",
+          "tile": "#efe9db", "tile-hover": "#e5dccb",
+          "card": "#fffdf6", "cream": "#2f2a20", "cream-text": "#f5f1e8",
+          "chat-text": "#b34700", "chat-bg": "#fffdf6"
+        },
+        "effect": "",
+        "fonts": {}
+      }
+    }
+  }
+]

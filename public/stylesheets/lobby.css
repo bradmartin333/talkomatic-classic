@@ -12,46 +12,65 @@
 
 /* Talkomatic Colours */
 :root {
-  --primary: #ff9800;
+  /* Theme tokens: the whole visual language in a handful of knobs. The
+     visual theme editor overrides these per device (theme-engine.js). */
+  --tk-accent: #ff9800;
+  --tk-accent-hover: #f57c00;
+  --tk-detail: #01ffff;
+  --tk-bg: #202020;
+  --tk-text: #ffffff;
+  --tk-muted: #cccccc;
+  --tk-border: #616161;
+  --tk-panel: #616161;
+  --tk-tile: #1b1b1b;
+  --tk-tile-hover: #242424;
+  --tk-card: #000000;
+  --tk-cream: #fdf5e6;
+  --tk-cream-text: #000000;
+  --tk-chat-text: #ffa500;
+  --tk-chat-bg: #000000;
+  --tk-input-bg: #ffffff;
 
-  --background-color: #202020;
-  --left-panel-background-color: #616161;
-  --external-links-background-color: #1b1b1b;
-  --hover-external-links-background-color: #242424;
-  --visited-external-links-background-color: #1b1b1b;
-  --known-as-section-background-color: #fdf5e6;
-  --logform-background-color: white;
-  --logform-button-background-color: black;
+  --primary: var(--tk-accent);
+
+  --background-color: var(--tk-bg);
+  --left-panel-background-color: var(--tk-panel);
+  --external-links-background-color: var(--tk-tile);
+  --hover-external-links-background-color: var(--tk-tile-hover);
+  --visited-external-links-background-color: var(--tk-tile);
+  --known-as-section-background-color: var(--tk-cream);
+  --logform-background-color: var(--tk-input-bg);
+  --logform-button-background-color: var(--tk-card);
   --hover-logform-button-background-color: #cccccc;
-  --create-room-section-background-color: #fdf5e6;
-  --learn-more-section-background-color: #616161;
-  --room-name-input-background-color: white;
-  --go-chat-button-background-color: black;
-  --hover-go-chat-button-background-color: #f57c00;
-  --right-panel-background-color: #202020;
-  --room-background-color: black;
-  --room-enter-button-background-color: black;
+  --create-room-section-background-color: var(--tk-cream);
+  --learn-more-section-background-color: var(--tk-panel);
+  --room-name-input-background-color: var(--tk-input-bg);
+  --go-chat-button-background-color: var(--tk-card);
+  --hover-go-chat-button-background-color: var(--tk-accent-hover);
+  --right-panel-background-color: var(--tk-bg);
+  --room-background-color: var(--tk-card);
+  --room-enter-button-background-color: var(--tk-card);
   --toggle-menu-button-background-color: #9e9e9e;
-  --hide-menu-button-background-color: #616161;
+  --hide-menu-button-background-color: var(--tk-panel);
   --hover-hide-menu-button-background-color: #cccccc;
   --modal-background-color: rgba(0, 0, 0, 0.8);
-  --modal-content-info-background-color: #202020;
-  --close-modal-background-color: black;
-  --layout-item-background-color: black;
-  --modal-scroll-bar-track-background-color: #202020;
-  --modal-scroll-bar-thumb-background-color: #616161;
+  --modal-content-info-background-color: var(--tk-bg);
+  --close-modal-background-color: var(--tk-card);
+  --layout-item-background-color: var(--tk-card);
+  --modal-scroll-bar-track-background-color: var(--tk-bg);
+  --modal-scroll-bar-thumb-background-color: var(--tk-border);
   --custom-modal-background-color: rgba(0, 0, 0, 0.85);
-  --modal-content-background-color: #202020;
+  --modal-content-background-color: var(--tk-bg);
   --close-modal-button-background-color: rgba(0, 0, 0, 0.3);
   --hover-close-modal-button-background-color: rgba(0, 0, 0, 0.6);
   --modal-title-background-gradient-top-color: #616161;
   --modal-title-background-gradient-bottom-color: #303030;
-  --modal-input-background-color: black;
-  --modal-button-background-color: black;
+  --modal-input-background-color: var(--tk-card);
+  --modal-button-background-color: var(--tk-card);
   --hover-modal-button-background-color: #2a2a2a;
-  --modal-confirm-button-background-color: black;
-  --hover-modal-confirm-button-background-color: black;
-  --spectate-button-background-color: black;
+  --modal-confirm-button-background-color: var(--tk-card);
+  --hover-modal-confirm-button-background-color: var(--tk-card);
+  --spectate-button-background-color: var(--tk-card);
   --spectator-indicator-background-color: #ffeb3b;
   --spectator-count-background-color: rgba(255, 235, 59, 0.1);
   --spectator-notice-background-color: rgba(255, 235, 59, 0.95);
@@ -59,43 +78,43 @@
   --spectator-room-type-background-color: #ffeb3b;
   --disabled-emotes-button-background-color: #333333;
 
-  --left-panel-color: white;
-  --lobby-label-color: white;
-  --external-links-color: white;
-  --known-as-section-color: black;
-  --logform-button-color: white;
-  --create-room-section-color: black;
-  --learn-more-section-color: white;
-  --hover-learn-more-section-color: #f57c00;
-  --lobby-form-color: white;
-  --lobby-form-radio-label-color: white;
-  --go-chat-button-color: white;
+  --left-panel-color: var(--tk-text);
+  --lobby-label-color: var(--tk-text);
+  --external-links-color: var(--tk-text);
+  --known-as-section-color: var(--tk-cream-text);
+  --logform-button-color: var(--tk-text);
+  --create-room-section-color: var(--tk-cream-text);
+  --learn-more-section-color: var(--tk-text);
+  --hover-learn-more-section-color: var(--tk-accent-hover);
+  --lobby-form-color: var(--tk-text);
+  --lobby-form-radio-label-color: var(--tk-text);
+  --go-chat-button-color: var(--tk-text);
   --right-panel-color: #202020;
-  --room-name-color: white;
-  --room-details-color: #01ffff;
-  --user-detail-color: white;
-  --user-detail-number-color: white;
-  --room-enter-button-color: white;
+  --room-name-color: var(--tk-text);
+  --room-details-color: var(--tk-detail);
+  --user-detail-color: var(--tk-text);
+  --user-detail-number-color: var(--tk-text);
+  --room-enter-button-color: var(--tk-text);
   --hover-room-enter-button-color: black;
-  --room-bottom-section-color: #cccccc;
-  --copyright-info-color: white;
-  --toggle-menu-button-color: white;
-  --hide-menu-button-color: white;
+  --room-bottom-section-color: var(--tk-muted);
+  --copyright-info-color: var(--tk-text);
+  --toggle-menu-button-color: var(--tk-text);
+  --hide-menu-button-color: var(--tk-text);
   --hover-hide-menu-button-color: black;
-  --modal-content-info-color: white;
+  --modal-content-info-color: var(--tk-text);
   --hover-close-modal-color: black;
-  --layout-item-color: white;
-  --creator-color: white;
-  --creator-link-color: white;
-  --visited-creator-link-color: white;
+  --layout-item-color: var(--tk-text);
+  --creator-color: var(--tk-text);
+  --creator-link-color: var(--tk-text);
+  --visited-creator-link-color: var(--tk-text);
   --hover-creator-link-color: #c7c7c7;
-  --modal-content-color: white;
+  --modal-content-color: var(--tk-text);
   --hover-close-modal-button-color: #ffff00;
-  --modal-message-color: #f0f0f0;
-  --input-error-color: #ff5252;
-  --modal-button-color: white;
-  --modal-confirm-button-color: white;
-  --spectate-button-color: white;
+  --modal-message-color: var(--tk-muted);
+  --input-error-color: var(--tk-error, #ff5252);
+  --modal-button-color: var(--tk-text);
+  --modal-confirm-button-color: var(--tk-text);
+  --spectate-button-color: var(--tk-text);
   --hover-spectate-button-color: black;
   --full-room-name-color: #949494;
   --spectator-indicator-color: #333333;
@@ -106,9 +125,9 @@
   --logform-border-color: white;
   --room-name-input-border-color: white;
   --room-top-border-color: white;
-  --modal-content-info-border-color: #616161;
-  --close-modal-border-color: #616161;
-  --layout-item-border-color: #616161;
+  --modal-content-info-border-color: var(--tk-border);
+  --close-modal-border-color: var(--tk-border);
+  --layout-item-border-color: var(--tk-border);
   --close-modal-button-border-color: #444444;
   --modal-input-border-color: #444444;
   --focus-modal-input-border-color: cyan;
@@ -117,7 +136,7 @@
   --spectator-count-border-color: rgba(255, 235, 59, 0.3);
 
   --modal-content-info-shadow-color: rgba(0, 0, 0, 0.5);
-  --modal-content-shadow-color: rgba(255, 152, 0, 0.5);
+  --modal-content-shadow-color: color-mix(in srgb, var(--tk-accent) 50%, transparent);
   --focus-modal-input-shadow-color: rgba(0, 255, 255, 0.3);
   --hover-spectate-button-shadow-color: rgba(255, 235, 59, 0.3);
   --spectator-notice-shadow-color: rgba(0, 0, 0, 0.3);
@@ -163,8 +182,7 @@ html {
   padding: 0; /* Remove default padding */
   height: 100%; /* Ensure body takes up full viewport height */
   overflow: hidden; /* Hide overflow to prevent unwanted scroll bars */
-  font-family:
-    talkoSS, Arial, sans-serif; /* Use custom font, fallback to Arial */
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif); /* Use custom font, fallback to Arial */
   background-color: var(--background-color); /* Dark background color */
 }
 
@@ -242,7 +260,7 @@ html {
 
 /* Talkomatic title with bold orange text */
 .panel-header .talkomatic {
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
   font-weight: bold;
   font-size: 24px;
   color: var(--primary); /* Bright orange for emphasis */
@@ -251,7 +269,7 @@ html {
 
 /* Lobby label in white next to the Talkomatic logo */
 .panel-header .lobby {
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
   font-weight: normal;
   font-size: 24px;
   color: var(--lobby-label-color);
@@ -354,7 +372,7 @@ html {
   border: 1px solid var(--logform-border-color); /* White border */
   background-color: var(--logform-background-color); /* White background */
   font-size: 16px;
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
 }
 
 /* Submit button at the bottom of the form */
@@ -370,7 +388,7 @@ html {
   color: var(--logform-button-color); /* White text */
   border: 1px solid var(--primary); /* Orange border */
   cursor: pointer; /* Pointer cursor on hover */
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
   font-weight: light;
   transition:
     background-color 0.3s ease,
@@ -456,7 +474,7 @@ html {
     --room-name-input-background-color
   ); /* White background */
   font-size: 16px;
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
 }
 
 /* Layout for radio button groups */
@@ -514,7 +532,7 @@ html {
   border: 1px solid var(--primary); /* Orange border */
   border-radius: 4px; /* Rounded corners */
   cursor: pointer;
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
   font-size: 14px;
   transition: background-color 0.3s ease; /* Smooth hover transition */
 }
@@ -541,7 +559,7 @@ html {
 
 /* Heading in the right panel */
 .right-panel h2 {
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
   font-weight: normal;
   font-size: 25px;
   color: var(--primary); /* Orange text for emphasis */
@@ -643,7 +661,7 @@ html {
   padding: 8px 16px;
   border-radius: 5px;
   cursor: pointer;
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
   font-size: 14px;
   transition:
     background-color 0.3s ease,
@@ -681,7 +699,7 @@ html {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
   font-size: 14px;
 }
 
@@ -727,7 +745,7 @@ html {
   border: none;
   padding: 10px;
   cursor: pointer;
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
   transition: opacity 0.3s ease-in-out; /* Smooth transition */
 }
 
@@ -809,7 +827,7 @@ html {
   box-shadow: 0 4px 20px var(--modal-content-info-shadow-color);
   border: 1px solid var(--modal-content-info-border-color);
   color: var(--modal-content-info-color);
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
 }
 
 .close-modal {
@@ -1109,7 +1127,7 @@ html {
   z-index: 1000;
   justify-content: center;
   align-items: center;
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
   padding: 20px;
   box-sizing: border-box;
 }
@@ -1237,7 +1255,7 @@ html {
   background-color: var(--modal-button-background-color);
   color: var(--modal-button-color);
   border: 1px solid var(--modal-button-border-color);
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
   transition: all 0.2s;
   min-width: 80px;
 }
@@ -1592,13 +1610,19 @@ button:disabled {
   vertical-align: middle;
 }
 
+/* Theme editor menu icon */
+.fa-palette {
+  margin-right: 10px;
+  color: #e91e63;
+}
+
 /* ── Discord avatar card in the sign-in form ── */
 .pfp-card {
   margin-bottom: 15px;
   border: 1px solid #ddd3bd;
   border-radius: 10px;
   background: #ffffff;
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
   overflow: hidden;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   transition:
@@ -1749,7 +1773,7 @@ button:disabled {
   font-size: 12px;
   font-weight: bold;
   cursor: pointer;
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
 }
 
 #logform .pfp-help-btn:hover {

@@ -30,6 +30,7 @@ blocklist.json
 warnings.json
 appeals.json
 suggestions.json
+community-themes.json
 ban-history.json
 
 # Dependency directories

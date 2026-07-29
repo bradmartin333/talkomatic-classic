@@ -1,3 +1,24 @@
+:root {
+  /* Theme tokens, shared with the lobby (see theme-engine.js). The visual
+     theme editor overrides these per device. */
+  --tk-accent: #ff9800;
+  --tk-accent-hover: #f57c00;
+  --tk-detail: #01ffff;
+  --tk-bg: #202020;
+  --tk-text: #ffffff;
+  --tk-muted: #cccccc;
+  --tk-border: #616161;
+  --tk-panel: #616161;
+  --tk-tile: #1b1b1b;
+  --tk-tile-hover: #242424;
+  --tk-card: #000000;
+  --tk-cream: #fdf5e6;
+  --tk-cream-text: #000000;
+  --tk-chat-text: #ffa500;
+  --tk-chat-bg: #000000;
+  --tk-input-bg: #ffffff;
+}
+
 /* =============================================================================
    Talkomatic Room Styles
    -----------------------------------------------------------------------------
@@ -58,7 +79,7 @@ html {
   /* Use dynamic viewport units to prevent white gaps when mobile keyboards appear */
   height: 100vh;
   height: 100dvh;
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
   /* Dark fill so mobile overscroll / keyboard gaps blend with the app instead
      of flashing a white strip at the top and bottom on real devices. */
   background-color: #000000;
@@ -90,8 +111,8 @@ html {
   justify-content: space-between;
   align-items: center;
   padding: 10px 20px;
-  background-color: black;
-  color: white;
+  background-color: var(--tk-card);
+  color: var(--tk-text);
 }
 
 .navbar-section {
@@ -122,19 +143,19 @@ html {
 
 .brand {
   font-size: 24px;
-  color: #ff9800;
+  color: var(--tk-accent);
   text-align: center;
 }
 
 .leave-room {
   font-size: 14px;
   cursor: pointer;
-  background-color: black;
-  color: white;
-  border: 1px solid #ff9800;
+  background-color: var(--tk-card);
+  color: var(--tk-text);
+  border: 1px solid var(--tk-accent);
   padding: 10px;
   border-radius: 5px;
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
   white-space: nowrap;
 }
 
@@ -166,7 +187,7 @@ html {
 
 /* Second navbar specific styles: room info */
 .second-navbar {
-  background-color: #1a1a1a;
+  background-color: var(--tk-tile);
 }
 
 .room-type {
@@ -180,7 +201,7 @@ html {
 }
 
 .room-id {
-  color: #ff9800;
+  color: var(--tk-accent);
 }
 
 /* FIX #6: Room type + Emoticons button live side-by-side */
@@ -218,7 +239,7 @@ html {
   display: flex;
   gap: 5px;
   padding: 0 5px;
-  background-color: #202020;
+  background-color: var(--tk-bg);
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -246,15 +267,15 @@ html {
 
 /* Highlight for the current user’s messages */
 .chat-row.current-user {
-  border-color: orange;
+  border-color: var(--tk-chat-text);
 }
 
 /* Styling for the user information above chat messages */
 .user-info {
   font-size: 14px;
   padding: 8px;
-  color: #ffffff;
-  background: linear-gradient(to bottom, #616161, #303030);
+  color: var(--tk-text);
+  background: linear-gradient(to bottom, var(--tk-border), var(--tk-userbar-bottom, #303030));
   display: flex;
   align-items: center;
 }
@@ -311,8 +332,8 @@ html {
   font-size: 18px;
   resize: none;
   box-sizing: border-box;
-  background-color: black;
-  color: #ff9800;
+  background-color: var(--tk-card);
+  color: var(--tk-accent);
   outline: none; /* Remove default focus outline */
 }
 
@@ -324,7 +345,7 @@ html {
      =============================================================================*/
 
 .invite-section {
-  background-color: #1a1a1a;
+  background-color: var(--tk-tile);
   padding: 10px 20px;
   display: flex;
   flex-direction: column;
@@ -601,7 +622,7 @@ html {
   z-index: 1000;
   justify-content: center;
   align-items: center;
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
   padding: 20px;
   box-sizing: border-box;
 }
@@ -621,14 +642,14 @@ html {
 }
 
 .modal-content {
-  background-color: #202020;
-  color: white;
+  background-color: var(--tk-bg);
+  color: var(--tk-text);
   border-radius: 8px;
   padding: 24px;
   width: 90%;
   max-width: 500px;
-  box-shadow: 0 0 20px rgba(255, 152, 0, 0.5);
-  border: 1px solid #ff9800;
+  box-shadow: 0 0 20px color-mix(in srgb, var(--tk-accent) 50%, transparent);
+  border: 1px solid var(--tk-accent);
   position: relative;
   margin: 0 auto;
 }
@@ -644,7 +665,7 @@ html {
   justify-content: center;
   font-size: 28px;
   cursor: pointer;
-  color: #ff9800;
+  color: var(--tk-accent);
   background-color: rgba(0, 0, 0, 0.3);
   border-radius: 4px;
   border: 1px solid #444;
@@ -663,8 +684,8 @@ html {
 #modalTitle {
   margin-top: 0;
   margin-right: 30px; /* Space for the X button */
-  background: linear-gradient(to bottom, #616161, #303030);
-  color: #ff9800;
+  background: linear-gradient(to bottom, var(--tk-border), var(--tk-userbar-bottom, #303030));
+  color: var(--tk-accent);
   padding: 10px 15px;
   border-radius: 4px 4px 0 0;
   font-weight: bold;
@@ -687,10 +708,10 @@ html {
   width: 100%;
   padding: 12px;
   margin-bottom: 10px;
-  background-color: black;
+  background-color: var(--tk-card);
   border: 1px solid #444;
   border-radius: 4px;
-  color: #ff9800;
+  color: var(--tk-accent);
   font-family: talkoText, Arial, sans-serif;
   font-size: 18px;
   box-sizing: border-box;
@@ -722,22 +743,22 @@ html {
   border-radius: 5px;
   cursor: pointer;
   font-size: 15px;
-  background-color: black;
-  color: white;
+  background-color: var(--tk-card);
+  color: var(--tk-text);
   border: 1px solid #444;
-  font-family: talkoSS, Arial, sans-serif;
+  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
   transition: all 0.2s;
   min-width: 80px;
 }
 
 .modal-confirm-btn {
-  background-color: black;
-  color: white;
-  border: 1px solid #ff9800;
+  background-color: var(--tk-card);
+  color: var(--tk-text);
+  border: 1px solid var(--tk-accent);
 }
 
 .modal-confirm-btn:hover {
-  background-color: #ff9800;
+  background-color: var(--tk-accent);
   color: black;
   transform: translateY(-2px);
 }
@@ -905,7 +926,7 @@ html {
   margin-left: auto;
   padding-left: 10px;
   font-size: 10px;
-  color: #ffffff;
+  color: var(--tk-text);
   font-family: monospace;
   user-select: all;
   white-space: nowrap;
@@ -914,7 +935,7 @@ html {
 /* =============================================================================
    TALKOBOARD v3 - Collaborative Whiteboard
    -----------------------------------------------------------------------------
-   Uses the app's own palette (#202020 / #1a1a1a / #616161 / #ff9800) with
+   Uses the app's own palette (var(--tk-bg) / var(--tk-tile) / var(--tk-border) / var(--tk-accent)) with
    FontAwesome icons so the board reads as part of Talkomatic. The canvas stays
    white so it works like a real whiteboard. Toolbar groups, a color panel
    (palette, custom picker, eyedropper, recents, teammates' colors), undo/redo,
@@ -978,7 +999,7 @@ html {
   flex-shrink: 0;
 }
 .tb-brand i {
-  color: #ff9800;
+  color: var(--tk-accent);
   font-size: 18px;
 }
 
@@ -1024,10 +1045,10 @@ html {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 .tb-tool-btn.active {
-  background: #ff9800;
-  color: #ffffff;
-  border-color: #ff9800;
-  box-shadow: 0 1px 4px rgba(255, 152, 0, 0.45);
+  background: var(--tk-accent);
+  color: var(--tk-text);
+  border-color: var(--tk-accent);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--tk-accent) 45%, transparent);
 }
 .tb-tool-btn.disabled {
   opacity: 0.3;
@@ -1060,7 +1081,7 @@ html {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 .tb-color-btn.active {
-  border-color: #ff9800;
+  border-color: var(--tk-accent);
 }
 .tb-color-current {
   width: 22px;
@@ -1090,7 +1111,7 @@ html {
 }
 .tb-size-wrap input[type="range"] {
   width: 90px;
-  accent-color: #ff9800;
+  accent-color: var(--tk-accent);
   cursor: pointer;
 }
 .tb-size-label {
@@ -1142,7 +1163,7 @@ html {
 .tb-close:hover {
   background: #e5484d;
   border-color: #e5484d;
-  color: #ffffff;
+  color: var(--tk-text);
 }
 
 /* ── Canvas Area ───────────────────────────────────────────────────────────── */
@@ -1182,7 +1203,7 @@ html {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #ff9800;
+  background: var(--tk-accent);
   border: 1.5px solid #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
@@ -1191,8 +1212,8 @@ html {
   position: absolute;
   top: 12px;
   left: 8px;
-  background: #1a1a1a;
-  color: #fff;
+  background: var(--tk-tile);
+  color: var(--tk-text);
   font-size: 10px;
   padding: 2px 6px;
   border-radius: 4px;
@@ -1211,8 +1232,8 @@ html {
   left: 10px;
   width: 234px;
   max-width: calc(100% - 20px);
-  background: #202020;
-  border: 1px solid #616161;
+  background: var(--tk-bg);
+  border: 1px solid var(--tk-border);
   border-radius: 8px;
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
   padding: 12px;
@@ -1257,12 +1278,12 @@ html {
   transform: scale(1.12);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.5),
-    0 0 0 2px #ff9800;
+    0 0 0 2px var(--tk-accent);
 }
 .tb-swatch.active {
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.5),
-    0 0 0 2px #ff9800;
+    0 0 0 2px var(--tk-accent);
 }
 /* Gradient brushes are wider so the colors read clearly */
 .tb-gradient-row {
@@ -1283,7 +1304,7 @@ html {
   align-items: center;
   gap: 8px;
   background: #000000;
-  border: 1px solid #616161;
+  border: 1px solid var(--tk-border);
   border-radius: 6px;
   padding: 6px 8px;
   cursor: pointer;
@@ -1292,8 +1313,8 @@ html {
   font-weight: 600;
 }
 .tb-custom-pick:hover {
-  background: #1a1a1a;
-  border-color: #ff9800;
+  background: var(--tk-tile);
+  border-color: var(--tk-accent);
 }
 .tb-custom-pick input[type="color"] {
   width: 24px;
@@ -1306,7 +1327,7 @@ html {
 .tb-eyedropper {
   width: 40px;
   background: #000000;
-  border: 1px solid #616161;
+  border: 1px solid var(--tk-border);
   border-radius: 6px;
   cursor: pointer;
   font-size: 15px;
@@ -1316,8 +1337,8 @@ html {
   justify-content: center;
 }
 .tb-eyedropper:hover {
-  background: #1a1a1a;
-  border-color: #ff9800;
+  background: var(--tk-tile);
+  border-color: var(--tk-accent);
 }
 .tb-pop-empty {
   color: #777777;
@@ -1330,7 +1351,7 @@ html {
   align-items: center;
   gap: 5px;
   background: #000000;
-  border: 1px solid #616161;
+  border: 1px solid var(--tk-border);
   border-radius: 14px;
   padding: 3px 8px 3px 4px;
   cursor: pointer;
@@ -1339,8 +1360,8 @@ html {
   max-width: 100%;
 }
 .tb-user-swatch:hover {
-  background: #1a1a1a;
-  border-color: #ff9800;
+  background: var(--tk-tile);
+  border-color: var(--tk-accent);
 }
 .tb-user-swatch .tb-swatch {
   width: 16px;
@@ -1362,8 +1383,8 @@ html {
   left: 50%;
   transform: translateX(-50%) translateY(-8px);
   background: rgba(0, 0, 0, 0.92);
-  color: #fff;
-  border: 1px solid #ff9800;
+  color: var(--tk-text);
+  border: 1px solid var(--tk-accent);
   padding: 7px 14px;
   border-radius: 6px;
   font-size: 12px;
@@ -1403,8 +1424,8 @@ html {
   height: 52px;
   border-radius: 50%;
   border: none;
-  background: #ff9800;
-  color: #ffffff;
+  background: var(--tk-accent);
+  color: var(--tk-text);
   font-size: 20px;
   cursor: pointer;
   display: inline-flex;
@@ -1482,7 +1503,7 @@ html {
   color: #1b1b22;
 }
 .tb-chat-title i {
-  color: #ff9800;
+  color: var(--tk-accent);
 }
 .tb-chat-close-btn {
   background: transparent;
@@ -1579,7 +1600,7 @@ html {
   font-family: inherit;
 }
 .tb-chat-input:focus {
-  border-color: #ff9800;
+  border-color: var(--tk-accent);
   background: #ffffff;
 }
 .tb-chat-input::placeholder {
@@ -1591,8 +1612,8 @@ html {
   height: 40px;
   border-radius: 10px;
   border: none;
-  background: #ff9800;
-  color: #ffffff;
+  background: var(--tk-accent);
+  color: var(--tk-text);
   font-size: 15px;
   cursor: pointer;
   display: inline-flex;
@@ -1806,7 +1827,7 @@ html {
   --mpp-black-radius: 5px; /* black-key bottom corner rounding */
 
   /* ====================== THEME ===================== */
-  --mpp-accent: #ff9800; /* primary accent */
+  --mpp-accent: var(--tk-accent); /* primary accent */
   --mpp-accent-ink: #11101a; /* text/icons on top of the accent */
   --mpp-scrim: rgba(0, 0, 0, 0.62); /* dim behind the modal */
   --mpp-surface: #070707; /* header + panels */
@@ -1817,7 +1838,7 @@ html {
   --mpp-text-dim: #9b97ab;
   --mpp-stage-top: #000000; /* stage background, top */
   --mpp-stage-bottom: #000000; /* stage background, bottom */
-  --mpp-felt-1: #ff9800; /* the thin rail above the keys */
+  --mpp-felt-1: var(--tk-accent); /* the thin rail above the keys */
   --mpp-felt-2: #a85f00;
 
   /* ====================== KEY COLORS ================ */
@@ -1882,7 +1903,7 @@ html {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: white;
+  color: var(--tk-text);
   font-weight: 700;
   font-size: 16px;
   letter-spacing: 0.2px;
@@ -1971,7 +1992,7 @@ html {
   transition: all 0.15s ease;
 }
 .mpp-seg-btn:hover {
-  color: #fff;
+  color: var(--tk-text);
 }
 .mpp-seg-btn.active {
   background: var(--mpp-accent);
@@ -1985,7 +2006,7 @@ html {
   background: #000000;
 
   border: 1px solid white;
-  color: white;
+  color: var(--tk-text);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -2013,7 +2034,7 @@ html {
 .mpp-close:hover {
   background: #e5484d;
   border-color: #e5484d;
-  color: #fff;
+  color: var(--tk-text);
 }
 .mpp-vol {
   display: flex;
@@ -2080,7 +2101,7 @@ html {
   padding: 5px 8px;
 }
 .mpp-tlabel {
-  color: white;
+  color: var(--tk-text);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.6px;
@@ -2093,7 +2114,7 @@ html {
   gap: 6px;
   background: #000000;
   border: 1px solid white;
-  color: white;
+  color: var(--tk-text);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -2106,7 +2127,7 @@ html {
 }
 .mpp-tbtn:hover {
   background: #2d2d2d;
-  color: #fff;
+  color: var(--tk-text);
 }
 .mpp-tbtn.on,
 .mpp-tbtn.mpp-has-crown {
@@ -2117,7 +2138,7 @@ html {
 .mpp-oct-val {
   min-width: 30px;
   text-align: center;
-  color: #fff;
+  color: var(--tk-text);
   font-weight: 700;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
@@ -2334,7 +2355,7 @@ html {
   top: 13px;
   left: 8px;
   background: var(--mpp-surface);
-  color: #fff;
+  color: var(--tk-text);
   font-size: 10px;
   padding: 2px 7px;
   border-radius: 5px;
@@ -2350,7 +2371,7 @@ html {
   left: 50%;
   transform: translateX(-50%);
   background: rgba(10, 9, 14, 0.85);
-  color: #fff;
+  color: var(--tk-text);
   padding: 8px 16px;
   border-radius: 20px;
   font-size: 13px;
@@ -2496,8 +2517,8 @@ html {
   width: min(92%, 300px);
   background: rgba(15, 13, 22, 0.82);
   border: none;
-  border-bottom: 2px solid rgba(255, 152, 0, 0.5);
-  color: #fff;
+  border-bottom: 2px solid color-mix(in srgb, var(--tk-accent) 50%, transparent);
+  color: var(--tk-text);
   font: inherit;
   font-size: 14px;
   padding: 8px 10px;
@@ -2682,7 +2703,7 @@ html {
 }
 .mpp-person-btn:hover {
   background: var(--mpp-surface-3);
-  color: #fff;
+  color: var(--tk-text);
 }
 .mpp-person-btn.on {
   background: var(--mpp-accent);

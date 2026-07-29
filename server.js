@@ -26,6 +26,7 @@ const {
   sendErrorResponse,
   promisifySessionSave,
   sanitizeMessage,
+  wordFilter,
 } = require("./server/state");
 const {
   antibotMiddleware,
@@ -47,6 +48,7 @@ const appeals = require("./server/appeals");
 const ipban = require("./server/ipban");
 const puzzle = require("./server/puzzle");
 const nsfw = require("./server/nsfw");
+const communityThemes = require("./server/themes");
 
 // ── Global Error Handlers ───────────────────────────────────────────────────
 
@@ -80,6 +82,9 @@ function gracefulFlush() {
   } catch (e) {}
   try {
     require("./server/suggestions").flushSync();
+  } catch (e) {}
+  try {
+    require("./server/themes").flushSync();
   } catch (e) {}
   try {
     require("./server/banhistory").flushSync();
@@ -1000,6 +1005,75 @@ app.post(`${API}/rooms`, apiAuth, async (req, res) => {
   } catch (e) {
     console.error("POST rooms error:", e);
     sendErrorResponse(res, ERROR_CODES.SERVER_ERROR, "Internal error", 500);
+  }
+});
+
+// ── Community themes: browse and publish visual-editor themes ──────────────
+// Submissions carry only validated tokens/effects/fonts (custom CSS is
+// rejected by design) and the title/description ALWAYS pass the word filter,
+// independent of the global automod toggle.
+
+app.get(`${API}/themes`, (req, res) => {
+  res.json({ themes: communityThemes.publicList() });
+});
+
+app.post(`${API}/themes`, (req, res) => {
+  try {
+    const userId = req.session?.userId;
+    const by = req.session?.username;
+    if (!userId || !by)
+      return sendErrorResponse(
+        res,
+        ERROR_CODES.FORBIDDEN,
+        "Sign in on the lobby first, then publish.",
+        403,
+      );
+    let title = sanitizeMessage(String(req.body?.title || ""))
+      .slice(0, 40)
+      .trim();
+    let desc = sanitizeMessage(String(req.body?.desc || ""))
+      .slice(0, 160)
+      .trim();
+    if (title.length < 3)
+      return sendErrorResponse(
+        res,
+        ERROR_CODES.VALIDATION_ERROR,
+        "Give the theme a name (3 or more characters).",
+        400,
+      );
+    title = wordFilter.filterText(title);
+    desc = wordFilter.filterText(desc);
+
+    const rawDevice =
+      typeof req.body?.deviceId === "string" ? req.body.deviceId : "";
+    const deviceId = /^[a-f0-9-]{8,64}$/i.test(rawDevice)
+      ? rawDevice.toLowerCase()
+      : null;
+
+    const result = communityThemes.submit({
+      deviceId,
+      ip: getClientIP(req),
+      userId,
+      by: wordFilter.filterText(by),
+      title,
+      desc,
+      state: req.body?.state,
+    });
+    if (!result.ok)
+      return sendErrorResponse(
+        res,
+        result.code === "limit"
+          ? ERROR_CODES.RATE_LIMITED
+          : ERROR_CODES.VALIDATION_ERROR,
+        result.code === "limit"
+          ? "You can publish 3 themes per day. Try again tomorrow."
+          : "That theme has no changes in it. Customize something first.",
+        result.code === "limit" ? 429 : 400,
+      );
+    res.status(201).json({ ok: true, id: result.id });
+  } catch (e) {
+    console.error("theme publish error:", e);
+    sendErrorResponse(res, ERROR_CODES.SERVER_ERROR, "Could not publish.", 500);
   }
 });
 

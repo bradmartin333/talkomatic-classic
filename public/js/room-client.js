@@ -1535,6 +1535,16 @@ const APPS_DATA = {
     openInNewTab: false,
     action: "puzzle",
   },
+  themeEditor: {
+    name: "Theme Editor",
+    description: "Recolor Talkomatic your way, no CSS needed",
+    icon: "🎨",
+    iconClass: "placeholder",
+    status: "available",
+    url: null,
+    openInNewTab: false,
+    action: "themeEditor",
+  },
   minigames: {
     name: "Mini Games",
     description: "Uno, Hangman, Tic Tac Toe & more",
@@ -1612,6 +1622,8 @@ function createAppDirectoryDropdown() {
           openPong();
         } else if (app.action === "puzzle") {
           if (window.TalkomaticPuzzle) window.TalkomaticPuzzle.open();
+        } else if (app.action === "themeEditor") {
+          if (window.ThemeEditor) window.ThemeEditor.open();
         } else if (app.openInNewTab) {
           window.open(app.url, "_blank", "noopener,noreferrer");
         } else {

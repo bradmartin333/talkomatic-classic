@@ -1,0 +1,162 @@
+/* Talkomatic theme effects layer. Loaded LAST on the lobby and room pages.
+   Everything here is driven by the theme engine:
+   - html.tk-fx-glass / -brutal / -soft: whole-page effect styles
+   - font slot variables (--tk-font-heading, --tk-font-chat)
+   - staff badge tokens, active only when html.tk-staff-themed is set */
+
+/* ── Font slots ── */
+
+.talkomatic,
+.panel-header,
+.known-as-section p,
+.createRoom p,
+.sb-strip,
+.strip-cream,
+.sb-title,
+.stats-modal-title,
+.room-name,
+.brand,
+.pong-title {
+  font-family: var(--tk-font-heading, inherit);
+}
+
+.chat-input {
+  font-family: var(--tk-font-chat, inherit);
+}
+
+/* ── Staff badge styling (mods and devs theme what they own) ── */
+
+html.tk-staff-themed .mod-badge,
+html.tk-staff-themed .mod-lobby-badge {
+  background: var(--tk-staff-badge-bg) !important;
+  color: var(--tk-staff-badge-text) !important;
+}
+
+html.tk-staff-themed .sb-badge-dev {
+  background: var(--tk-staff-badge-bg) !important;
+  color: var(--tk-staff-badge-text) !important;
+}
+
+/* ── Shape controls (active only when the matching token is set) ── */
+
+html.tk-shaped .external-links a,
+html.tk-shaped .room,
+html.tk-shaped .stats-modal-content,
+html.tk-shaped .modal-content,
+html.tk-shaped .sb-modal,
+html.tk-shaped .sb-card,
+html.tk-shaped .sb-chip,
+html.tk-shaped .sb-sort-btn,
+html.tk-shaped .sb-post-btn,
+html.tk-shaped .sb-input,
+html.tk-shaped .sb-link,
+html.tk-shaped .pfp-card,
+html.tk-shaped #logform button,
+html.tk-shaped .go-chat-button,
+html.tk-shaped .enter-button,
+html.tk-shaped .app-directory-dropdown,
+html.tk-shaped .app-item,
+html.tk-shaped .pong-card,
+html.tk-shaped .pong-chip,
+html.tk-shaped .chat-row,
+html.tk-shaped .chat-input {
+  border-radius: var(--tk-radius) !important;
+}
+
+html.tk-borderw .external-links a,
+html.tk-borderw .room,
+html.tk-borderw .sb-card,
+html.tk-borderw .app-item,
+html.tk-borderw .pfp-card,
+html.tk-borderw .chat-row {
+  border-width: var(--tk-border-width) !important;
+  border-style: solid;
+}
+
+/* ── Effect surfaces ──
+   The building blocks each pack restyles, on both pages. */
+
+/* GLASS: translucent blurred panels over a tinted backdrop */
+
+html.tk-fx-glass body {
+  background-image:
+    radial-gradient(700px 420px at 12% 0%, color-mix(in srgb, var(--tk-accent) 14%, transparent), transparent 70%),
+    radial-gradient(800px 500px at 95% 100%, color-mix(in srgb, var(--tk-detail) 10%, transparent), transparent 70%);
+  background-attachment: fixed;
+}
+
+html.tk-fx-glass .external-links a,
+html.tk-fx-glass .room,
+html.tk-fx-glass .stats-modal-content,
+html.tk-fx-glass .modal-content,
+html.tk-fx-glass .sb-modal,
+html.tk-fx-glass .sb-card,
+html.tk-fx-glass .sb-chip,
+html.tk-fx-glass .pfp-card,
+html.tk-fx-glass .app-directory-dropdown,
+html.tk-fx-glass .app-item,
+html.tk-fx-glass .pong-card,
+html.tk-fx-glass .chat-row {
+  background: color-mix(in srgb, var(--tk-tile) 42%, transparent) !important;
+  backdrop-filter: blur(var(--tk-blur, 14px)) saturate(1.2);
+  -webkit-backdrop-filter: blur(var(--tk-blur, 14px)) saturate(1.2);
+  border: 1px solid color-mix(in srgb, var(--tk-text) 18%, transparent) !important;
+}
+
+html.tk-fx-glass .pfp-card {
+  background: color-mix(in srgb, var(--tk-input-bg) 70%, transparent) !important;
+}
+
+/* NEO-BRUTAL: hard borders, zero radius, offset accent shadows */
+
+html.tk-fx-brutal .external-links a,
+html.tk-fx-brutal .room,
+html.tk-fx-brutal .stats-modal-content,
+html.tk-fx-brutal .modal-content,
+html.tk-fx-brutal .sb-modal,
+html.tk-fx-brutal .sb-card,
+html.tk-fx-brutal .sb-post-btn,
+html.tk-fx-brutal .pfp-card,
+html.tk-fx-brutal #logform button,
+html.tk-fx-brutal .go-chat-button,
+html.tk-fx-brutal .enter-button,
+html.tk-fx-brutal .app-directory-dropdown,
+html.tk-fx-brutal .app-item,
+html.tk-fx-brutal .pong-card,
+html.tk-fx-brutal .chat-row {
+  border: 3px solid var(--tk-text) !important;
+  border-radius: 0 !important;
+  box-shadow: 5px 5px 0 var(--tk-accent) !important;
+}
+
+html.tk-fx-brutal .external-links a:hover,
+html.tk-fx-brutal .app-item:hover,
+html.tk-fx-brutal .sb-card:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 7px 7px 0 var(--tk-accent) !important;
+}
+
+/* SOFT: neumorphic pillows, big radius, no hard lines */
+
+html.tk-fx-soft .external-links a,
+html.tk-fx-soft .room,
+html.tk-fx-soft .stats-modal-content,
+html.tk-fx-soft .modal-content,
+html.tk-fx-soft .sb-modal,
+html.tk-fx-soft .sb-card,
+html.tk-fx-soft .sb-chip,
+html.tk-fx-soft .pfp-card,
+html.tk-fx-soft .app-directory-dropdown,
+html.tk-fx-soft .app-item,
+html.tk-fx-soft .pong-card,
+html.tk-fx-soft .chat-row {
+  border: none !important;
+  border-radius: 16px !important;
+  box-shadow:
+    7px 7px 14px rgba(0, 0, 0, 0.45),
+    -5px -5px 12px rgba(255, 255, 255, 0.05) !important;
+}
+
+html.tk-fx-soft .chat-input {
+  border-radius: 12px !important;
+}
