@@ -55,7 +55,7 @@
     overlay = document.createElement("div");
     overlay.id = "puzzleOverlay";
     overlay.style.cssText =
-      "position:fixed;inset:0;z-index:100000;background:#EDEDEA;display:flex;flex-direction:column;";
+      "position:fixed;inset:0;z-index:100000;background:#202020;display:flex;flex-direction:column;";
 
     const bar = document.createElement("div");
     bar.style.cssText =
@@ -79,7 +79,7 @@
       (typeof currentUsername !== "undefined" && currentUsername) || "",
     );
     frame.src =
-      "puzzle.html?v=1.0.2&roomId=" +
+      "puzzle.html?v=1.1.0&roomId=" +
       encodeURIComponent(currentRoomId) +
       "&name=" +
       name;

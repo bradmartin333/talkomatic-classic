@@ -1,198 +1,234 @@
+/* Pong overlay, styled like the rest of Talkomatic: flat dark tiles,
+   #616161 borders, orange vs cyan players, talkoSS font. */
+
 .pong-app {
   position: fixed;
   inset: 0;
   z-index: 50000;
-  display: flex;
+  display: none;
   flex-direction: column;
   overflow: hidden;
-  background: #000;
+  background: #202020;
   color: #fff;
-  font-family: inherit;
+  font-family: talkoSS, Arial, sans-serif;
 }
 
+.pong-app.show {
+  display: flex;
+}
+
+/* ── Top bar ── */
+
 .pong-topbar {
-  height: 56px;
-  flex: 0 0 56px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 14px;
-  background: #070707;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  gap: 14px;
+  padding: 10px 16px;
+  background: #1b1b1b;
+  border-bottom: 2px solid #ff9800;
+  flex-shrink: 0;
 }
 
 .pong-title {
-  font-size: 16px;
-  font-weight: 700;
+  font-size: 18px;
+  font-weight: bold;
+  color: #ff9800;
+  letter-spacing: 2px;
   white-space: nowrap;
 }
 
-.pong-role {
+.pong-match {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 auto;
   min-width: 0;
+}
+
+.pong-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: #000;
+  border: 1px solid #616161;
+  border-radius: 5px;
+  padding: 6px 13px;
+  font-size: 14px;
+  font-weight: bold;
+  max-width: 220px;
   overflow: hidden;
-  color: #aaa;
-  font-size: 12px;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pong-chip-left {
+  color: #ff9800;
+  border-color: #ff9800;
+}
+
+.pong-chip-right {
+  color: #01ffff;
+  border-color: #01ffff;
+}
+
+.pong-chip-pfp {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.pong-you {
+  font-size: 10px;
+  font-weight: bold;
+  color: #000;
+  background: #ccc;
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.pong-score {
+  font-size: 24px;
+  font-weight: bold;
+  color: #fff;
+  letter-spacing: 2px;
   white-space: nowrap;
 }
 
 .pong-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-left: auto;
+  gap: 12px;
 }
 
-.pong-count {
-  color: #aaa;
+.pong-watch {
   font-size: 12px;
+  color: #cccccc;
   white-space: nowrap;
 }
 
-.pong-button {
-  appearance: none;
-  height: 36px;
-  padding: 0 12px;
-  border: 1px solid #fff;
-  border-radius: 8px;
+.pong-close {
   background: #000;
+  border: 1px solid #616161;
+  border-radius: 5px;
   color: #fff;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.pong-button:hover {
-  background: #1c1c1c;
-  color: #ddd;
-}
-
-.pong-button:active {
-  background: #2a2a2a;
-}
-
-.pong-close-button {
-  width: 36px;
-  padding: 0;
-  font-size: 20px;
+  font-size: 22px;
   line-height: 1;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
-.pong-close-button:hover {
-  border-color: #e5484d;
-  background: #e5484d;
-  color: #fff;
+.pong-close:hover {
+  border-color: #ff5252;
+  color: #ff5252;
 }
+
+/* ── Stage ── */
 
 .pong-stage {
-  position: relative;
   flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
-  padding: 12px;
+  position: relative;
   background: #111;
+  min-height: 0;
+}
+
+.pong-stage.pong-playing {
   cursor: none;
 }
 
 .pong-canvas {
-  display: block;
-  max-width: 100%;
-  max-height: 100%;
-  border: 1px solid #3a3a3a;
-  background: #000;
-  image-rendering: auto;
+  border: 1px solid #616161;
   touch-action: none;
-}
-
-.pong-status {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  display: none;
-  max-width: calc(100% - 40px);
-  padding: 8px 12px;
-  border: 1px solid #555;
-  background: #000;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
-  text-align: center;
-  pointer-events: none;
-}
-
-.pong-status.show {
   display: block;
 }
 
-.pong-help {
-  position: absolute;
-  left: 18px;
-  bottom: 16px;
-  color: #888;
-  font-size: 11px;
-  pointer-events: none;
-}
+/* Centered status overlays */
 
-.pong-touch-controls {
-  display: none;
-  height: 58px;
-  flex: 0 0 58px;
+.pong-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 0 10px;
-  background: #070707;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  pointer-events: none;
 }
 
-.pong-touch-button {
-  width: 64px;
-  height: 38px;
-  padding: 0;
+.pong-card {
+  background: #000;
+  border: 2px solid #ff9800;
+  border-radius: 8px;
+  padding: 26px 42px;
+  text-align: center;
 }
+
+.pong-card-trophy {
+  font-size: 42px;
+  margin-bottom: 8px;
+}
+
+.pong-card-big {
+  font-size: 26px;
+  font-weight: bold;
+  color: #ff9800;
+}
+
+.pong-card-score {
+  font-size: 20px;
+  font-weight: bold;
+  color: #fff;
+  margin-top: 6px;
+}
+
+.pong-card-sub {
+  font-size: 13px;
+  color: #cccccc;
+  margin-top: 10px;
+}
+
+.pong-count {
+  font-size: 120px;
+  font-weight: bold;
+  color: #ff9800;
+  text-align: center;
+}
+
+/* ── Footer ── */
+
+.pong-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  background: #1b1b1b;
+  border-top: 1px solid #616161;
+  font-size: 12px;
+  color: #cccccc;
+  flex-shrink: 0;
+}
+
+#pongQueue {
+  color: #ff9800;
+  font-weight: bold;
+}
+
+/* ── Mobile ── */
 
 @media (max-width: 760px), (pointer: coarse) {
   .pong-topbar {
+    flex-wrap: wrap;
     gap: 8px;
-    padding: 0 8px;
+    padding: 8px 10px;
   }
-
-  .pong-role,
-  .pong-count {
-    display: none;
-  }
-
-  .pong-actions {
-    gap: 6px;
-  }
-
-  .pong-button {
-    height: 34px;
-    padding: 0 10px;
-    font-size: 12px;
-  }
-
-  .pong-close-button {
-    width: 34px;
-    padding: 0;
-  }
-
-  .pong-stage {
-    padding: 6px;
-    cursor: default;
-  }
-
-  .pong-help {
-    display: none;
-  }
-
-  .pong-touch-controls {
-    display: flex;
-  }
+  .pong-title { font-size: 15px; }
+  .pong-score { font-size: 18px; }
+  .pong-chip { font-size: 12px; padding: 5px 9px; max-width: 130px; }
+  .pong-watch { display: none; }
+  .pong-stage.pong-playing { cursor: default; }
+  .pong-foot { font-size: 11px; }
 }

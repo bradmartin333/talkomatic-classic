@@ -1,45 +1,105 @@
+// public/js/pong-client.js
+// 1v1 pong overlay for rooms. Pairs with server/pong.js: the server owns the
+// whole simulation; this client renders interpolated snapshots ~110 ms in the
+// past (smooth under jitter) and draws YOUR paddle at your local target
+// immediately, so your own controls feel instant.
+//
+// Follows the piano/talkoboard convention: the modal is built once and
+// open()/close() only toggle it, so nothing leaks across opens.
+
 class Pong {
   constructor(socket, userId, username) {
     this.socket = socket;
     this.userId = userId;
     this.username = username;
+
     this.isOpen = false;
-    this.role = "spectator";
-    this.color = null;
-    this.state = null;
-    this.previousState = null;
-    this.stateReceivedAt = 0;
-    this.root = null;
-    this.canvas = null;
-    this.ctx = null;
+    this.meta = null; // last "pong meta"
+    this.snapshots = []; // ring of "pong state", oldest first
+    this.clockOffset = 0; // serverTime - performance-now baseline
+    this.offsetSamples = [];
+
+    this.myTarget = 0.5; // 0..1, local paddle intent
+    this.lastSentAt = 0;
+    this.lastSentVal = -1;
+    this.keys = { up: false, down: false };
+    this.stageRect = null;
     this.frame = null;
-    this.lastTargetSentAt = 0;
-    this.pendingTarget = 0.5;
+    this.lastFrameAt = 0;
+    this.lastScoreText = "";
+
+    this.buildUI();
+    this.bindSocket();
 
     this.onKeyDown = this.onKeyDown.bind(this);
+    this.onKeyUp = this.onKeyUp.bind(this);
+    this.onPointer = this.onPointer.bind(this);
     this.onResize = this.onResize.bind(this);
-    this.onPointerMove = this.onPointerMove.bind(this);
-    this.onPointerDown = this.onPointerDown.bind(this);
     this.renderLoop = this.renderLoop.bind(this);
-
-    this.bindSocketEvents();
   }
 
-  bindSocketEvents() {
-    this.socket.on("pong role", (data) => {
-      this.role = data?.role || "spectator";
-      this.color = data?.color || null;
-      this.updateRoleLabel();
+  // ── UI ────────────────────────────────────────────────────────────────────
+
+  buildUI() {
+    const root = document.createElement("div");
+    root.className = "pong-app";
+    root.innerHTML = `
+      <div class="pong-topbar">
+        <div class="pong-title"><span class="pong-title-ico">🏓</span> PONG</div>
+        <div class="pong-match">
+          <span class="pong-chip pong-chip-left" id="pongLeftChip">Waiting...</span>
+          <span class="pong-score" id="pongScore">0 : 0</span>
+          <span class="pong-chip pong-chip-right" id="pongRightChip">Waiting...</span>
+        </div>
+        <div class="pong-actions">
+          <span class="pong-watch" id="pongWatch"></span>
+          <button class="pong-close" id="pongClose" aria-label="Close">×</button>
+        </div>
+      </div>
+      <div class="pong-stage" id="pongStage">
+        <canvas class="pong-canvas" id="pongCanvas"></canvas>
+        <div class="pong-overlay" id="pongOverlay" style="display:none"></div>
+      </div>
+      <div class="pong-foot">
+        <span id="pongHint">Move with the mouse, or W / S keys. Esc closes.</span>
+        <span id="pongQueue"></span>
+      </div>`;
+    document.body.appendChild(root);
+    this.root = root;
+    this.stage = root.querySelector("#pongStage");
+    this.canvas = root.querySelector("#pongCanvas");
+    this.ctx = this.canvas.getContext("2d", { alpha: false });
+    this.overlay = root.querySelector("#pongOverlay");
+    this.scoreEl = root.querySelector("#pongScore");
+    this.leftChip = root.querySelector("#pongLeftChip");
+    this.rightChip = root.querySelector("#pongRightChip");
+    this.watchEl = root.querySelector("#pongWatch");
+    this.queueEl = root.querySelector("#pongQueue");
+    this.hintEl = root.querySelector("#pongHint");
+    root.querySelector("#pongClose").addEventListener("click", () => this.close());
+  }
+
+  bindSocket() {
+    this.socket.on("pong state", (s) => {
+      if (!this.isOpen || !s) return;
+      const now = performance.now();
+      // Clock offset: keep the smallest (least-delayed) recent sample
+      this.offsetSamples.push(s.t - now);
+      if (this.offsetSamples.length > 30) this.offsetSamples.shift();
+      this.clockOffset = Math.max(...this.offsetSamples);
+      this.snapshots.push(s);
+      if (this.snapshots.length > 6) this.snapshots.shift();
+      const scoreText = s.s[0] + " : " + s.s[1];
+      if (scoreText !== this.lastScoreText) {
+        this.lastScoreText = scoreText;
+        this.scoreEl.textContent = scoreText;
+      }
     });
 
-    this.socket.on("pong state", (state) => {
-      const normalized = this.normalizeState(state);
-      if (!normalized) return;
-      this.previousState = this.state;
-      this.state = normalized;
-      this.stateReceivedAt = performance.now();
-      this.updateStatusText();
-      this.updatePlayerCount();
+    this.socket.on("pong meta", (m) => {
+      if (!this.isOpen || !m) return;
+      this.meta = m;
+      this.updateBar();
     });
 
     this.socket.on("connect", () => {
@@ -47,61 +107,25 @@ class Pong {
     });
   }
 
-
-  normalizeState(raw) {
-    if (!raw || typeof raw !== "object") return null;
-
-    const field = raw.field && Number.isFinite(raw.field.width) && Number.isFinite(raw.field.height)
-      ? raw.field
-      : { width: 1280, height: 720 };
-
-    const paddle = raw.paddle && Number.isFinite(raw.paddle.width) && Number.isFinite(raw.paddle.height)
-      ? raw.paddle
-      : { width: 12, height: 92 };
-
-    const players = Array.isArray(raw.players)
-      ? raw.players.filter((player) => player && Number.isFinite(player.x) && Number.isFinite(player.y))
-      : [];
-
-    const ball = raw.ball && Number.isFinite(raw.ball.x) && Number.isFinite(raw.ball.y)
-      ? raw.ball
-      : { x: field.width / 2, y: field.height / 2, vx: 0, vy: 0 };
-
-    const scores = raw.scores || raw.score || {};
-    const teamCounts = raw.teamCounts || {};
-
-    return {
-      ...raw,
-      field,
-      paddle,
-      players,
-      ball,
-      ballRadius: Number.isFinite(raw.ballRadius) ? raw.ballRadius : 11,
-      scores: {
-        left: Number.isFinite(scores.left) ? scores.left : 0,
-        right: Number.isFinite(scores.right) ? scores.right : 0,
-      },
-      teamCounts: {
-        left: Number.isFinite(teamCounts.left)
-          ? teamCounts.left
-          : players.filter((player) => player.side === "left").length,
-        right: Number.isFinite(teamCounts.right)
-          ? teamCounts.right
-          : players.filter((player) => player.side === "right").length,
-      },
-      playerCount: Number.isFinite(raw.playerCount) ? raw.playerCount : players.length,
-      spectatorCount: Number.isFinite(raw.spectatorCount) ? raw.spectatorCount : 0,
-      maxPlayers: Number.isFinite(raw.maxPlayers) ? raw.maxPlayers : 100,
-      status: typeof raw.status === "string" ? raw.status : "waiting",
-    };
-  }
+  // ── Open / close ──────────────────────────────────────────────────────────
 
   open() {
     if (this.isOpen) return;
     this.isOpen = true;
-    this.createUI();
-    this.bindInput();
+    this.meta = null;
+    this.snapshots = [];
+    this.offsetSamples = [];
+    this.myTarget = 0.5;
+    this.lastSentVal = -1;
+    this.root.classList.add("show");
+    document.addEventListener("keydown", this.onKeyDown);
+    document.addEventListener("keyup", this.onKeyUp);
+    window.addEventListener("resize", this.onResize);
+    this.stage.addEventListener("pointermove", this.onPointer);
+    this.stage.addEventListener("pointerdown", this.onPointer);
+    this.onResize();
     this.socket.emit("pong open");
+    this.lastFrameAt = performance.now();
     this.frame = requestAnimationFrame(this.renderLoop);
   }
 
@@ -109,286 +133,274 @@ class Pong {
     if (!this.isOpen) return;
     this.isOpen = false;
     this.socket.emit("pong close");
-    this.unbindInput();
-
-    if (this.frame) cancelAnimationFrame(this.frame);
-    this.frame = null;
-
-    if (this.root) this.root.remove();
-    this.root = null;
-    this.canvas = null;
-    this.ctx = null;
-    this.state = null;
-    this.previousState = null;
-  }
-
-  createUI() {
-    this.root = document.createElement("div");
-    this.root.className = "pong-app";
-    this.root.innerHTML = `
-      <header class="pong-topbar">
-        <div class="pong-title">Pong</div>
-        <div class="pong-role" id="pongRoleLabel">Joining…</div>
-        <div class="pong-actions">
-          <span class="pong-count" id="pongPlayerCount">0 / 100 players</span>
-          <button id="pongRestartButton" class="pong-button" type="button">Restart</button>
-          <button id="pongCloseButton" class="pong-button pong-close-button" type="button" aria-label="Close Pong">×</button>
-        </div>
-      </header>
-      <main class="pong-stage">
-        <canvas class="pong-canvas" width="1280" height="720"></canvas>
-        <div class="pong-status" id="pongStatus">Connecting…</div>
-        <div class="pong-help">Move the mouse vertically · W/S or ↑/↓</div>
-      </main>
-      <div class="pong-touch-controls">
-        <button class="pong-button pong-touch-button" data-direction="-1" type="button">Up</button>
-        <button class="pong-button pong-touch-button" data-direction="1" type="button">Down</button>
-      </div>
-    `;
-
-    document.body.appendChild(this.root);
-    this.canvas = this.root.querySelector(".pong-canvas");
-    this.ctx = this.canvas.getContext("2d", { alpha: false });
-
-    this.root.querySelector("#pongCloseButton").addEventListener("click", () => this.close());
-    this.root.querySelector("#pongRestartButton").addEventListener("click", () => {
-      this.socket.emit("pong restart");
-    });
-
-    for (const button of this.root.querySelectorAll(".pong-touch-button")) {
-      const direction = Number(button.dataset.direction);
-      button.addEventListener("pointerdown", (event) => {
-        event.preventDefault();
-        this.socket.emit("pong input", { direction });
-      });
-    }
-
-    this.updateRoleLabel();
-    this.updateStatusText();
-    this.updatePlayerCount();
-    this.onResize();
-  }
-
-  bindInput() {
-    window.addEventListener("keydown", this.onKeyDown, { passive: false });
-    window.addEventListener("resize", this.onResize);
-    this.canvas.addEventListener("pointermove", this.onPointerMove, { passive: false });
-    this.canvas.addEventListener("pointerdown", this.onPointerDown, { passive: false });
-  }
-
-  unbindInput() {
-    window.removeEventListener("keydown", this.onKeyDown);
+    this.root.classList.remove("show");
+    document.removeEventListener("keydown", this.onKeyDown);
+    document.removeEventListener("keyup", this.onKeyUp);
     window.removeEventListener("resize", this.onResize);
-    if (this.canvas) {
-      this.canvas.removeEventListener("pointermove", this.onPointerMove);
-      this.canvas.removeEventListener("pointerdown", this.onPointerDown);
-    }
+    this.stage.removeEventListener("pointermove", this.onPointer);
+    this.stage.removeEventListener("pointerdown", this.onPointer);
+    cancelAnimationFrame(this.frame);
   }
 
-  onKeyDown(event) {
+  // ── Input ─────────────────────────────────────────────────────────────────
+
+  amPlayer() {
+    return this.meta && (this.meta.you === "left" || this.meta.you === "right");
+  }
+
+  onKeyDown(e) {
     if (!this.isOpen) return;
-    if (event.code === "Escape") {
-      event.preventDefault();
-      this.close();
-      return;
-    }
-
-    if (event.repeat) return;
-    if (event.code === "KeyW" || event.code === "ArrowUp") {
-      event.preventDefault();
-      this.socket.emit("pong input", { direction: -1 });
-    } else if (event.code === "KeyS" || event.code === "ArrowDown") {
-      event.preventDefault();
-      this.socket.emit("pong input", { direction: 1 });
-    }
+    if (e.key === "Escape") return this.close();
+    if (e.key === "w" || e.key === "W" || e.key === "ArrowUp") this.keys.up = true;
+    else if (e.key === "s" || e.key === "S" || e.key === "ArrowDown")
+      this.keys.down = true;
+    else return;
+    e.preventDefault();
   }
 
-  onPointerDown(event) {
-    if (!this.canvas) return;
-    this.canvas.setPointerCapture?.(event.pointerId);
-    this.onPointerMove(event);
+  onKeyUp(e) {
+    if (e.key === "w" || e.key === "W" || e.key === "ArrowUp") this.keys.up = false;
+    if (e.key === "s" || e.key === "S" || e.key === "ArrowDown")
+      this.keys.down = false;
   }
 
-  onPointerMove(event) {
-    if (!this.isOpen || !this.canvas || this.role === "spectator") return;
-    event.preventDefault();
-    const rect = this.canvas.getBoundingClientRect();
-    this.pendingTarget = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
-
-    const now = performance.now();
-    if (now - this.lastTargetSentAt >= 16) {
-      this.lastTargetSentAt = now;
-      this.socket.emit("pong target", { y: this.pendingTarget });
-    }
+  onPointer(e) {
+    if (!this.isOpen || !this.amPlayer()) return;
+    if (!this.stageRect) this.stageRect = this.canvas.getBoundingClientRect();
+    const r = this.stageRect;
+    if (r.height > 0)
+      this.myTarget = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+    e.preventDefault();
   }
 
   onResize() {
-    if (!this.canvas || !this.root) return;
-    const stage = this.root.querySelector(".pong-stage");
-    const ratio = 16 / 9;
-    const availableWidth = stage.clientWidth;
-    const availableHeight = stage.clientHeight;
-    let width = availableWidth;
-    let height = width / ratio;
-
-    if (height > availableHeight) {
-      height = availableHeight;
-      width = height * ratio;
+    // DPR-aware backing store sized to the actual on-screen box (16:9 letterbox)
+    const box = this.stage.getBoundingClientRect();
+    const aspect = 1280 / 720;
+    let w = box.width;
+    let h = w / aspect;
+    if (h > box.height) {
+      h = box.height;
+      w = h * aspect;
     }
-
-    this.canvas.style.width = `${Math.floor(width)}px`;
-    this.canvas.style.height = `${Math.floor(height)}px`;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    this.canvas.style.width = w + "px";
+    this.canvas.style.height = h + "px";
+    this.canvas.width = Math.round(w * dpr);
+    this.canvas.height = Math.round(h * dpr);
+    this.stageRect = null;
+    requestAnimationFrame(() => {
+      this.stageRect = this.canvas.getBoundingClientRect();
+    });
   }
 
-  updateRoleLabel() {
-    if (!this.root) return;
-    const label = this.root.querySelector("#pongRoleLabel");
-    if (!label) return;
-
-    if (this.role === "spectator") {
-      label.textContent = "Spectating — player limit reached";
-      label.style.color = "";
-    } else {
-      label.textContent = `${this.role === "left" ? "Left" : "Right"} team`;
-      label.style.color = this.color || "";
-    }
+  maybeSendTarget(now) {
+    if (!this.amPlayer()) return;
+    if (now - this.lastSentAt < 33) return;
+    if (Math.abs(this.myTarget - this.lastSentVal) < 0.002) return;
+    this.lastSentAt = now;
+    this.lastSentVal = this.myTarget;
+    this.socket.emit("pong target", { y: this.myTarget });
   }
 
-  updatePlayerCount() {
-    if (!this.root) return;
-    const label = this.root.querySelector("#pongPlayerCount");
-    if (!label) return;
-    const count = this.state?.playerCount || 0;
-    const max = this.state?.maxPlayers || 100;
-    const spectators = this.state?.spectatorCount || 0;
-    label.textContent = spectators > 0
-      ? `${count} / ${max} players · ${spectators} watching`
-      : `${count} / ${max} players`;
+  // ── Interpolation ─────────────────────────────────────────────────────────
+
+  serverNow() {
+    return performance.now() + this.clockOffset;
   }
 
-  updateStatusText() {
-    if (!this.root) return;
-    const status = this.root.querySelector("#pongStatus");
-    if (!status) return;
-
-    if (!this.state) {
-      status.textContent = "Connecting…";
-      status.classList.add("show");
-      return;
+  // Render ~110ms in the past between the two snapshots straddling that time.
+  sampled() {
+    const snaps = this.snapshots;
+    if (!snaps.length) return null;
+    const target = this.serverNow() - 110;
+    let a = snaps[0];
+    let b = snaps[snaps.length - 1];
+    for (let i = 0; i < snaps.length - 1; i++) {
+      if (snaps[i].t <= target && snaps[i + 1].t >= target) {
+        a = snaps[i];
+        b = snaps[i + 1];
+        break;
+      }
     }
-
-    if (this.state.status === "waiting") {
-      status.textContent = "Waiting for at least one player on each team…";
-      status.classList.add("show");
-    } else if (this.state.status === "finished") {
-      status.textContent = `${this.state.winnerName || "A team"} wins — press Restart`;
-      status.classList.add("show");
-    } else {
-      status.classList.remove("show");
-    }
-  }
-
-  interpolatedState() {
-    if (!this.state || !this.previousState) return this.state;
-    if (!this.state.ball || !this.previousState.ball) return this.state;
-    const amount = Math.min(1, (performance.now() - this.stateReceivedAt) / 34);
-    const currentPlayers = new Map((this.state.players || []).map((player) => [player.userId, player]));
-    const previousPlayers = new Map((this.previousState.players || []).map((player) => [player.userId, player]));
-    const players = [];
-
-    for (const [userId, player] of currentPlayers) {
-      const previous = previousPlayers.get(userId) || player;
-      players.push({
-        ...player,
-        x: previous.x + (player.x - previous.x) * amount,
-        y: previous.y + (player.y - previous.y) * amount,
-      });
-    }
-
+    const span = b.t - a.t;
+    const k = span > 0 ? Math.max(0, Math.min(1, (target - a.t) / span)) : 1;
+    const lerp = (x, y) => x + (y - x) * k;
+    const latest = snaps[snaps.length - 1];
     return {
-      ...this.state,
-      players,
-      ball: {
-        x: this.previousState.ball.x + (this.state.ball.x - this.previousState.ball.x) * amount,
-        y: this.previousState.ball.y + (this.state.ball.y - this.previousState.ball.y) * amount,
-      },
+      st: latest.st,
+      cd: latest.cd,
+      nr: latest.nr,
+      ball: [lerp(a.b[0], b.b[0]), lerp(a.b[1], b.b[1])],
+      l: lerp(a.l, b.l),
+      r: lerp(a.r, b.r),
+      s: latest.s,
     };
   }
 
+  // ── Render ────────────────────────────────────────────────────────────────
+
   renderLoop() {
     if (!this.isOpen) return;
-    this.render();
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - this.lastFrameAt) / 1000);
+    this.lastFrameAt = now;
+
+    // Keyboard moves the local target continuously while held
+    if (this.keys.up || this.keys.down) {
+      const dir = (this.keys.down ? 1 : 0) - (this.keys.up ? 1 : 0);
+      this.myTarget = Math.max(0, Math.min(1, this.myTarget + dir * dt * 1.5));
+    }
+    this.maybeSendTarget(now);
+
+    this.draw();
+    this.updateOverlay();
     this.frame = requestAnimationFrame(this.renderLoop);
   }
 
-  render() {
-    if (!this.ctx || !this.canvas) return;
+  draw() {
     const ctx = this.ctx;
-    const width = this.canvas.width;
-    const height = this.canvas.height;
-    const state = this.interpolatedState();
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    const sx = W / 1280;
+    const sy = H / 720;
+    const view = this.sampled();
+    const meta = this.meta;
 
-    ctx.clearRect(0, 0, width, height);
     ctx.fillStyle = "#000000";
-    ctx.fillRect(0, 0, width, height);
+    ctx.fillRect(0, 0, W, H);
 
-    ctx.strokeStyle = "rgba(255,255,255,0.24)";
-    ctx.lineWidth = 3;
-    ctx.setLineDash([16, 16]);
+    // Center line
+    ctx.strokeStyle = "#616161";
+    ctx.lineWidth = Math.max(1, 2 * sx);
+    ctx.setLineDash([10 * sy, 14 * sy]);
     ctx.beginPath();
-    ctx.moveTo(width / 2, 0);
-    ctx.lineTo(width / 2, height);
+    ctx.moveTo(W / 2, 0);
+    ctx.lineTo(W / 2, H);
     ctx.stroke();
     ctx.setLineDash([]);
 
-    if (!state) return;
+    if (!view || !meta) return;
 
-    const fieldWidth = state.field?.width || 1280;
-    const fieldHeight = state.field?.height || 720;
-    const paddle = state.paddle || { width: 12, height: 92 };
-    const scores = state.scores || { left: 0, right: 0 };
-    const teamCounts = state.teamCounts || { left: 0, right: 0 };
-    const scaleX = width / fieldWidth;
-    const scaleY = height / fieldHeight;
-    const paddleWidth = paddle.width * scaleX;
-    const paddleHeight = paddle.height * scaleY;
+    const pw = meta.paddle.w * sx;
+    const ph = meta.paddle.h * sy;
+    const margin = meta.paddle.margin * sx;
 
-    for (const player of state.players) {
-      const x = player.x * scaleX;
-      const y = (player.y - paddle.height / 2) * scaleY;
-      const isMe = player.userId === this.userId;
-
-      ctx.fillStyle = player.color;
-      ctx.fillRect(x, y, paddleWidth, paddleHeight);
-
-      if (isMe) {
-        ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(x - 1, y - 1, paddleWidth + 2, paddleHeight + 2);
-      }
-    }
-
-    ctx.fillStyle = "#f7f8fc";
-    ctx.beginPath();
-    ctx.arc(
-      state.ball.x * scaleX,
-      state.ball.y * scaleY,
-      state.ballRadius * Math.min(scaleX, scaleY),
-      0,
-      Math.PI * 2,
+    // Your own paddle renders at your local target for zero perceived lag
+    let leftY = view.l;
+    let rightY = view.r;
+    const half = meta.paddle.h / 2;
+    const predicted = Math.max(
+      half,
+      Math.min(720 - half, this.myTarget * 720),
     );
-    ctx.fill();
+    if (meta.you === "left") leftY = predicted;
+    if (meta.you === "right") rightY = predicted;
 
-    ctx.font = "bold 56px Arial, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    ctx.fillText(String(scores.left), width * 0.25, 24);
-    ctx.fillText(String(scores.right), width * 0.75, 24);
+    ctx.fillStyle = "#ff9800";
+    ctx.fillRect(margin, leftY * sy - ph / 2, pw, ph);
+    ctx.fillStyle = "#01ffff";
+    ctx.fillRect(W - margin - pw, rightY * sy - ph / 2, pw, ph);
 
-    ctx.font = "14px Arial, sans-serif";
-    ctx.fillStyle = "rgba(255,255,255,0.64)";
-    ctx.fillText(`${teamCounts.left} players`, width * 0.25, 96);
-    ctx.fillText(`${teamCounts.right} players`, width * 0.75, 96);
+    if (view.st === "playing") {
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(view.ball[0] * sx, view.ball[1] * sy, meta.ballR * sx, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // ── Status overlays & top bar ─────────────────────────────────────────────
+
+  chipHTML(info, side) {
+    if (!info) return "Waiting...";
+    let html = "";
+    if (
+      info.avatar &&
+      /^\d{17,20}$/.test(info.avatar.id || "") &&
+      /^(?:a_)?[a-f0-9]{32}$/i.test(info.avatar.hash || "")
+    ) {
+      html +=
+        '<img class="pong-chip-pfp" alt="" src="https://cdn.discordapp.com/avatars/' +
+        info.avatar.id + "/" + info.avatar.hash + '.webp?size=32">';
+    }
+    html += this.escape(info.name);
+    if (this.meta && this.meta.you === side)
+      html += ' <span class="pong-you">you</span>';
+    return html;
+  }
+
+  escape(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  updateBar() {
+    const m = this.meta;
+    if (!m) return;
+    this.leftChip.innerHTML = this.chipHTML(m.left, "left");
+    this.rightChip.innerHTML = this.chipHTML(m.right, "right");
+    this.watchEl.textContent = m.watching
+      ? m.watching + " watching"
+      : "";
+    if (m.you === "spectator") {
+      this.hintEl.textContent = "You are spectating. A seat opens when a round ends.";
+      this.queueEl.textContent = m.queuePos
+        ? "Your spot in line: #" + m.queuePos
+        : "";
+      this.stage.classList.remove("pong-playing");
+    } else {
+      this.hintEl.textContent =
+        "First to " + (m.winScore || 5) + ". Move with the mouse, or W / S keys.";
+      this.queueEl.textContent = "";
+      this.stage.classList.add("pong-playing");
+    }
+  }
+
+  updateOverlay() {
+    const m = this.meta;
+    const latest = this.snapshots[this.snapshots.length - 1];
+    if (!m || !latest) {
+      this.setOverlay("");
+      return;
+    }
+    const sNow = this.serverNow();
+    if (latest.st === "waiting") {
+      this.setOverlay(
+        '<div class="pong-card"><div class="pong-card-big">Waiting for an opponent</div>' +
+          '<div class="pong-card-sub">The game starts when a second player opens Pong.</div></div>',
+      );
+    } else if (latest.st === "countdown") {
+      const n = Math.max(1, Math.ceil((latest.cd - sNow) / 1000));
+      this.setOverlay('<div class="pong-count">' + n + "</div>");
+    } else if (latest.st === "over") {
+      const w = m.winner || {};
+      const secs = Math.max(0, Math.ceil((latest.nr - sNow) / 1000));
+      const next = m.queue && m.queue.length ? m.queue[0] : null;
+      this.setOverlay(
+        '<div class="pong-card"><div class="pong-card-trophy">🏆</div>' +
+          '<div class="pong-card-big">' + this.escape(w.name || "Player") + " wins!</div>" +
+          '<div class="pong-card-score">' + latest.s[0] + " : " + latest.s[1] + "</div>" +
+          '<div class="pong-card-sub">Next round in ' + secs + "s" +
+          (next ? " · Up next: " + this.escape(next) : "") +
+          "</div></div>",
+      );
+    } else {
+      this.setOverlay("");
+    }
+  }
+
+  setOverlay(html) {
+    if (this._overlayHTML === html) return;
+    this._overlayHTML = html;
+    if (!html) {
+      this.overlay.style.display = "none";
+    } else {
+      this.overlay.innerHTML = html;
+      this.overlay.style.display = "flex";
+    }
   }
 }
 

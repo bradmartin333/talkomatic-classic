@@ -46,6 +46,7 @@ const roles = require("./server/roles");
 const appeals = require("./server/appeals");
 const ipban = require("./server/ipban");
 const puzzle = require("./server/puzzle");
+const nsfw = require("./server/nsfw");
 
 // ── Global Error Handlers ───────────────────────────────────────────────────
 
@@ -472,6 +473,10 @@ io.use((socket, next) => {
               // per-message), so the blunt generic limiter must not drop them -
               // that is what made notes cut out during active play.
               "piano notes",
+              // Pong paddle targets stream at up to ~30/sec while playing; the
+              // handler only writes a clamped number, so the generic limiter
+              // must not eat them (it used to, blocking players for 5s mid-game).
+              "pong target",
               "get rooms",
               "get room state",
             ].includes(evt)
@@ -694,13 +699,14 @@ app.get(`${API}/ban-status`, (req, res) => {
 
 // ── Collaborative puzzle: one shared board per room ─────────────────────────
 // The image is uploaded as a raw JPEG body (no multipart). The uploader must be
-// a member of the room. NSFW is checked in the browser (nsfwjs); the server
-// requires a passing scan attestation and re-checks the thresholds before it
-// will accept the image and build the puzzle.
+// a member of the room. Two safety gates: the browser runs a fast nsfwjs
+// pre-check (attested in x-nsfw-scan), and the server then classifies the
+// ACTUAL uploaded bytes itself (server/nsfw.js) - the attestation alone is
+// self-reported and forgeable, so the server scan is the one that counts.
 app.post(
   `${API}/puzzle/:roomId/image`,
   express.raw({ type: () => true, limit: "6mb" }),
-  (req, res) => {
+  async (req, res) => {
     try {
       const roomId = req.params.roomId;
       const userId = req.session?.userId;
@@ -732,6 +738,33 @@ app.post(
       const image = req.body;
       if (!Buffer.isBuffer(image) || image.length < 64)
         return sendErrorResponse(res, ERROR_CODES.BAD_REQUEST, "no image", 400);
+
+      // Server-side classification of the actual bytes. Fails closed: a scan
+      // error rejects the upload rather than letting it through unchecked.
+      let verdict;
+      try {
+        verdict = await nsfw.scanJpeg(image);
+      } catch (e) {
+        console.error("puzzle nsfw scan failed:", e.message);
+        return sendErrorResponse(
+          res,
+          ERROR_CODES.SERVER_ERROR,
+          "The safety check is unavailable right now. Try again in a minute.",
+          503,
+        );
+      }
+      if (!verdict.safe) {
+        console.log(
+          `[NSFW] Blocked puzzle upload in room ${roomId} by ${req.session?.username || "?"} ` +
+            `(Porn ${verdict.scores.Porn.toFixed(2)}, Hentai ${verdict.scores.Hentai.toFixed(2)}, Sexy ${verdict.scores.Sexy.toFixed(2)})`,
+        );
+        return sendErrorResponse(
+          res,
+          ERROR_CODES.FORBIDDEN,
+          "That image did not pass the safety check.",
+          403,
+        );
+      }
 
       const started = puzzle.start(
         roomId, userId, req.session?.username, image, { iw, ih }, target, isStaff,
@@ -975,6 +1008,7 @@ async function start() {
   rooms.loadBoard(); // restore saved Talkoboard strokes for the loaded rooms
   rooms.registerSocketHandlers();
   rooms.startCleanupIntervals();
+  nsfw.warmup(); // preload the puzzle image classifier
 
   setTimeout(() => {
     rooms.purgeAllGhostUsers();

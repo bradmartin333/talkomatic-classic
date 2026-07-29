@@ -3,44 +3,47 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
-<meta name="theme-color" content="#EDEDEA">
-<title>Cutfit — co-op jigsaw</title>
+<meta name="theme-color" content="#202020">
+<title>Talkomatic Puzzle</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400..600&family=Instrument+Sans:wght@400..700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400..600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
 
 <style type="text/tailwindcss">
   @theme {
-    --color-void:  #EDEDEA;
-    --color-ink:   #1B1B18;
-    --color-mid:   #767268;
-    --color-hair:  #E3E2DD;
-    --color-lock:  #00BE4E;
-    --font-sans:   "Instrument Sans", system-ui, sans-serif;
+    --color-void:  #202020;
+    --color-ink:   #ffffff;
+    --color-mid:   #cccccc;
+    --color-hair:  #616161;
+    --color-lock:  #ff9800;
+    --font-sans:   "talkoSS", Arial, sans-serif;
     --font-mono:   "Geist Mono", ui-monospace, monospace;
   }
 </style>
 
 <style>
+  /* Talkomatic house font, served from this origin */
+  @font-face{font-family:"talkoSS";src:url("fonts/Sansation_Light.ttf")}
+  @font-face{font-family:"talkoSS";src:url("fonts/Sansation_Bold.ttf");font-weight:bold}
   html,body{height:100%;overscroll-behavior:none}
   body{font-family:var(--font-sans);background:var(--color-void);color:var(--color-ink);-webkit-font-smoothing:antialiased}
   .num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
 
-  .float{background:#fff;border:1px solid var(--color-hair);
-    box-shadow:0 1px 2px rgba(27,27,24,.04), 0 12px 28px -10px rgba(27,27,24,.18);}
+  .float{background:#1b1b1b;border:1px solid var(--color-hair);
+    box-shadow:0 1px 2px rgba(0,0,0,.35), 0 12px 28px -10px rgba(0,0,0,.6);}
   .seg{padding:5px 10px;border-radius:999px;font-size:12px;font-weight:500;color:var(--color-mid);
     transition:color .12s, background-color .12s;white-space:nowrap;}
-  .seg:hover{color:var(--color-ink);background:rgba(27,27,24,.05)}
-  .seg[aria-pressed="true"]{background:var(--color-ink);color:#fff}
+  .seg:hover{color:var(--color-ink);background:rgba(255,255,255,.08)}
+  .seg[aria-pressed="true"]{background:#ff9800;color:#000}
   .ico{width:30px;height:30px;border-radius:999px;display:grid;place-items:center;flex:none;
     color:var(--color-mid);font-size:12px;transition:color .12s, background-color .12s;}
-  .ico:hover:not(:disabled){color:var(--color-ink);background:rgba(27,27,24,.05)}
+  .ico:hover:not(:disabled){color:var(--color-ink);background:rgba(255,255,255,.08)}
   .ico:disabled{opacity:.3}
-  .ico[aria-pressed="true"]{background:var(--color-ink);color:#fff}
+  .ico[aria-pressed="true"]{background:#ff9800;color:#000}
   .rule{width:1px;height:18px;background:var(--color-hair);margin:0 3px;flex:none}
   button:focus-visible,input:focus-visible{outline:2px solid var(--color-lock);outline-offset:1px}
 
@@ -51,7 +54,7 @@
   #bar{height:2px;background:var(--color-lock);width:0;transition:width .25s cubic-bezier(.2,.8,.2,1)}
 
   #map{display:grid;gap:1px}
-  #map i{background:rgba(27,27,24,.10);aspect-ratio:1;transition:background .5s ease-out;cursor:pointer}
+  #map i{background:rgba(255,255,255,.14);aspect-ratio:1;transition:background .5s ease-out;cursor:pointer}
   #map i.on{transition:none}
   #map i.hit{transition:none}
   #map i.ping{animation:cellping .9s ease-out}
@@ -60,14 +63,17 @@
   .fade{opacity:0;pointer-events:none;transition:opacity .18s}
   .fade.on{opacity:1}
   .fade.on.live{pointer-events:auto}
-  #drop{border:2px dashed var(--color-lock);background:rgba(0,190,78,.05)}
-  .inp{background:#fff;border:1px solid var(--color-hair);border-radius:10px;padding:9px 11px;font-size:13px;width:100%}
+  #drop{border:2px dashed var(--color-lock);background:rgba(255,152,0,.07)}
+  .inp{background:#000;color:#fff;border:1px solid var(--color-hair);border-radius:10px;padding:9px 11px;font-size:13px;width:100%}
   .btn{border-radius:999px;height:36px;padding:0 16px;font-size:12.5px;font-weight:500;display:inline-flex;
     align-items:center;gap:7px;transition:background-color .12s,color .12s}
-  .btn-p{background:var(--color-ink);color:#fff}.btn-p:hover{background:#000}
-  .btn-s{background:rgba(27,27,24,.05);color:var(--color-ink)}.btn-s:hover{background:rgba(27,27,24,.09)}
+  .btn-p{background:#ff9800;color:#000}.btn-p:hover{background:#f57c00}
+  .btn-s{background:rgba(255,255,255,.07);color:var(--color-ink)}.btn-s:hover{background:rgba(255,255,255,.12)}
   .btn:disabled{opacity:.4}
-  #chatlog::-webkit-scrollbar{width:0}
+  #chatlog::-webkit-scrollbar,#landLog::-webkit-scrollbar{width:6px}
+  #chatlog::-webkit-scrollbar-thumb,#landLog::-webkit-scrollbar-thumb{background:#616161;border-radius:3px}
+  #chatlog,#landLog{scrollbar-width:thin;scrollbar-color:#616161 transparent}
+  #chatlog:empty::before,#landLog:empty::before{content:"No messages yet. Say hi!";color:#888;font-size:11px;margin:auto}
   .toast{animation:pop .18s cubic-bezier(.2,.8,.2,1)}
   @keyframes pop{from{transform:translateY(6px);opacity:0}}
   @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
@@ -76,13 +82,13 @@
 <body class="h-dvh flex flex-col">
 
 <!-- ══ nav ══════════════════════════════════════════════════════════════ -->
-<nav class="shrink-0 bg-white border-b border-hair">
+<nav class="shrink-0 bg-[#1b1b1b] border-b border-hair">
   <div class="h-13 px-3 sm:px-4 flex items-center gap-2.5">
     <div class="flex items-center gap-2 select-none shrink-0">
-      <span class="w-[18px] h-[18px] rounded-[5px] bg-ink grid place-items-center text-white text-[9px]">
+      <span class="w-[18px] h-[18px] rounded-[5px] bg-[#ff9800] grid place-items-center text-black text-[9px]">
         <i class="fa-solid fa-puzzle-piece"></i>
       </span>
-      <span class="font-semibold tracking-[-.02em] text-[15px]">Cutfit</span>
+      <span class="font-semibold tracking-[-.02em] text-[15px] text-[#ff9800]">Talkomatic Puzzle</span>
     </div>
 
     <button id="codeChip" class="num hidden items-center gap-1.5 h-7 px-2.5 rounded-full bg-void border border-hair
@@ -178,7 +184,7 @@
   <div id="land" class="absolute inset-0 z-50 bg-void grid place-items-center px-5 overflow-auto py-8 fade on live">
     <div class="w-full max-w-[400px]">
       <div class="text-center mb-6">
-        <div class="w-11 h-11 rounded-xl bg-ink text-white grid place-items-center mx-auto mb-4 text-[15px]"><i class="fa-solid fa-puzzle-piece"></i></div>
+        <div class="w-11 h-11 rounded-xl bg-[#ff9800] text-black grid place-items-center mx-auto mb-4 text-[15px]"><i class="fa-solid fa-puzzle-piece"></i></div>
         <p class="text-[19px] font-semibold tracking-[-.02em]">Cut a picture up. Together.</p>
         <p class="text-[12.5px] text-mid leading-relaxed mt-1.5 max-w-[34ch] mx-auto">
           Pick a picture and everyone in this room solves it together on the same mat.
@@ -194,7 +200,7 @@
           <input id="file" type="file" accept="image/*" class="sr-only">
         </label>
         <div class="flex items-center gap-1 mt-3 flex-wrap" id="lcuts"></div>
-        <p id="mobNote" class="text-[11px] text-mid mt-2 hidden">1000 is a lot on a phone — fine technically, long in practice.</p>
+        <p id="mobNote" class="text-[11px] text-mid mt-2 hidden"></p>
         <button id="create" class="btn btn-p w-full justify-center mt-3" disabled>
           <i class="fa-solid fa-scissors text-[11px]"></i>Start puzzle
         </button>
@@ -219,7 +225,7 @@
   </div>
 
   <!-- ══ share sheet ══════════════════════════════════════════════════ -->
-  <div id="share" class="absolute inset-0 z-50 bg-ink/25 grid place-items-center px-5 fade">
+  <div id="share" class="absolute inset-0 z-50 bg-black/60 grid place-items-center px-5 fade">
     <div class="float rounded-2xl p-5 w-full max-w-[300px] text-center">
       <p class="text-[11px] text-mid">Room code</p>
       <p id="shareCode" class="num text-[30px] font-semibold tracking-[.18em] mt-1">—</p>
@@ -233,7 +239,7 @@
   </div>
 
   <!-- ══ recut confirm ════════════════════════════════════════════════ -->
-  <div id="recut" class="absolute inset-0 z-50 bg-ink/25 grid place-items-center px-5 fade">
+  <div id="recut" class="absolute inset-0 z-50 bg-black/60 grid place-items-center px-5 fade">
     <div class="float rounded-2xl p-5 w-full max-w-[300px]">
       <p class="text-[14.5px] font-medium">Re-cut the picture?</p>
       <p id="recutSub" class="text-[12px] text-mid leading-relaxed mt-1.5">This resets the board for everyone in the room.</p>
@@ -259,7 +265,7 @@ const $ = i => document.getElementById(i);
 const stage = $('stage'), cv = $('cv'), ctx = cv.getContext('2d');
 const mapEl = $('map');
 const DPR = Math.min(devicePixelRatio || 1, 2);
-const COUNTS = [25, 100, 250, 500, 1000];
+const COUNTS = [25, 100];
 const MINK = 0.02, MAXK = 6;
 const isMobile = matchMedia('(pointer:coarse)').matches || innerWidth < 760;
 const show = (el, on) => $(el).classList.toggle('on', on);
@@ -804,20 +810,29 @@ function onCellPing(d) {
 }
 function onChat(d) {
   const p = S.players.get(d.by);
-  const html = `<span class="font-medium" style="color:${p ? p.color : '#767268'}">${esc(p ? p.name : '?')}</span>` +
-    `<span class="text-ink/80"> ${esc(d.text)}</span>`;
+  const when = new Date(d.at || Date.now());
+  const hh = String(when.getHours()).padStart(2, '0');
+  const mm = String(when.getMinutes()).padStart(2, '0');
+  const html = `<span class="font-medium" style="color:${p ? p.color : '#cccccc'}">${esc(p ? p.name : '?')}</span>` +
+    `<span class="text-ink/80"> ${esc(d.text)}</span>` +
+    `<span class="text-[9px] text-mid ml-1">${hh}:${mm}</span>`;
   // Mirror into both the in-game panel and the choosing-screen chat.
   for (const id of ['chatlog', 'landLog']) {
     const log = $(id); if (!log) continue;
+    // Only pin to the bottom when the reader is already there, so scrolling
+    // back to read history is not yanked away by new messages.
+    const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
     const row = document.createElement('div');
+    row.className = 'break-words leading-snug';
     row.innerHTML = html;
     log.appendChild(row);
-    log.scrollTop = 1e9;
+    while (log.children.length > 80) log.removeChild(log.firstChild);
+    if (nearBottom) log.scrollTop = log.scrollHeight;
   }
   if (!$('chat').classList.contains('on')) $('chatDot').classList.remove('hidden');
 }
 
-const colorOf = id => S.players.get(id)?.color || '#1B1B18';
+const colorOf = id => S.players.get(id)?.color || '#cccccc';
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 /* ══ frame map ═══════════════════════════════════════════════════════════ */
@@ -831,7 +846,7 @@ function cell(idx, color, hit) {
 function paintMap() {
   S.cells.forEach((el, i) => {
     const by = S.placedBy[i];
-    if (S.pieces[i] && S.pieces[i].gid === PINNED) cell(i, by === NOBODY ? '#1B1B18' : colorOf(by), false);
+    if (S.pieces[i] && S.pieces[i].gid === PINNED) cell(i, by === NOBODY ? '#ff9800' : colorOf(by), false);
     else cell(i, null, false);
   });
 }
@@ -899,7 +914,7 @@ function paint() {
   while (step * k < 20) step *= 2;
   while (step * k > 96) step /= 2;
   const x0 = Math.floor(cam.x / step) * step, y0 = Math.floor(cam.y / step) * step;
-  ctx.fillStyle = 'rgba(27,27,24,.14)';
+  ctx.fillStyle = 'rgba(255,255,255,.13)';
   ctx.beginPath();
   for (let wx = x0; wx < cam.x + vw / k + step; wx += step)
     for (let wy = y0; wy < cam.y + vh / k + step; wy += step)
@@ -915,10 +930,10 @@ function paint() {
   const near = (x, y, p) => x < vr && x + p.w > vx && y < vb && y + p.h > vy;
 
   const b = L.board;
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = '#2e2e2e';
   ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.fill();
   if (peek && S.ghost) { ctx.globalAlpha = .22; ctx.drawImage(S.ghost, b.x, b.y, b.w, b.h); ctx.globalAlpha = 1; }
-  ctx.strokeStyle = 'rgba(27,27,24,.3)';
+  ctx.strokeStyle = 'rgba(255,152,0,.45)';
   ctx.lineWidth = 1.5 / k;
   ctx.setLineDash([6 / k, 5 / k]);
   ctx.strokeRect(b.x, b.y, b.w, b.h);
@@ -1014,7 +1029,7 @@ function paint() {
     ctx.closePath();
     ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 1; ctx.stroke();
-    ctx.font = '500 10.5px "Instrument Sans", sans-serif';
+    ctx.font = '500 10.5px talkoSS, sans-serif';
     const w = ctx.measureText(p.name).width;
     ctx.fillStyle = p.color;
     ctx.beginPath(); ctx.roundRect(12, 8, w + 10, 15, 7); ctx.fill();
