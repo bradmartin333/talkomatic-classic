@@ -83,6 +83,7 @@ The container listens on port 3000, binds `0.0.0.0`, and keeps all runtime state
 
 ### Monitoring
 
+The live status page for the official instance is at [status.talkomatic.co](https://status.talkomatic.co).
 Three public endpoints are made for uptime monitors like Uptime Kuma:
 
 | Endpoint | Purpose | Suggested check |

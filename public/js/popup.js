@@ -6,7 +6,7 @@ class TalkomaticPopupManager {
   constructor() {
     // Current version - update this when you release new versions.
     // Bumping this re-shows the popup to everyone (see shouldShowPopup).
-    this.currentVersion = "5.3.0";
+    this.currentVersion = "5.5.0";
     // Cookie names
     this.cookieNames = {
       lastShown: "talkomatic_popup_last_shown",
@@ -463,16 +463,16 @@ class TalkomaticPopupManager {
                     <div class="talkomatic-popup-header">
                         <button class="talkomatic-popup-close" data-action="close">&times;</button>
                         <h2 class="talkomatic-popup-title"><i class="fas fa-wand-magic-sparkles"></i> What's New in Talkomatic</h2>
-                        <p class="talkomatic-popup-version">Spectate, Suggestions, Moderation &amp; Reliability, ${currentDate}</p>
-                        <span class="talkomatic-version-pill">Version 5.3</span>
+                        <p class="talkomatic-popup-version">Suggestion Board, Custom Themes, Avatars, Games &amp; More, ${currentDate}</p>
+                        <span class="talkomatic-version-pill">Version 5.5</span>
                     </div>
 
                     <div class="talkomatic-popup-body">
 
                         <div class="talkomatic-update-section">
                             <div class="talkomatic-highlight-box">
-                                <h4>A big one</h4>
-                                <p>This update brings features people asked for plus a pile of reliability work. You can now watch any public room without joining, send the team feature ideas straight from the lobby, and joining, emotes, and reconnecting are all steadier. Staff also picked up a proper set of tools behind the scenes.</p>
+                                <h4>The community update</h4>
+                                <p>This is one of the biggest Talkomatic updates ever. There is now a public Suggestion Board where your ideas get voted on and you can watch them ship. You can repaint the entire site, lobby and rooms, with a visual theme editor and share your themes with everyone. Your Discord picture can ride along next to your name. And the games got serious work: Pong was rebuilt from scratch and the Puzzle got a full redesign with much stronger image safety.</p>
                             </div>
                         </div>
 
@@ -480,74 +480,69 @@ class TalkomaticPopupManager {
                             <h3><i class="fas fa-star"></i> The Highlights</h3>
                             <div class="talkomatic-feature-grid">
                                 <div class="talkomatic-feature-item">
-                                    <div class="talkomatic-feature-icon"><i class="fas fa-eye"></i></div>
-                                    <h4>Spectate Any Room</h4>
-                                    <p>Watch any public room read-only, right from the lobby. Look before you join, or just lurk. It even works when a room is full.</p>
-                                </div>
-                                <div class="talkomatic-feature-item">
                                     <div class="talkomatic-feature-icon"><i class="fas fa-lightbulb"></i></div>
-                                    <h4>Suggest a Feature</h4>
-                                    <p>Got an idea for Talkomatic? Send it straight from the lobby menu and the team reviews every suggestion.</p>
+                                    <h4>Suggestion Board</h4>
+                                    <p>A public board in the lobby. Post ideas, upvote or downvote, reply to each other, and see exactly what gets approved, declined, or shipped.</p>
                                 </div>
                                 <div class="talkomatic-feature-item">
-                                    <div class="talkomatic-feature-icon"><i class="fas fa-right-to-bracket"></i></div>
-                                    <h4>Joining Just Works</h4>
-                                    <p>No more being bounced back to the lobby near a full room, and your text box now shows up every time you join.</p>
+                                    <div class="talkomatic-feature-icon"><i class="fas fa-palette"></i></div>
+                                    <h4>Custom Themes</h4>
+                                    <p>Recolor everything with zero CSS. Pick colors, fonts, roundness, and effects like glass, then publish your theme for everyone to use.</p>
+                                </div>
+                                <div class="talkomatic-feature-item">
+                                    <div class="talkomatic-feature-icon"><i class="fab fa-discord"></i></div>
+                                    <h4>Discord Avatars</h4>
+                                    <p>Show your Discord profile picture next to your name in the lobby, in rooms, and on the board. Safe by design, it uses Discord's own moderated avatars.</p>
                                 </div>
                             </div>
                         </div>
 
                         <div class="talkomatic-update-section">
-                            <h3><i class="fas fa-wand-magic-sparkles"></i> New for Everyone</h3>
+                            <h3><i class="fas fa-lightbulb"></i> The Suggestion Board</h3>
                             <ul class="talkomatic-feature-list tk-iconed">
-                                <li><i class="fas fa-eye tk-lic"></i> A spectate eye sits next to Enter on public rooms, so anyone can watch a room read-only without taking a seat <span class="talkomatic-badge new">NEW</span></li>
-                                <li><i class="fas fa-lightbulb tk-lic"></i> A "Suggest a feature" link in the lobby menu sends your idea to the team <span class="talkomatic-badge new">NEW</span></li>
-                                <li><i class="fas fa-plug-circle-check tk-lic"></i> If reconnecting to your room ever stalls, you now get a Rejoin button instead of an endless spinner <span class="talkomatic-badge improved">IMPROVED</span></li>
+                                <li><i class="fas fa-comments tk-lic"></i> Everyone can post ideas, reply, and vote. Open it from the lobby menu <span class="talkomatic-badge new">NEW</span></li>
+                                <li><i class="fas fa-rocket tk-lic"></i> Ideas carry a visible status: Approved, Declined, or Implemented, set by the devs for all to see <span class="talkomatic-badge new">NEW</span></li>
+                                <li><i class="fas fa-shield-halved tk-lic"></i> Staff posts wear real MOD and DEV badges that cannot be faked, and the word filter is always on here <span class="talkomatic-badge new">NEW</span></li>
+                                <li><i class="fas fa-bolt tk-lic"></i> New posts appear live while you browse, without losing your place or the reply you were typing <span class="talkomatic-badge new">NEW</span></li>
+                                <li><i class="fas fa-scale-balanced tk-lic"></i> Voting is one per person with limits that stop new-tab vote farming, and posting is capped at 3 ideas a day <span class="talkomatic-badge new">NEW</span></li>
                             </ul>
                         </div>
 
                         <div class="talkomatic-update-section">
-                            <h3><i class="fas fa-right-to-bracket"></i> Joining and Rooms</h3>
+                            <h3><i class="fas fa-palette"></i> Make Talkomatic Yours</h3>
                             <ul class="talkomatic-feature-list tk-iconed">
-                                <li><i class="fas fa-users tk-lic"></i> Joining a room that is one seat from full no longer bounces you back to the lobby by mistake <span class="talkomatic-badge fixed">FIXED</span></li>
-                                <li><i class="fas fa-keyboard tk-lic"></i> Your text box now appears every time you join, so you no longer have to refresh to start typing <span class="talkomatic-badge fixed">FIXED</span></li>
-                                <li><i class="fas fa-bolt tk-lic"></i> Entering a room no longer waits on emotes to finish loading, so joins feel quicker <span class="talkomatic-badge improved">IMPROVED</span></li>
+                                <li><i class="fas fa-eye-dropper tk-lic"></i> A visual theme editor with live preview: press Customize in the lobby, or Apps then Theme Editor in a room. No CSS needed <span class="talkomatic-badge new">NEW</span></li>
+                                <li><i class="fas fa-layer-group tk-lic"></i> Effect styles that change the whole feel: Glassmorphism, Neo-brutalism, or Soft, plus a corner roundness slider <span class="talkomatic-badge new">NEW</span></li>
+                                <li><i class="fas fa-font tk-lic"></i> Google font pickers for the main text, headings, and even your chat text in rooms <span class="talkomatic-badge new">NEW</span></li>
+                                <li><i class="fas fa-upload tk-lic"></i> Publish your theme to the redesigned Themes page, browse community themes with palette previews, and apply any of them in one click <span class="talkomatic-badge new">NEW</span></li>
+                                <li><i class="fas fa-code tk-lic"></i> Power users get an Advanced mode with every knob and a raw custom CSS box <span class="talkomatic-badge new">NEW</span></li>
                             </ul>
                         </div>
 
                         <div class="talkomatic-update-section">
-                            <h3><i class="fas fa-face-smile"></i> Emotes</h3>
+                            <h3><i class="fas fa-gamepad"></i> Games</h3>
                             <ul class="talkomatic-feature-list tk-iconed">
-                                <li><i class="fas fa-icons tk-lic"></i> The Emoticons picker now fills in properly, even when emotes finish loading a moment after you open the room <span class="talkomatic-badge fixed">FIXED</span></li>
-                                <li><i class="fas fa-cloud-arrow-down tk-lic"></i> Emotes load with a timeout and a cleaner request, so a slow or blocked source no longer stalls the room <span class="talkomatic-badge improved">IMPROVED</span></li>
-                                <li><i class="fas fa-arrows-rotate tk-lic"></i> A momentary failure on the emote source keeps your existing emotes instead of dropping every one to plain text <span class="talkomatic-badge fixed">FIXED</span></li>
+                                <li><i class="fas fa-table-tennis-paddle-ball tk-lic"></i> Pong was rebuilt from scratch: proper 1v1 with spectators in a queue, a winner screen, and an automatic next round. The lag and paddle clipping are gone <span class="talkomatic-badge improved">IMPROVED</span></li>
+                                <li><i class="fas fa-puzzle-piece tk-lic"></i> The Puzzle got a full redesign in the Talkomatic look, with a docked chat, simple 25 or 100 piece choices, and a proper finish screen where anyone can start the next picture <span class="talkomatic-badge improved">IMPROVED</span></li>
+                                <li><i class="fas fa-shield-halved tk-lic"></i> Puzzle image safety now runs on the server itself and blocks far more unsafe uploads than before <span class="talkomatic-badge fixed">FIXED</span></li>
                             </ul>
                         </div>
 
                         <div class="talkomatic-update-section">
-                            <h3><i class="fas fa-shield-halved"></i> Moderation and Safety</h3>
+                            <h3><i class="fas fa-gears"></i> Under the Hood</h3>
                             <ul class="talkomatic-feature-list tk-iconed">
-                                <li><i class="fas fa-ban tk-lic"></i> Staff can now ban an IP directly by typing it in, without needing to catch the user online first <span class="talkomatic-badge new">NEW</span></li>
-                                <li><i class="fas fa-people-group tk-lic"></i> The ban list shows which accounts have been seen behind each banned address <span class="talkomatic-badge new">NEW</span></li>
-                                <li><i class="fas fa-network-wired tk-lic"></i> Block an entire IPv6 range in one click, with the range worked out automatically, to stop evaders who rotate their address <span class="talkomatic-badge new">NEW</span></li>
-                                <li><i class="fas fa-lock tk-lic"></i> Semi-private rooms are tighter: moderators enter the access code like everyone else or watch via spectate, and only developers bypass it <span class="talkomatic-badge improved">IMPROVED</span></li>
-                                <li><i class="fas fa-circle-info tk-lic"></i> The ban screen no longer reloads itself in a loop after a repeat ban, and its appeal checks no longer trip the rate limiter <span class="talkomatic-badge fixed">FIXED</span></li>
+                                <li><i class="fab fa-docker tk-lic"></i> Talkomatic can now be self-hosted with Docker or Dokploy in a few minutes, with data that survives redeploys <span class="talkomatic-badge new">NEW</span></li>
+                                <li><i class="fas fa-heart-pulse tk-lic"></i> New public health and status APIs power uptime monitoring, so problems get spotted before you feel them <span class="talkomatic-badge new">NEW</span></li>
+                                <li><i class="fas fa-signal tk-lic"></i> A live status page at <a href="https://status.talkomatic.co" target="_blank" rel="noopener noreferrer" style="color:#FF9800">status.talkomatic.co</a> shows whether Talkomatic and its services are up, in real time <span class="talkomatic-badge new">NEW</span></li>
+                                <li><i class="fas fa-broom tk-lic"></i> The whole repository was reorganized and documented, with a rewritten README and proper API docs for bot builders <span class="talkomatic-badge improved">IMPROVED</span></li>
                                 <li><i class="fas fa-user-secret tk-lic"></i> Your IP address stays private. Only developers can ever see it, never moderators or other users <span class="talkomatic-badge privacy">PRIVACY</span></li>
-                            </ul>
-                        </div>
-
-                        <div class="talkomatic-update-section">
-                            <h3><i class="fas fa-bug-slash"></i> Also Fixed</h3>
-                            <ul class="talkomatic-feature-list tk-iconed">
-                                <li><i class="fas fa-user-clock tk-lic"></i> Moderator applications can no longer be spammed. Three tries in a day and the form takes a 24 hour breather <span class="talkomatic-badge fixed">FIXED</span></li>
-                                <li><i class="fas fa-compress tk-lic"></i> Shrinking a room's size now enforces the new limit instead of leaving the room over capacity <span class="talkomatic-badge fixed">FIXED</span></li>
                             </ul>
                         </div>
 
                         <div class="talkomatic-update-section">
                             <div class="talkomatic-highlight-box">
                                 <h4>Built with you</h4>
-                                <p>Talkomatic is open source and shaped by community feedback. Report a bug, suggest an idea from the lobby, or just hang out with us on Discord. Thanks for typing letter by letter with us.</p>
+                                <p>Half of this update came straight from your ideas, and now there is a whole board for the other half. Post what you want next, vote on what matters, and watch it ship. Thanks for typing letter by letter with us.</p>
                             </div>
                         </div>
 

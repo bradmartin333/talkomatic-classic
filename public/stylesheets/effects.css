@@ -20,8 +20,15 @@
   font-family: var(--tk-font-heading, inherit);
 }
 
+/* Fallback must be the chat's ORIGINAL font (talkoText), not inherit, or an
+   unset font slot would swap it to the body font and change how big it looks */
 .chat-input {
-  font-family: var(--tk-font-chat, inherit);
+  font-family: var(--tk-font-chat, talkoText, Arial, sans-serif);
+}
+
+/* Chat text size, active only when the slider has been touched */
+html.tk-chat-sized .chat-input {
+  font-size: var(--tk-chat-size) !important;
 }
 
 /* ── Staff badge styling (mods and devs theme what they own) ── */

@@ -94,7 +94,7 @@ const CONFIG = {
   RESERVED_NAMES: ["mohd", "talkomatic", "admin", "mod", "dev"],
   VERSIONS: {
     API: "v1",
-    SERVER: "2.3.0",
+    SERVER: "5.5.0",
     // Socket message-shape version. Restarts are invisible while this matches
     // the client's baked-in copy; bump it ONLY when a client<->server payload
     // shape changes, which makes still-open clients reload once to pick up the
