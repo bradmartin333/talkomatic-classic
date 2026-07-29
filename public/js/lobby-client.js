@@ -558,19 +558,24 @@ function avatarUrl(av, size) {
   );
 }
 
-// Fetch the profile from pfpgrab once, then cache the hash for a day (the
-// recommended pattern: images always come straight from Discord's CDN).
-async function resolveAvatar(discordId) {
-  try {
-    const c = JSON.parse(localStorage.getItem("talkomaticPfp") || "null");
-    if (
-      c && c.discordId === discordId &&
-      Date.now() - (c.fetchedAt || 0) < 24 * 60 * 60 * 1000
-    )
-      return c;
-  } catch (e) {}
+// Fetch the profile from pfpgrab and cache the hash briefly. Images always
+// come straight from Discord's CDN; only the hash lookup goes to pfpgrab.
+// `fresh` skips every cache layer - used when retrying an account that
+// previously had no picture, so a just-added avatar shows up immediately.
+async function resolveAvatar(discordId, fresh) {
+  if (!fresh) {
+    try {
+      const c = JSON.parse(localStorage.getItem("talkomaticPfp") || "null");
+      if (
+        c && c.discordId === discordId &&
+        Date.now() - (c.fetchedAt || 0) < 10 * 60 * 1000
+      )
+        return c;
+    } catch (e) {}
+  }
   const res = await fetch(
-    "https://pfpgrab.com/api/v1/users/" + discordId + "?size=64",
+    "https://pfpgrab.com/api/v1/users/" + discordId + "?size=64" +
+      (fresh ? "&_=" + Date.now() : ""),
   );
   const body = await res.json().catch(() => null);
   if (!res.ok) {
@@ -583,8 +588,12 @@ async function resolveAvatar(discordId) {
           : "Could not look up that Discord ID.",
     );
   }
-  if (!body || !body.avatar || body.avatar.is_default || !body.avatar.hash)
+  if (!body || !body.avatar || body.avatar.is_default || !body.avatar.hash) {
+    // Remember the miss so the next attempt for this ID bypasses caches
+    localStorage.setItem("talkomaticPfpMiss", discordId);
     throw new Error("That Discord account has no profile picture set.");
+  }
+  localStorage.removeItem("talkomaticPfpMiss");
   const av = {
     discordId,
     hash: body.avatar.hash,
@@ -1071,7 +1080,10 @@ logForm.addEventListener("submit", async (e) => {
         localStorage.removeItem("talkomaticPfpEnabled");
       } else {
         try {
-          await resolveAvatar(rawId);
+          // If this exact ID previously had no picture, bypass caches so a
+          // freshly added Discord avatar is found right away.
+          const fresh = localStorage.getItem("talkomaticPfpMiss") === rawId;
+          await resolveAvatar(rawId, fresh);
           localStorage.setItem("talkomaticPfpEnabled", "1");
         } catch (err) {
           localStorage.removeItem("talkomaticPfpEnabled");
@@ -1147,6 +1159,31 @@ function updatePfpPreview() {
   } catch (e) {}
   sync();
   updatePfpPreview();
+
+  // People change their Discord picture: refresh the stored hash shortly
+  // after load and push the new one to the server if it differs. If the
+  // account lost its avatar, turn the feature off cleanly.
+  setTimeout(async () => {
+    if (localStorage.getItem("talkomaticPfpEnabled") !== "1") return;
+    const before = storedAvatar();
+    if (!before) return;
+    try {
+      const after = await resolveAvatar(before.discordId);
+      if (after.hash !== before.hash) {
+        updatePfpPreview();
+        if (currentUsername)
+          emitJoinLobby(currentUsername, currentLocation || "On The Web");
+      }
+    } catch (e) {
+      localStorage.removeItem("talkomaticPfpEnabled");
+      localStorage.removeItem("talkomaticPfp");
+      updatePfpPreview();
+      if (box) box.checked = false;
+      sync();
+      if (currentUsername)
+        emitJoinLobby(currentUsername, currentLocation || "On The Web");
+    }
+  }, 4000);
 })();
 
 goChatButton.addEventListener("click", () => {

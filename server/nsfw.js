@@ -13,6 +13,7 @@ const SCAN_TIMEOUT_MS = 20000;
 
 let worker = null;
 let seq = 0;
+let modelReady = false; // true once the model has loaded at least once
 const pending = new Map(); // id -> { resolve, reject, timer }
 
 function ensureWorker() {
@@ -64,14 +65,26 @@ function call(payload) {
 // Scan a JPEG buffer. Resolves { safe, scores }; rejects on any failure -
 // callers must treat a rejection as a blocked upload (fail closed).
 function scanJpeg(buf) {
-  return call({ buf });
+  return call({ buf }).then((verdict) => {
+    modelReady = true;
+    return verdict;
+  });
 }
 
 // Fire at boot so the first upload does not pay the model-load cost.
 function warmup() {
-  call({ warmup: true }).catch((e) =>
-    console.error("NSFW model preload failed (will retry on upload):", e.message),
-  );
+  call({ warmup: true })
+    .then(() => {
+      modelReady = true;
+    })
+    .catch((e) =>
+      console.error("NSFW model preload failed (will retry on upload):", e.message),
+    );
 }
 
-module.exports = { scanJpeg, warmup };
+// Health endpoint: has the scanner successfully loaded its model.
+function isReady() {
+  return modelReady;
+}
+
+module.exports = { scanJpeg, warmup, isReady };

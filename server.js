@@ -568,10 +568,57 @@ app.get("/", (req, res) =>
 
 const API = `/api/${CONFIG.VERSIONS.API}`;
 
-// Liveness probe for Docker/Dokploy. Registered before the antibot middleware
-// on purpose: healthcheck agents (wget/curl) are not browsers and would 401.
+// ── Monitoring endpoints ────────────────────────────────────────────────────
+// All three are registered BEFORE the antibot middleware on purpose: uptime
+// monitors (Uptime Kuma, Docker healthchecks, wget/curl) are not browsers and
+// would otherwise get 401. They expose no per-user data.
+
+// Liveness probe: is the process up at all. Used by the Docker HEALTHCHECK.
 app.get("/healthz", (req, res) => {
   res.json({ status: "ok", uptime: process.uptime() });
+});
+
+// Detailed health: stable shape for keyword monitors ("status":"ok" only when
+// every subsystem is fine).
+app.get(`${API}/health`, (req, res) => {
+  const stats = rooms.getRoomStatistics();
+  const mem = process.memoryUsage();
+  const nsfwReady = nsfw.isReady();
+  res.json({
+    status: nsfwReady ? "ok" : "degraded",
+    timestamp: Date.now(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    version: {
+      server: CONFIG.VERSIONS.SERVER,
+      api: CONFIG.VERSIONS.API,
+      protocol: CONFIG.VERSIONS.PROTOCOL,
+    },
+    process: {
+      node: process.version,
+      heapUsedMB: Math.round(mem.heapUsed / 1048576),
+      rssMB: Math.round(mem.rss / 1048576),
+    },
+    rooms: { active: stats.totalRooms, limit: stats.currentLimit },
+    users: { inRooms: stats.totalUsers, sockets: io.engine.clientsCount },
+    subsystems: {
+      socketio: "ok",
+      imageSafetyScanner: nsfwReady ? "ok" : "loading",
+    },
+  });
+});
+
+// Public status summary, safe to embed in a status page.
+app.get(`${API}/status`, (req, res) => {
+  const stats = rooms.getRoomStatistics();
+  res.json({
+    status: "online",
+    name: "Talkomatic Classic",
+    version: CONFIG.VERSIONS.SERVER,
+    uptimeSeconds: Math.floor(process.uptime()),
+    usersOnline: io.engine.clientsCount,
+    usersInRooms: stats.totalUsers,
+    activeRooms: stats.totalRooms,
+  });
 });
 
 app.post(`${API}/bot-tokens/request`, handleBotTokenRequest);
@@ -591,17 +638,6 @@ app.get(`${API}/config`, (req, res) => {
   };
   state.apiCache.set("config", { timestamp: Date.now(), data });
   res.json(data);
-});
-
-app.get(`${API}/health`, (req, res) => {
-  res.json({
-    status: "ok",
-    uptime: process.uptime(),
-    timestamp: Date.now(),
-    version: CONFIG.VERSIONS.SERVER,
-    roomStatistics: rooms.getRoomStatistics(),
-    botTokens: { active: state.botTokens.size },
-  });
 });
 
 app.get(`${API}/me`, (req, res) => {

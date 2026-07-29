@@ -74,6 +74,18 @@
   #chatlog::-webkit-scrollbar-thumb,#landLog::-webkit-scrollbar-thumb{background:#616161;border-radius:3px}
   #chatlog,#landLog{scrollbar-width:thin;scrollbar-color:#616161 transparent}
   #chatlog:empty::before,#landLog:empty::before{content:"No messages yet. Say hi!";color:#888;font-size:11px;margin:auto}
+  .strip-cream{background:#fdf5e6;color:#000;font-weight:bold;font-size:13px;padding:7px 12px;margin:0}
+  .cut-tile{display:flex;flex-direction:column;align-items:center;gap:2px;padding:12px 8px;background:#000;
+    border:1px solid var(--color-hair);border-radius:8px;color:#fff;transition:border-color .12s,background .12s}
+  .cut-tile i{color:#ff9800;font-size:15px;margin-bottom:2px}
+  .cut-tile .ct-n{font-size:20px;font-weight:bold}
+  .cut-tile .ct-l{font-size:11px;color:var(--color-mid)}
+  .cut-tile .ct-g{font-size:9.5px;color:#888}
+  .cut-tile:hover{border-color:#ff9800}
+  .cut-tile[aria-pressed="true"]{background:#ff9800;border-color:#ff9800;color:#000}
+  .cut-tile[aria-pressed="true"] i,.cut-tile[aria-pressed="true"] .ct-l,.cut-tile[aria-pressed="true"] .ct-g{color:#000}
+  body.chat-open #hud{right:274px}
+  @media (max-width:640px){#chat{width:100%}body.chat-open #hud{display:none}}
   .toast{animation:pop .18s cubic-bezier(.2,.8,.2,1)}
   @keyframes pop{from{transform:translateY(6px);opacity:0}}
   @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
@@ -147,10 +159,11 @@
     <div id="map"></div>
   </div>
 
-  <!-- chat -->
-  <div id="chat" class="absolute top-16 right-3 sm:right-4 z-30 w-[240px] float rounded-xl flex flex-col fade">
-    <div id="chatlog" class="p-2.5 h-[190px] overflow-y-auto flex flex-col gap-1.5 text-[12px]"></div>
-    <div class="border-t border-hair p-1.5 flex gap-1.5">
+  <!-- chat: docked sidebar, room-style -->
+  <div id="chat" class="absolute top-0 right-0 bottom-0 z-30 w-[262px] bg-[#1b1b1b] border-l border-hair flex flex-col fade">
+    <p class="strip-cream shrink-0">Chat...</p>
+    <div id="chatlog" class="p-2.5 flex-1 overflow-y-auto flex flex-col gap-1.5 text-[12px]"></div>
+    <div class="border-t border-hair p-1.5 flex gap-1.5 shrink-0">
       <input id="chatIn" class="inp !py-1.5 !text-[12px]" placeholder="Say something" maxlength="200">
       <button id="chatSend" class="ico"><i class="fa-solid fa-paper-plane"></i></button>
     </div>
@@ -167,15 +180,18 @@
     <p id="busyTxt" class="num text-[13px] text-mid">Cutting…</p>
   </div>
 
-  <div id="won" class="absolute inset-0 z-40 grid place-items-center fade">
-    <div class="float rounded-2xl px-7 py-6 text-center min-w-[220px]">
-      <div class="w-9 h-9 rounded-full bg-lock/12 text-lock grid place-items-center mx-auto mb-3"><i class="fa-solid fa-check text-[13px]"></i></div>
-      <p class="text-[16px] font-medium tracking-[-.01em]">Solved</p>
+  <!-- Finished banner: never blocks the board or the chat (pointer-events
+       pass through everywhere except the card itself). -->
+  <div id="won" class="absolute inset-x-0 top-6 z-40 flex justify-center fade pointer-events-none px-3">
+    <div class="float rounded-2xl px-7 py-6 text-center min-w-[220px] pointer-events-auto">
+      <div class="w-9 h-9 rounded-full bg-lock/12 text-lock grid place-items-center mx-auto mb-3"><i class="fa-solid fa-trophy text-[13px]"></i></div>
+      <p class="text-[16px] font-bold tracking-[-.01em]">Puzzle finished!</p>
       <p id="wonSub" class="num text-[11.5px] text-mid mt-1"></p>
       <div id="wonBoard" class="mt-4 flex flex-col gap-1 text-[12px]"></div>
-      <div class="flex gap-2 mt-4 justify-center">
+      <p class="text-[10.5px] text-mid mt-3">The board is locked. Anyone can start the next one.</p>
+      <div class="flex gap-2 mt-3 justify-center">
         <button id="wonNext" class="btn btn-p">Start next puzzle</button>
-        <button id="wonClose" class="btn btn-s">Keep looking</button>
+        <button id="wonClose" class="btn btn-s">Hide</button>
       </div>
     </div>
   </div>
@@ -191,32 +207,36 @@
         </p>
       </div>
 
-      <div class="float rounded-2xl p-4">
-        <p class="text-[11px] text-mid mb-2">Start a puzzle for the room</p>
+      <div class="float rounded-xl overflow-hidden">
+        <p class="strip-cream">Start A Puzzle...</p>
+        <div class="p-4">
         <label id="pickWrap" class="block border border-dashed border-hair rounded-xl px-4 py-6 text-center cursor-pointer hover:border-mid transition-colors">
           <i class="fa-regular fa-image text-mid mb-2 block"></i>
           <span id="pickTxt" class="text-[12.5px] font-medium">Choose a picture</span>
           <span class="block text-[11px] text-mid mt-1">or drop one anywhere</span>
           <input id="file" type="file" accept="image/*" class="sr-only">
         </label>
-        <div class="flex items-center gap-1 mt-3 flex-wrap" id="lcuts"></div>
+        <div class="grid grid-cols-2 gap-2 mt-3" id="lcuts"></div>
         <p id="mobNote" class="text-[11px] text-mid mt-2 hidden"></p>
         <button id="create" class="btn btn-p w-full justify-center mt-3" disabled>
           <i class="fa-solid fa-scissors text-[11px]"></i>Start puzzle
         </button>
         <p id="upErr" class="text-[11px] text-[#E5484D] mt-2 hidden"></p>
         <p class="text-[10.5px] text-mid mt-3 leading-relaxed">Images are checked for unsafe content before anyone sees them.</p>
+        </div>
       </div>
 
-      <div class="float rounded-2xl p-3 mt-4">
+      <div class="float rounded-xl overflow-hidden mt-4">
+        <p class="strip-cream">Room Chat...</p>
+        <div class="p-3">
         <div class="flex items-center justify-between mb-2">
-          <p class="text-[11px] text-mid">In the puzzle</p>
-          <div id="landWho" class="flex items-center gap-1 flex-wrap justify-end"></div>
+          <div id="landWho" class="flex items-center gap-1 flex-wrap"></div>
         </div>
         <div id="landLog" class="h-[110px] overflow-y-auto flex flex-col gap-1.5 text-[12px] mb-2"></div>
         <div class="flex gap-1.5">
           <input id="landChatIn" class="inp !py-1.5 !text-[12px]" placeholder="Chat while you pick" maxlength="200">
           <button id="landChatSend" class="ico"><i class="fa-solid fa-paper-plane"></i></button>
+        </div>
         </div>
       </div>
 
@@ -800,7 +820,9 @@ function onSolved(d) {
   live('won', true);
 }
 $('wonClose').onclick = () => live('won', false);
-$('wonNext').onclick = () => { live('won', false); startNext(); };
+// Anyone can move the room on to the next puzzle once it is solved: ask the
+// server to end the board, which drops EVERYONE to the shared choosing screen.
+$('wonNext').onclick = () => { live('won', false); post({ t: 'puzzle-end' }); };
 function onCellPing(d) {
   pings.push({ idx: d.idx, t: performance.now(), c: colorOf(d.by) });
   const el = S.cells[d.idx];
@@ -1103,6 +1125,9 @@ cv.addEventListener('pointerdown', e => {
 
   if (spaceDown || e.button === 1) { beginPan(s); cv.classList.add('grabbing'); return; }
 
+  // Finished board is look-only: clicks pan instead of picking pieces up.
+  if (S.phase === 'solved') { beginPan(s); cv.classList.add('grabbing'); return; }
+
   const w = toWorld(s.x, s.y);
   lastPointerWorld = w;
   const p = S.cut ? pick(w.x, w.y) : null;
@@ -1315,6 +1340,7 @@ function setOwnerLabel(owner) {
 $('chatBtn').onclick = () => {
   const on = !$('chat').classList.contains('on');
   live('chat', on);
+  document.body.classList.toggle('chat-open', on);
   $('chatBtn').setAttribute('aria-pressed', on);
   if (on) { $('chatDot').classList.add('hidden'); $('chatIn').focus(); }
 };
@@ -1352,15 +1378,19 @@ $('copyLink').onclick = async () => {
 
 /* ══ landing ═════════════════════════════════════════════════════════════ */
 let picked = null, target = 100;
+const CUT_META = { 25: ['bolt', 'Quick', '5 x 5 pieces'], 100: ['puzzle-piece', 'Classic', '10 x 10 pieces'] };
 COUNTS.forEach(n => {
   const b = document.createElement('button');
-  b.className = 'seg num'; b.dataset.n = n;
-  b.textContent = n >= 1000 ? (n / 1000) + 'K' : n;
+  b.className = 'cut-tile'; b.dataset.n = n;
+  const meta = CUT_META[n] || ['puzzle-piece', n + ' pieces', ''];
+  b.innerHTML = '<i class="fa-solid fa-' + meta[0] + '"></i>' +
+    '<span class="ct-n num">' + n + '</span>' +
+    '<span class="ct-l">' + meta[1] + '</span>' +
+    '<span class="ct-g">' + meta[2] + '</span>';
   b.setAttribute('aria-pressed', n === target);
   b.onclick = () => {
     target = n;
     [...$('lcuts').children].forEach(c => c.setAttribute('aria-pressed', c === b));
-    $('mobNote').classList.toggle('hidden', !(isMobile && n >= 500));
   };
   $('lcuts').appendChild(b);
 });
@@ -1486,6 +1516,7 @@ resize();
 loop = requestAnimationFrame(frame);
 // Chat is open by default; the chat button still toggles it closed/open.
 live('chat', true);
+document.body.classList.add('chat-open');
 $('chatBtn').setAttribute('aria-pressed', 'true');
 openPuzzle(); // ask the parent to join this room's puzzle (or tell us there is none)
 </script>

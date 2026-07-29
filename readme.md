@@ -1,156 +1,106 @@
-# Talkomatic
+<div align="center">
 
-<img src="public/images/icons/favicon.png" alt="Talkomatic Logo" width="100px">
+<img src="public/images/icons/favicon.png" alt="Talkomatic" width="90" />
 
-Talkomatic is an online platform for real-time text communication, essentially a modern reimagining of the classic chat room experience. Users can type messages, and everyone in the room can see the messages as they are being typed, creating a unique and engaging chat experience.
+# Talkomatic Classic
 
-**Check out the website here:** [classic.talkomatic.co](https://classic.talkomatic.co)
+**The world's first chat room, reborn.** Real-time, character-by-character chat where everyone sees you type as you type, just like the original 1973 PLATO system.
+
+[![Live Site](https://img.shields.io/website?url=https%3A%2F%2Fclassic.talkomatic.co%2Fhealthz&up_message=online&down_message=offline&label=classic.talkomatic.co)](https://classic.talkomatic.co/)
+[![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org/)
+[![License](https://img.shields.io/badge/license-MIT-blue)](license)
+[![Docker Ready](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff9800)](contributing.md)
+
+[**Try it live**](https://classic.talkomatic.co/) · [API docs](docs/api.md) · [Report a bug](https://github.com/mohdmahmodi/talkomatic-classic/issues) · [Discord](https://discord.gg/N7tJznESrE)
+
+</div>
+
+---
+
+## What is this?
+
+Talkomatic was created in 1973 on the PLATO system at the University of Illinois. It was the first multi-user chat room ever built. This project is a faithful modern remake: no message log, no send button. Each person gets a section of the screen and everyone watches everyone else type live, letter by letter.
 
 ## Features
 
-- **Real-time Chat**: See messages as they're being typed, not just after they're sent.
-- **Multiple Room Types**: Create public, semi-private (with access code), or private rooms.
-- **Flexible Layout**: Choose between horizontal or vertical room layouts.
-- **User Presence**: See who's in the room and their locations.
-- **Invite System**: Easily invite others to your chat room with a generated link.
-- **Sound Notifications**: Audible cues when users join or leave the room.
-- **Mobile Responsive**: Adapts to different screen sizes for a seamless experience on any device.
+- **Live typing**: characters appear for everyone the moment you press them
+- **Rooms**: public, semi-private (6-digit access code), and private, in horizontal or vertical layouts
+- **Community suggestion board**: post ideas, reply, upvote, and see what gets approved and shipped
+- **Discord avatars**: optionally show your Discord profile picture next to your name
+- **Built-in apps**: collaborative jigsaw puzzle (with server-side image safety scanning), 1v1 Pong with spectators, a shared piano, and a collaborative whiteboard
+- **Themes**: swappable full-page themes, plus community themes
+- **Moderation**: staff dashboard with audit log, reports, appeals, IP bans, and a word filter
+- **Bot API**: token-based access for bots, with REST and Socket.IO ([docs](docs/api.md))
 
-## Technologies Used
+## Tech
 
-- Node.js
-- Express.js
-- Socket.IO
-- HTML5
-- CSS3
-- JavaScript (ES6+)
+Node.js, Express, and Socket.IO on the server. Vanilla JavaScript on the client with no build step and no framework. State persists to plain JSON files, so there is no database to run.
 
-## Prerequisites
+## Quick start
 
-Before you begin, ensure you have met the following requirements:
+Requires Node.js 18 or newer.
 
-- You have installed Node.js (version 12.0 or later)
-- You have a basic understanding of JavaScript and Node.js
+```bash
+git clone https://github.com/mohdmahmodi/talkomatic-classic.git
+cd talkomatic-classic
+npm install
+npm start
+```
 
-## Installation
-
-1. Clone the repository:
-   ```
-   git clone https://github.com/MohdYahyaMahmodi/talkomatic-classic.git
-   ```
-
-2. Navigate to the project directory:
-   ```
-   cd talkomatic-classic
-   ```
-
-3. Install the dependencies:
-   ```
-   npm install
-   ```
+Open `http://localhost:3000` and you are chatting.
 
 ## Configuration
 
-The application works without configuration, but you can customize it using an optional `.env` file. Copy `.env.example` to `.env` and fill in what you need:
+Everything works with zero configuration. To customize, copy `.env.example` to `.env`:
 
-| Variable          | Default              | Purpose                                                                                    |
-| ----------------- | -------------------- | ------------------------------------------------------------------------------------------ |
-| `SESSION_SECRET`  | random per boot      | Set this in production so sessions and room access codes survive restarts                  |
-| `PORT`            | `3000`               | Port the server listens on                                                                 |
-| `HOST`            | `0.0.0.0`            | Bind address                                                                               |
-| `ALLOWED_ORIGINS` | (none)               | Comma-separated public URLs of your instance, required when deploying on your own domain   |
-| `DATA_DIR`        | repo root            | Where runtime JSON state (rooms, bans, identity, logs) is written                          |
-| `TRUST_PROXY`     | `1`                  | Reverse-proxy hops to trust; set `0` if the server is exposed directly                     |
-| `DEV_KEY_HASH`    | (none)               | SHA-256 hash of the owner dev key                                                          |
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SESSION_SECRET` | random per boot | Set this in production so sessions survive restarts |
+| `PORT` | `3000` | Port to listen on |
+| `HOST` | `0.0.0.0` | Bind address |
+| `ALLOWED_ORIGINS` | none | Comma-separated public URLs of your instance. Required when deploying on your own domain |
+| `DATA_DIR` | repo root | Where runtime JSON state is written |
+| `TRUST_PROXY` | `1` | Reverse-proxy hops to trust. Set `0` if exposed directly |
+| `DEV_KEY_HASH` | none | SHA-256 hash of the owner dev key |
 
-## Running the Application
+## Deploying
 
-To run Talkomatic:
-
-```bash
-npm start
-```
-The application will be available at `http://localhost:3000` (or the port specified in your `.env` file if you created one).
-
-## Deploying with Docker / Dokploy
-
-The repo ships with a `Dockerfile` and `docker-compose.yml`. The container listens on port `3000`, binds `0.0.0.0`, and keeps all runtime state in a volume at `/app/data`.
-
-**Docker Compose:**
+### Docker Compose
 
 ```bash
 docker compose up -d --build
 ```
 
-**Dokploy:**
+The container listens on port 3000, binds `0.0.0.0`, and keeps all runtime state in a volume mounted at `/app/data`.
 
-1. Create an **Application** in Dokploy pointing at this Git repository.
-2. Set the build type to **Dockerfile** (or use Docker Compose with the included `docker-compose.yml`).
-3. Set environment variables:
-   - `SESSION_SECRET` — a long random string (`openssl rand -hex 32`)
-   - `ALLOWED_ORIGINS` — the URL you will serve the app at, e.g. `https://chat.example.com` (use `http://SERVER_IP:3000` if you have no domain yet)
-4. If deploying via Dockerfile, add a volume mount for `/app/data` so rooms, bans, and identity data survive redeploys.
-5. Point your domain at the app with container port `3000`. Dokploy's Traefik proxy handles HTTPS; the server already trusts one proxy hop.
+### Dokploy
 
-## Usage
+1. Create an Application pointing at this repository and set the build type to **Dockerfile**.
+2. Set environment variables: `SESSION_SECRET` (generate with `openssl rand -hex 32`) and `ALLOWED_ORIGINS` (the URL you will serve the app at, for example `https://chat.example.com`).
+3. Add a volume mount for `/app/data` so rooms, bans, and identity data survive redeploys.
+4. Point your domain at container port 3000. Dokploy's Traefik proxy handles HTTPS and the server already trusts one proxy hop.
 
-1. **Joining the Lobby**:
-   - Open your web browser and navigate to `http://localhost:3000`.
-   - Enter your name and optional location to sign in.
+### Monitoring
 
-2. **Creating a Room**:
-   - In the lobby, fill in the room details (name, type, layout).
-   - Click "Go Chat" to create and enter the room.
+Three public endpoints are made for uptime monitors like Uptime Kuma:
 
-3. **Joining a Room**:
-   - In the lobby, you'll see a list of available public and semi-private rooms.
-   - Click "Enter" on any room to join.
-   - For semi-private rooms, you'll need to enter the access code.
+| Endpoint | Purpose | Suggested check |
+| --- | --- | --- |
+| `/healthz` | Liveness | HTTP 200 |
+| `/api/v1/health` | Detailed health with subsystems | keyword `"status":"ok"` |
+| `/api/v1/status` | Public stats for a status page | keyword `"status":"online"` |
 
-4. **Chatting**:
-   - Once in a room, start typing in your designated text area.
-   - Your message will appear in real-time for all users in the room.
-
-5. **Inviting Others**:
-   - Use the invite link provided in the room to invite others.
-
-6. **Leaving a Room**:
-   - Click "Leave Room" to exit and return to the lobby.
+See the [API docs](docs/api.md) for response shapes and the bot API.
 
 ## Contributing
 
-We welcome contributions to Talkomatic! Here are some ways you can contribute:
-
-1. Report bugs and suggest features by opening issues.
-2. Submit pull requests with bug fixes or new features.
-3. Improve documentation or add translations.
-
-Please read our [Contributing Guidelines](CONTRIBUTING.md) for more details.
+Issues and pull requests are welcome. Read the [contributing guide](contributing.md) and the [code of conduct](CODE_OF_CONDUCT.md) first. If you want to suggest a feature as a user, the in-app Suggestion Board in the lobby is the fastest way to reach us.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+[MIT](license)
 
-## Acknowledgments
+## Credits
 
-- Inspired by the original [Talkomatic](https://en.wikipedia.org/wiki/Talkomatic) chat system from the 1970s.
-- Thanks to all contributors who have helped shape this project.
-
-## Author
-
-**Mohd Mahmodi**
-
-- Website: [mohdmahmodi.com](https://mohdmahmodi.com)
-- Twitter: [@mohdmahmodi](https://twitter.com/mohdmahmodi)
-- Email: contact@mohdmahmodi.com
-
-## Contact
-
-If you have any questions or feedback, please feel free to reach out:
-
-- Open an issue on GitHub
-- Contact the author directly using the information above
-
----
-
-Enjoy chatting with Talkomatic!
+Built and maintained by [Mohd Mahmodi](https://mohdmahmodi.com) ([@mohdmahmodi](https://x.com/mohdmahmodi)) with the Talkomatic community. Inspired by the original Talkomatic by Doug Brown and David R. Woolley (PLATO, 1973).

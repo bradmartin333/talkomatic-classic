@@ -87,12 +87,11 @@
   padding: 1px 5px;
 }
 
-.pong-score {
-  font-size: 24px;
+.pong-vs {
+  font-size: 12px;
   font-weight: bold;
-  color: #fff;
-  letter-spacing: 2px;
-  white-space: nowrap;
+  color: #616161;
+  letter-spacing: 1px;
 }
 
 .pong-actions {

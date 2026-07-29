@@ -52,6 +52,7 @@ function createGame(roomId) {
     status: "waiting", // waiting | countdown | playing | over
     countdownEndsAt: 0,
     serveAt: 0,
+    pendingServeDir: 0,
     nextRoundAt: 0,
     winner: null, // { side, name }
     lastTick: Date.now(),
@@ -117,6 +118,7 @@ function parkBall(game) {
   game.ball.y = FIELD_H / 2;
   game.ball.vx = 0;
   game.ball.vy = 0;
+  game.pendingServeDir = 0;
 }
 
 function beginRound(game) {
@@ -138,12 +140,14 @@ function toWaiting(game) {
 
 // ── Simulation ──────────────────────────────────────────────────────────────
 
+// The ball's velocity stays 0 until the serve moment, so every broadcast
+// state is truthful and clients can dead-reckon from position + velocity.
 function serve(game, dir) {
   game.ball.x = FIELD_W / 2;
   game.ball.y = FIELD_H / 2;
-  const angle = (Math.random() * 0.5 - 0.25) * Math.PI; // within ±45°
-  game.ball.vx = Math.cos(angle) * SERVE_SPEED * dir;
-  game.ball.vy = Math.sin(angle) * SERVE_SPEED;
+  game.ball.vx = 0;
+  game.ball.vy = 0;
+  game.pendingServeDir = dir;
   game.serveAt = Date.now() + SERVE_DELAY_MS;
 }
 
@@ -232,6 +236,17 @@ function tick(game) {
     emitMeta(game);
   }
 
+  if (
+    game.status === "playing" &&
+    game.pendingServeDir &&
+    now >= game.serveAt
+  ) {
+    const angle = (Math.random() * 0.5 - 0.25) * Math.PI; // within ±45°
+    game.ball.vx = Math.cos(angle) * SERVE_SPEED * game.pendingServeDir;
+    game.ball.vy = Math.sin(angle) * SERVE_SPEED;
+    game.pendingServeDir = 0;
+  }
+
   if (game.status === "playing" && now >= game.serveAt) {
     game.ball.prevY = game.ball.y;
     const prevX = game.ball.x;
@@ -278,6 +293,7 @@ function emitState(game) {
     t: Date.now(),
     st: game.status,
     b: [Math.round(game.ball.x), Math.round(game.ball.y)],
+    v: [Math.round(game.ball.vx), Math.round(game.ball.vy)],
     l: Math.round(game.paddles.left.y),
     r: Math.round(game.paddles.right.y),
     s: [game.scores.left, game.scores.right],
