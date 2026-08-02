@@ -138,6 +138,25 @@ function resolveOpenForIp(ip, resolution, reviewedBy) {
   return n;
 }
 
+// Same as resolveOpenForIp, but keyed on the appellant's device identifier.
+// Used when an "id:" block is lifted from the ban list.
+function resolveOpenForDevice(deviceId, resolution, reviewedBy) {
+  let n = 0;
+  const now = Date.now();
+  const low = String(deviceId || "").toLowerCase();
+  if (!low) return 0;
+  for (const a of appeals)
+    if (a.deviceId === low && a.status === "open") {
+      a.status = "resolved";
+      a.resolution = resolution || "lifted";
+      a.reviewedBy = reviewedBy || null;
+      a.reviewedAt = now;
+      n++;
+    }
+  if (n) saveSoon();
+  return n;
+}
+
 function openCount() {
   return appeals.reduce((n, a) => n + (a.status === "open" ? 1 : 0), 0);
 }
@@ -154,6 +173,7 @@ module.exports = {
   get,
   resolve,
   resolveOpenForIp,
+  resolveOpenForDevice,
   openForIp,
   openCount,
   list,

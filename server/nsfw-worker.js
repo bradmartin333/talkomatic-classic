@@ -2,7 +2,7 @@
 // Worker-thread half of the puzzle NSFW check (see server/nsfw.js). Loads the
 // bundled nsfwjs MobileNet model once and classifies JPEG buffers posted to
 // it, so the ~1-2s of CPU per scan never blocks the main event loop (chat,
-// pong ticks, socket traffic keep flowing during an upload).
+// piano notes, socket traffic keep flowing during an upload).
 
 const { parentPort } = require("worker_threads");
 const fs = require("fs");

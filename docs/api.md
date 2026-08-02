@@ -166,5 +166,5 @@ See the in-app documentation page for the full bot guide with examples.
 - HTTP: 100 requests per 15 minutes per IP (static assets and the monitoring
   endpoints above do not count).
 - Socket events: 75 per second per connection; the real-time streams
-  (typing, piano, pong paddle input) are exempt.
+  (typing, piano) are exempt.
 - Bot sockets get their own, stricter budget.

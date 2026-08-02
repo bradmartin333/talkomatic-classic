@@ -14,9 +14,25 @@ const ipaddr = require("ipaddr.js");
 const { state } = require("./state");
 
 const DEFAULT_IPV6_PREFIX = 64;
+// IPv4 ranges are opt-in per ban and never automatic: a /24 is 256 addresses,
+// which behind CGNAT can be a lot of unrelated people. Staff choose it only
+// when the evasion pattern (neighbouring addresses from one pool) justifies it.
+const DEFAULT_IPV4_PREFIX = 24;
+
+// Some blocklist keys are not addresses: they carry an "id:" prefix and match
+// on the connection's client identifier instead. They never match an IP.
+const ID_PREFIX = "id:";
 
 function isRangeKey(key) {
   return typeof key === "string" && key.indexOf("/") !== -1;
+}
+
+function isIdKey(key) {
+  return typeof key === "string" && key.startsWith(ID_PREFIX);
+}
+
+function idKey(id) {
+  return ID_PREFIX + String(id).toLowerCase();
 }
 
 // True while the block has not expired. Tolerates the legacy shape where the
@@ -30,18 +46,22 @@ function isActiveBlock(b) {
 }
 
 // Given an address, return the CIDR string of the range we'd ban to catch
-// rotation, or null if the address should be banned as a single IP. Only real
-// (non IPv4-mapped) IPv6 addresses get a range; IPv4 returns null.
-function computeRangeCidr(ip, prefix = DEFAULT_IPV6_PREFIX) {
+// rotation, or null if it cannot be computed. IPv6 collapses to its /64 (the
+// home network); IPv4 collapses to its /24 (the surrounding pool). An
+// IPv4-mapped IPv6 address is treated as the IPv4 it really is.
+function computeRangeCidr(ip, prefix) {
   try {
-    const addr = ipaddr.parse(String(ip));
-    if (addr.kind() !== "ipv6" || addr.isIPv4MappedAddress()) return null;
-    const bytes = addr.toByteArray(); // 16 bytes, most-significant first
-    const keepBytes = Math.floor(prefix / 8);
+    let addr = ipaddr.parse(String(ip));
+    if (addr.kind() === "ipv6" && addr.isIPv4MappedAddress())
+      addr = addr.toIPv4Address();
+    const v4 = addr.kind() === "ipv4";
+    const bits = prefix || (v4 ? DEFAULT_IPV4_PREFIX : DEFAULT_IPV6_PREFIX);
+    const bytes = addr.toByteArray(); // most-significant first
+    const keepBytes = Math.floor(bits / 8);
     for (let i = keepBytes; i < bytes.length; i++) bytes[i] = 0;
-    // (prefix is a whole number of bytes for /64, so no partial-byte masking)
+    // /24 and /64 are both whole numbers of bytes, so no partial-byte masking
     const network = ipaddr.fromByteArray(bytes);
-    return `${network.toString()}/${prefix}`;
+    return `${network.toString()}/${bits}`;
   } catch (_) {
     return null;
   }
@@ -98,6 +118,42 @@ function isBlocked(ip) {
   return findActiveBlock(ip) !== null;
 }
 
+// The active block covering a client identifier, or null. Checks the direct
+// "id:" key first, then any block whose record carries the same identifier.
+function findActiveIdBlock(id) {
+  if (!id) return null;
+  const low = String(id).toLowerCase();
+  const key = idKey(low);
+  const exact = state.blockedIPs.get(key);
+  if (exact !== undefined && isActiveBlock(exact)) {
+    return { key, block: exact };
+  }
+  for (const [k, b] of state.blockedIPs) {
+    if (!isActiveBlock(b)) continue;
+    if (b && typeof b === "object" && b.did === low)
+      return { key: k, block: b };
+  }
+  return null;
+}
+
+// Remove every block tied to a client identifier: the direct "id:" key plus
+// any record carrying it. Used when a ban is lifted so the user is actually
+// let back in. Returns the removed keys.
+function removeBlocksForDevice(id) {
+  const removed = [];
+  if (!id) return removed;
+  const low = String(id).toLowerCase();
+  const key = idKey(low);
+  if (state.blockedIPs.delete(key)) removed.push(key);
+  for (const [k, b] of [...state.blockedIPs]) {
+    if (b && typeof b === "object" && b.did === low) {
+      state.blockedIPs.delete(k);
+      removed.push(k);
+    }
+  }
+  return removed;
+}
+
 // A bare, valid IPv4 or IPv6 address? Rejects CIDR text ("1.2.3.4/24"), so a
 // typed range is refused and ranges stay opt-in via the checkbox.
 function isValidIp(ip) {
@@ -137,8 +193,13 @@ function removeBlocksForIp(ip) {
 
 module.exports = {
   DEFAULT_IPV6_PREFIX,
+  DEFAULT_IPV4_PREFIX,
   isRangeKey,
+  isIdKey,
+  idKey,
   isActiveBlock,
+  findActiveIdBlock,
+  removeBlocksForDevice,
   computeRangeCidr,
   ipInCidr,
   matchesKey,

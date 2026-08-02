@@ -40,7 +40,6 @@ const reports = require("./reports");
 const appeals = require("./appeals");
 const suggestions = require("./suggestions");
 const puzzle = require("./puzzle");
-const pong = require("./pong");
 const banhistory = require("./banhistory");
 const blocklist = require("./blocklist");
 const ipban = require("./ipban");
@@ -592,8 +591,11 @@ function requireDev(socket) {
   return false;
 }
 
-// Junior (level 1) mods are limited to low-risk actions. This gates the heavier
-// actions (ban, IP block, close/lock room, slow mode) to full (level 2) mods.
+// Junior (level 1) mods handle the day-to-day: kick, warn, note, force-rename a
+// user or their location, turn a profile picture off, rename / lock / slow a
+// room, and clear the board. This gates the actions that are hard to undo or
+// reach beyond one room (room ban, IP or identifier ban, closing a room,
+// spectating, and the review boards) to full (level 2) mods.
 // Devs always pass. Callers must still requireStaff() first.
 function requireModLevel(socket, minLevel) {
   if (socket?.isDev) return true;
@@ -923,6 +925,7 @@ function sendAppsList(s) {
       // Applicant identity, shown to all staff (same as the reports board); the
       // raw IP stays dev-only, matching how the audit feed is redacted for mods.
       deviceId: a.deviceId || null,
+      discordId: a.discordId || null,
       ip: isDev ? a.ip : undefined,
     })),
   );
@@ -1069,14 +1072,34 @@ function buildBlockList(forDev) {
   for (const [ip, b] of state.blockedIPs) {
     const expiry = b && typeof b === "object" ? b.expiry : b;
     if (expiry && expiry !== Number.MAX_SAFE_INTEGER && now >= expiry) continue;
-    // Accounts seen behind this address/range, so staff can see who they hit.
-    const matched = identity.devicesMatching((addr) =>
-      ipban.matchesKey(addr, ip),
-    );
+    const isId = ipban.isIdKey(ip);
+    // Accounts seen behind this entry, so staff can see who a ban hits. An
+    // "id:" entry resolves straight to its identity record instead.
+    let matched;
+    if (isId) {
+      const rec = identity.getRecord(ip.slice(3));
+      matched = rec
+        ? [
+          {
+            id: ip.slice(3),
+            name: rec.name || null,
+            ips: Object.keys(rec.ips || {}),
+            last: rec.last || 0,
+          },
+        ]
+        : [];
+    } else {
+      matched = identity.devicesMatching((addr) => ipban.matchesKey(addr, ip));
+    }
     out.push({
       ip: forDev ? ip : undefined,
       ref: banRef(ip),
-      label: (b && b.label) || null,
+      kind: isId ? "id" : ipban.isRangeKey(ip) ? "range" : "ip",
+      // The client identifier a block carries (shown to all staff, like the
+      // reports board) so the dashboard can group a person's bans together.
+      did:
+        (b && typeof b === "object" && b.did) || (isId ? ip.slice(3) : null),
+      label: (b && b.label) || (isId && matched[0] && matched[0].name) || null,
       by: (b && b.by) || null,
       reason: (b && b.reason) || null,
       permanent: expiry >= Number.MAX_SAFE_INTEGER,
@@ -1105,6 +1128,11 @@ function buildBanHistory(forDev) {
     at: e.at,
     reason: e.reason,
     duration: e.duration,
+    kind: ipban.isIdKey(e.ip)
+      ? "id"
+      : e.ip && String(e.ip).includes("/")
+        ? "range"
+        : "ip",
     ip: forDev ? e.ip : undefined,
   }));
 }
@@ -1900,7 +1928,6 @@ async function leaveRoom(socket, userId) {
 
     finalizeBoardUserStroke(roomId, userId);
     pianoDropPresence(roomId, userId, true);
-    pong.leave(roomId, userId);
 
     const room = state.rooms.get(roomId);
     if (room) {
@@ -2248,7 +2275,6 @@ function registerSocketHandlers() {
   io().on("connection", (socket) => {
     const clientIp = socket.clientIp || socket.handshake.address;
     socket.deviceType = deviceTypeFromUA(socket.handshake.headers["user-agent"]);
-    pong.registerSocket(socket, io);
 
     // Tell this browser whether the puzzle app is on, so the room can hide the
     // tile when a dev has turned it off.
@@ -2461,8 +2487,12 @@ function registerSocketHandlers() {
 
         // Optional Discord avatar. Only the validated snowflake + hash are
         // kept; sending avatar:null (or omitting it) clears the stored one.
+        // Staff can turn a device's picture off, in which case we ignore
+        // whatever it sends so it cannot simply be re-attached on rejoin.
+        const pfpBlocked =
+          !!socket.deviceId && identity.isPfpBlocked(socket.deviceId);
         const avatar =
-          data.avatar && typeof data.avatar === "object"
+          !pfpBlocked && data.avatar && typeof data.avatar === "object"
             ? {
                 id: String(data.avatar.discordId),
                 hash: String(data.avatar.hash).toLowerCase(),
@@ -2892,9 +2922,9 @@ function registerSocketHandlers() {
       "board clear",
       safe(async () => {
         if (!socket.roomId || !socket.handshake.session?.userId) return;
-        // Talkoboard clear is full-mod / dev only (junior mods cannot wipe it).
-        if (!socket.isDev && !(socket.isMod && (socket.modLevel || 2) >= 2))
-          return;
+        // Any staff can wipe the board: it is one room's drawing and the only
+        // way to remove something drawn that should not be on screen.
+        if (!socket.isDev && !socket.isMod) return;
         const bs = boardState.get(socket.roomId);
         if (bs) {
           bs.strokes = [];
@@ -3983,6 +4013,7 @@ function registerSocketHandlers() {
         const targetUser = room?.users.find((u) => u.id === targetUserId);
         let ip = targetSocket?.clientIp || null;
         let blockedName = null;
+        let blockedDid = targetSocket?.deviceId || null;
         if (ip) {
           blockedName =
             targetUser?.username ||
@@ -4011,6 +4042,7 @@ function registerSocketHandlers() {
             );
           ip = off.ip;
           blockedName = off.name || null;
+          blockedDid = off.deviceId || null;
         }
         const expiry =
           ms === Infinity ? Number.MAX_SAFE_INTEGER : Date.now() + ms;
@@ -4033,6 +4065,7 @@ function registerSocketHandlers() {
           by: socket.staffLabel || null,
           ts: Date.now(),
           reason,
+          did: blockedDid,
         });
         blocklist.saveSoon(); // persist so the ban survives a restart
         // Record the ban so the history feed and repeat-offender count stay
@@ -4055,6 +4088,12 @@ function registerSocketHandlers() {
             ipban.ipInCidr(s.clientIp, cidr),
           )
           : findSocketsByIp(ip);
+        if (blockedDid) {
+          for (const s of io().sockets.sockets.values()) {
+            if (s.deviceId === blockedDid && !affected.includes(s))
+              affected.push(s);
+          }
+        }
         for (const s of affected) {
           try {
             const uid = s.handshake?.session?.userId;
@@ -4092,15 +4131,20 @@ function registerSocketHandlers() {
         if (!requireStaff(socket)) return;
         if (!requireModLevel(socket, 2)) return;
         const raw = typeof data?.ip === "string" ? data.ip.trim() : "";
-        if (!ipban.isValidIp(raw))
+        // The field accepts an address or a client id (the uuid shown on the
+        // reports / appeals cards); ids resolve to an "id:" blocklist key.
+        const isIp = ipban.isValidIp(raw);
+        const isId =
+          !isIp && /^[a-f0-9-]{8,64}$/i.test(raw) && raw.includes("-");
+        if (!isIp && !isId)
           return socket.emit(
             "error",
             createErrorResponse(
               ERROR_CODES.BAD_REQUEST,
-              "Enter a valid IPv4 or IPv6 address.",
+              "Enter a valid IPv4 / IPv6 address or a client id.",
             ),
           );
-        const ip = ipban.normalizeIp(raw);
+        const ip = isIp ? ipban.normalizeIp(raw) : ipban.idKey(raw);
         const duration = data?.duration;
         const DURATIONS = { "1h": 3600000, "24h": 86400000, "7d": 604800000 };
         let ms;
@@ -4132,11 +4176,15 @@ function registerSocketHandlers() {
           sanitizeMessage(
             typeof data?.reason === "string" ? data.reason : "",
           ).slice(0, 500) || null;
-        const cidr = data?.banRange ? ipban.computeRangeCidr(ip) : null;
+        const cidr = data?.banRange && isIp ? ipban.computeRangeCidr(ip) : null;
         const blockKey = cidr || ip;
+        // For an id entry, name it from the identity record so the list and
+        // history show who it hits instead of a bare token.
+        const idRec = isId ? identity.getRecord(raw.toLowerCase()) : null;
+        const blockedName = (idRec && idRec.name) || null;
         state.blockedIPs.set(blockKey, {
           expiry,
-          label: null,
+          label: blockedName,
           by: socket.staffLabel || null,
           ts: Date.now(),
           reason,
@@ -4144,7 +4192,7 @@ function registerSocketHandlers() {
         blocklist.saveSoon();
         banhistory.record({
           ip: blockKey,
-          name: null,
+          name: blockedName,
           action: "ban",
           by: socket.staffLabel || null,
           reason,
@@ -4152,11 +4200,15 @@ function registerSocketHandlers() {
         });
         broadcastBlockList();
         broadcastBanHistory();
-        const affected = cidr
-          ? [...io().sockets.sockets.values()].filter((s) =>
-            ipban.ipInCidr(s.clientIp, cidr),
+        const affected = isId
+          ? [...io().sockets.sockets.values()].filter(
+            (s) => s.deviceId === raw.toLowerCase(),
           )
-          : findSocketsByIp(ip);
+          : cidr
+            ? [...io().sockets.sockets.values()].filter((s) =>
+              ipban.ipInCidr(s.clientIp, cidr),
+            )
+            : findSocketsByIp(ip);
         for (const s of affected) {
           try {
             const uid = s.handshake?.session?.userId;
@@ -4236,12 +4288,13 @@ function registerSocketHandlers() {
       }),
     );
 
-    // ── Wipe user buffer: clear typed content for everyone (mod + dev) ──
+    // ── Wipe user buffer: clear typed content for everyone (any staff) ──
+    // Junior mods need this: it is the fastest way to pull a slur off screen,
+    // and it only clears text the author can retype.
     socket.on(
       "staff wipe buffer",
       safe(async (data) => {
         if (!requireStaff(socket)) return;
-        if (!requireModLevel(socket, 2)) return;
         const targetUserId = data?.targetUserId;
         if (!targetUserId)
           return socket.emit(
@@ -4478,12 +4531,224 @@ function registerSocketHandlers() {
       }),
     );
 
-    // ── Lock room: block new joins, keep current users (mod + dev) ──────
+    // ── Reset a user's location to the default (any staff) ──────────────
+    // The location line is as visible as the name, so juniors need to be able
+    // to clear an offensive one without calling in a full mod.
+    socket.on(
+      "staff reset location",
+      safe(async (data) => {
+        if (!requireStaff(socket)) return;
+        const targetUserId = data?.targetUserId;
+        if (!targetUserId)
+          return socket.emit(
+            "error",
+            createErrorResponse(
+              ERROR_CODES.BAD_REQUEST,
+              "targetUserId required.",
+            ),
+          );
+        if (!canActOn(socket, targetUserId))
+          return socket.emit(
+            "error",
+            createErrorResponse(
+              ERROR_CODES.FORBIDDEN,
+              "You cannot act on this user.",
+            ),
+          );
+        const roomId = getUserCurrentRoom(targetUserId);
+        const room = roomId ? state.rooms.get(roomId) : null;
+        const targetUser = room?.users.find((u) => u.id === targetUserId);
+        if (!room || !targetUser)
+          return socket.emit(
+            "error",
+            createErrorResponse(
+              ERROR_CODES.NOT_FOUND,
+              "User not found in any room.",
+            ),
+          );
+        const oldLocation = targetUser.location;
+        targetUser.location = "On The Web";
+        const targetSocket = findSocketByUserId(targetUserId, roomId);
+        if (targetSocket?.handshake?.session) {
+          targetSocket.handshake.session.location = "On The Web";
+          await promisifySessionSave(targetSocket.handshake.session).catch(
+            () => { },
+          );
+        }
+        const existing = state.users.get(targetUserId) || { id: targetUserId };
+        state.users.set(targetUserId, {
+          ...existing,
+          username: targetUser.username,
+          location: "On The Web",
+        });
+        // Same relabel path the forced rename uses, so the row updates live.
+        for (const [, recipient] of io().sockets.sockets) {
+          if (!recipient.connected || recipient.roomId !== roomId) continue;
+          if (!canRecipientSeeDevUser(recipient, targetUser)) continue;
+          recipient.emit("user renamed", {
+            userId: targetUserId,
+            username: targetUser.username,
+            location: "On The Web",
+          });
+        }
+        updateRoom(roomId);
+        updateLobby();
+        logStaff(
+          socket,
+          `reset location (was ${oldLocation})`,
+          targetUser,
+          room,
+        );
+        socket.emit("staff action result", {
+          action: "reset location",
+          ok: true,
+          targetUserId,
+        });
+      }),
+    );
+
+    // ── Turn a user's profile picture off / back on (any staff) ─────────
+    // The block is stored against the device, so clearing cookies does not
+    // bring the picture back.
+    socket.on(
+      "staff set pfp blocked",
+      safe(async (data) => {
+        if (!requireStaff(socket)) return;
+        const targetUserId = data?.targetUserId;
+        if (!targetUserId)
+          return socket.emit(
+            "error",
+            createErrorResponse(
+              ERROR_CODES.BAD_REQUEST,
+              "targetUserId required.",
+            ),
+          );
+        if (!canActOn(socket, targetUserId))
+          return socket.emit(
+            "error",
+            createErrorResponse(
+              ERROR_CODES.FORBIDDEN,
+              "You cannot act on this user.",
+            ),
+          );
+        const roomId = getUserCurrentRoom(targetUserId);
+        const room = roomId ? state.rooms.get(roomId) : null;
+        const targetUser = room?.users.find((u) => u.id === targetUserId);
+        const targetSocket = findSocketByUserId(targetUserId, roomId);
+        const deviceId = targetSocket?.deviceId || null;
+        if (!deviceId)
+          return socket.emit(
+            "error",
+            createErrorResponse(
+              ERROR_CODES.NOT_FOUND,
+              "No device on file for this user, so their picture cannot be turned off.",
+            ),
+          );
+        const blocked = data?.blocked !== false;
+        identity.setPfpBlocked(deviceId, blocked);
+        if (blocked) {
+          if (targetUser) targetUser.avatar = null;
+          if (targetSocket?.handshake?.session) {
+            targetSocket.handshake.session.avatar = null;
+            await promisifySessionSave(targetSocket.handshake.session).catch(
+              () => { },
+            );
+          }
+          if (roomId) updateRoom(roomId);
+          if (targetSocket)
+            targetSocket.emit("staff warning", {
+              message:
+                "A moderator turned your profile picture off. Contact staff if you think this was a mistake.",
+            });
+        }
+        logStaff(
+          socket,
+          blocked ? "turn pfp off" : "allow pfp",
+          targetUser || { id: targetUserId },
+          room || "-",
+        );
+        socket.emit("staff action result", {
+          action: blocked ? "turn pfp off" : "allow pfp",
+          ok: true,
+          targetUserId,
+          blocked,
+        });
+      }),
+    );
+
+    // ── Rename a room (any staff) ───────────────────────────────────────
+    // Same sanitize / duplicate / word-filter rules as creating one, so a mod
+    // cannot set a name a user would have been refused.
+    socket.on(
+      "staff rename room",
+      safe(async (data) => {
+        if (!requireStaff(socket)) return;
+        const roomId = data?.roomId || socket.roomId;
+        const room = roomId ? state.rooms.get(roomId) : null;
+        if (!room)
+          return socket.emit(
+            "error",
+            createErrorResponse(ERROR_CODES.NOT_FOUND, "Room not found."),
+          );
+        const valErr = validateObject(
+          { name: data?.name },
+          { name: { rule: "roomName" } },
+        );
+        if (valErr) return socket.emit("validation_error", valErr);
+        const roomName = enforceRoomNameLimit(sanitizeName(data.name));
+        if (!roomName)
+          return socket.emit(
+            "error",
+            createErrorResponse(
+              ERROR_CODES.VALIDATION_ERROR,
+              "Room name contains no valid characters.",
+            ),
+          );
+        if (
+          normalize(roomName) !== normalize(room.name) &&
+          roomNameExists(roomName)
+        )
+          return socket.emit(
+            "error",
+            createErrorResponse(
+              ERROR_CODES.ROOM_NAME_EXISTS,
+              "Room name already exists.",
+            ),
+          );
+        if (
+          CONFIG.FEATURES.ENABLE_WORD_FILTER &&
+          wordFilter.checkText(roomName).hasOffensiveWord
+        )
+          return socket.emit(
+            "error",
+            createErrorResponse(
+              ERROR_CODES.VALIDATION_ERROR,
+              "Room name contains forbidden words.",
+            ),
+          );
+        const oldName = room.name;
+        room.name = roomName;
+        state.apiCache.delete("public_rooms");
+        updateRoom(roomId);
+        io().to(roomId).emit("room renamed", { roomId, name: roomName });
+        updateLobby();
+        await debouncedSaveRooms();
+        logStaff(socket, `rename room (was ${oldName})`, null, room);
+        socket.emit("staff action result", {
+          action: "rename room",
+          ok: true,
+          roomId,
+          name: roomName,
+        });
+      }),
+    );
+
+    // ── Lock room: block new joins, keep current users (any staff) ──────
+    // Reversible with one click and scoped to a single room, so juniors get it.
     socket.on(
       "staff lock room",
       safe(async (data) => {
         if (!requireStaff(socket)) return;
-        if (!requireModLevel(socket, 2)) return;
         const roomId = data?.roomId || socket.roomId;
         const room = roomId ? state.rooms.get(roomId) : null;
         if (!room)
@@ -4507,12 +4772,11 @@ function registerSocketHandlers() {
       }),
     );
 
-    // ── Slow mode: throttle the room's broadcast cadence (mod + dev) ────
+    // ── Slow mode: throttle the room's broadcast cadence (any staff) ────
     socket.on(
       "staff slow mode",
       safe(async (data) => {
         if (!requireStaff(socket)) return;
-        if (!requireModLevel(socket, 2)) return;
         const roomId = data?.roomId || socket.roomId;
         const room = roomId ? state.rooms.get(roomId) : null;
         if (!room)
@@ -5125,11 +5389,14 @@ function registerSocketHandlers() {
           });
         broadcastBlockList();
         broadcastBanHistory();
-        // Any open appeal against this IP is now moot; close it so the appeals
-        // inbox does not keep a stale entry for an IP that is no longer banned.
+        // Any open appeal against this block is now moot; close it so the
+        // appeals inbox does not keep a stale entry for a lifted ban. An "id:"
+        // entry closes by the identifier it carried instead of the address.
         const reviewer = `${socket.isDev ? "dev" : "mod"}:${socket.staffLabel || ""}`;
-        if (appeals.resolveOpenForIp(ip, "lifted", reviewer))
-          broadcastAppealsList();
+        const resolved = ipban.isIdKey(ip)
+          ? appeals.resolveOpenForDevice(ip.slice(3), "lifted", reviewer)
+          : appeals.resolveOpenForIp(ip, "lifted", reviewer);
+        if (resolved) broadcastAppealsList();
         // Audit target is the user's name (mods never see the IP); devs still
         // get the IP in their own audit feed via the action's separate logging.
         logStaff(socket, "unblock ip", blockedName || (socket.isDev ? ip : "user"), "-");
@@ -5532,10 +5799,13 @@ function registerSocketHandlers() {
         const reviewer = `${socket.isDev ? "dev" : "mod"}:${socket.staffLabel || ""}`;
         if (decision === "lift") {
           if (!requireDev(socket)) return; // lifting a ban is dev-only
-          // Remove the exact entry AND any covering range (e.g. an IPv6 /64):
-          // deleting only a.ip would leave a range-banned user still blocked
-          // after their appeal was "accepted".
+          // Remove the exact entry AND any covering range (e.g. an IPv6 /64),
+          // plus any block tied to the appellant's client identifier: deleting
+          // only a.ip would leave the user still blocked after their appeal
+          // was "accepted".
           const removedKeys = ipban.removeBlocksForIp(a.ip);
+          if (a.deviceId)
+            removedKeys.push(...ipban.removeBlocksForDevice(a.deviceId));
           const removed = removedKeys.length > 0;
           state.botBlacklist.delete(a.ip);
           blocklist.saveSoon();
@@ -5982,6 +6252,9 @@ function registerSocketHandlers() {
           ip: socket.clientIp,
           username: socket.handshake.session?.username,
           answers: { why, availability },
+          // Present only when they have linked their Discord picture, which is
+          // what lets a reviewer match them to the Talkomatic server.
+          discordId: socket.handshake.session?.avatar?.id || null,
         });
         if (!res.ok) return socket.emit("mod application result", res);
         audit.recordNotification({
@@ -6734,9 +7007,6 @@ function startCleanupIntervals() {
     for (const roomId of pianoState.keys()) {
       if (!state.rooms.has(roomId)) pianoState.delete(roomId);
     }
-    for (const roomId of pong.games.keys()) {
-      if (!state.rooms.has(roomId)) pong.destroyRoom(roomId);
-    }
   }, 180000);
 
   // Empty room cleanup (10 min)
@@ -6756,7 +7026,6 @@ function startCleanupIntervals() {
       state.roomLastChatActivity.delete(id);
       cleanupBoardState(id);
       cleanupPianoState(id);
-      pong.destroyRoom(id);
       if (state.roomDeletionTimers.has(id)) {
         clearTimeout(state.roomDeletionTimers.get(id));
         state.roomDeletionTimers.delete(id);
@@ -6789,7 +7058,6 @@ function startCleanupIntervals() {
           state.devUsers.delete(u.id);
           finalizeBoardUserStroke(roomId, u.id);
           pianoDropPresence(roomId, u.id, true);
-          pong.leave(roomId, u.id);
           if (state.typingTimeouts.has(u.id)) {
             clearTimeout(state.typingTimeouts.get(u.id));
             state.typingTimeouts.delete(u.id);

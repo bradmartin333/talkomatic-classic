@@ -365,9 +365,30 @@ io.use((socket, next) => {
       socket.handshake.auth.token || socket.handshake.query.token;
     const browser = detectBrowserRequest(socket.handshake);
 
+    // Durable per-browser device id (active-vs-new + invite credit). Parsed
+    // before the block check and mirrored onto the session so HTTP routes see
+    // the same identity as the socket layer.
+    const rawDeviceId = socket.handshake.auth.deviceId;
+    const deviceId =
+      typeof rawDeviceId === "string" && /^[a-f0-9-]{8,64}$/i.test(rawDeviceId)
+        ? rawDeviceId.toLowerCase()
+        : null;
+    if (deviceId) {
+      socket.deviceId = deviceId;
+      try {
+        const sess = socket.handshake.session;
+        if (sess && sess.did !== deviceId) {
+          sess.did = deviceId;
+          sess.save();
+        }
+      } catch (_) {}
+    }
+
     // Blocked if the exact address is banned OR it falls inside a banned range
     // (IPv6 /64), so rotating within a /64 does not evade the ban.
-    const activeBlock = ipban.findActiveBlock(clientIp);
+    const activeBlock =
+      ipban.findActiveBlock(clientIp) ||
+      (deviceId ? ipban.findActiveIdBlock(deviceId) : null);
     if (activeBlock) {
       const block = activeBlock.block;
       const expiry = block && typeof block === "object" ? block.expiry : block;
@@ -434,12 +455,6 @@ io.use((socket, next) => {
       }
     }
 
-    // Durable per-browser device id (active-vs-new + invite credit). Not a
-    // secret and never trusted for anything privileged - purely an activity key.
-    const deviceId = socket.handshake.auth.deviceId;
-    if (typeof deviceId === "string" && /^[a-f0-9-]{8,64}$/i.test(deviceId))
-      socket.deviceId = deviceId.toLowerCase();
-
     if (CONFIG.FEATURES.ENABLE_STRICT_ANTIBOT && !browser.isBrowser) {
       if (CONFIG.FEATURES.ENABLE_BOT_TOKENS) {
         if (!botToken) return next(new Error("Bot token required"));
@@ -478,10 +493,6 @@ io.use((socket, next) => {
               // per-message), so the blunt generic limiter must not drop them -
               // that is what made notes cut out during active play.
               "piano notes",
-              // Pong paddle targets stream at up to ~30/sec while playing; the
-              // handler only writes a clamped number, so the generic limiter
-              // must not eat them (it used to, blocking players for 5s mid-game).
-              "pong target",
               "get rooms",
               "get room state",
             ].includes(evt)
@@ -667,9 +678,18 @@ app.get(`${API}/me`, (req, res) => {
 app.post(`${API}/appeal`, (req, res) => {
   try {
     const ip = getClientIP(req);
+    const rawDevice =
+      typeof req.body?.deviceId === "string"
+        ? req.body.deviceId
+        : req.session?.did || "";
+    const deviceId = /^[a-f0-9-]{8,64}$/i.test(rawDevice)
+      ? rawDevice.toLowerCase()
+      : null;
     // Match a range ban too, so a range-banned user (whose exact address is not
     // itself a key) can still submit an appeal from the ban screen.
-    const active = ipban.findActiveBlock(ip);
+    const active =
+      ipban.findActiveBlock(ip) ||
+      (deviceId ? ipban.findActiveIdBlock(deviceId) : null);
     if (!active) return res.json({ ok: false, code: "not_banned" });
     const block = active.block;
 
@@ -678,12 +698,6 @@ app.post(`${API}/appeal`, (req, res) => {
     ).slice(0, 1000);
     if (message.trim().length < 3)
       return res.json({ ok: false, code: "too_short" });
-
-    const rawDevice =
-      typeof req.body?.deviceId === "string" ? req.body.deviceId : "";
-    const deviceId = /^[a-f0-9-]{8,64}$/i.test(rawDevice)
-      ? rawDevice.toLowerCase()
-      : null;
 
     // Identity comes from the session the banned browser still carries, so a
     // moderator can trace the appealing user's activity by their userId.
@@ -726,8 +740,10 @@ app.get(`${API}/ban-status`, (req, res) => {
   const ip = getClientIP(req);
   // Range-aware: a range-banned user must keep reading banned:true here (matches
   // the socket gate), or the ban screen would think they were unbanned and
-  // reload-loop.
-  const active = ipban.findActiveBlock(ip);
+  // reload-loop. Mirrors the socket gate exactly, session identity included.
+  const active =
+    ipban.findActiveBlock(ip) ||
+    (req.session?.did ? ipban.findActiveIdBlock(req.session.did) : null);
   const block = active ? active.block : null;
   const expiry = block && typeof block === "object" ? block.expiry : block;
   const banned = !!active;

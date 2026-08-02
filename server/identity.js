@@ -176,6 +176,25 @@ function getNote(id) {
   return r && typeof r.note === "string" && r.note ? r.note : null;
 }
 
+// Staff can turn a device's profile picture off. Stored here (not on the
+// session) so clearing cookies does not bring the picture back.
+function setPfpBlocked(id, blocked) {
+  if (!validId(id)) return false;
+  const r = rec(id);
+  const next = !!blocked;
+  if (!!r.noPfp === next) return false;
+  r.noPfp = next;
+  r.last = Date.now();
+  saveSoon();
+  return true;
+}
+
+function isPfpBlocked(id) {
+  if (!validId(id)) return false;
+  const r = store[id];
+  return !!(r && r.noPfp);
+}
+
 function isActive(id) {
   const r = store[id];
   if (!r) return false;
@@ -275,6 +294,8 @@ module.exports = {
   setName,
   setNote,
   getNote,
+  setPfpBlocked,
+  isPfpBlocked,
   isActive,
   summary,
   getRecord,

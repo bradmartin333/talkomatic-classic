@@ -182,13 +182,26 @@
     }
     return s;
   }
-  function metaBit(parent, k, v, vClass, uid) {
-    if (v == null || v === "") return;
-    parent.appendChild(span("k", k + " "));
-    parent.appendChild(
-      uid ? uref(String(v), uid) : span(vClass || null, String(v)),
-    );
-    parent.appendChild(document.createTextNode("   "));
+  // One labelled "KEY  value" line for an activity card body. Pass a node as
+  // `v` (e.g. a uref) or plain text; `uid` turns the text into a trace link.
+  function kvRow(k, v, vClass, uid) {
+    if (v == null || v === "") return null;
+    const row = divc("kv");
+    row.appendChild(span("k", k));
+    const val =
+      typeof v === "object"
+        ? v
+        : uid
+          ? uref(String(v), uid)
+          : span(null, String(v));
+    val.classList.add("v");
+    if (vClass) val.classList.add(vClass);
+    row.appendChild(val);
+    return row;
+  }
+  function addKv(parent, k, v, vClass, uid) {
+    const row = kvRow(k, v, vClass, uid);
+    if (row) parent.appendChild(row);
   }
   function searchable(e) {
     const base = [
@@ -230,21 +243,29 @@
   }
 
   // ── Activity cards ──
+  // Each card: colorful icon tile + a plain-language headline ("who did
+  // what"), then labelled rows so the target, room, and IP are unmistakable.
   function buildCard(e) {
     const cat = categorize(e);
     const card = document.createElement("div");
     card.className = "entry cat-" + cat;
     card.dataset.id = e.id;
 
-    const row1 = document.createElement("div");
-    row1.className = "row1";
-    row1.appendChild(icon(CAT[cat].icon, "cat-ic"));
+    const top = divc("e-top");
+    const ico = divc("ico");
+    ico.appendChild(icon(CAT[cat].icon));
+    top.appendChild(ico);
+    const head = divc("e-head");
+    const title = divc("e-title");
+
     if (e.type === "security") {
-      row1.appendChild(span("chip dev", "ALERT"));
-      row1.appendChild(
+      title.appendChild(span("chip dev", "ALERT"));
+      title.appendChild(document.createTextNode(" "));
+      title.appendChild(
         span("who " + (e.role === "dev" ? "dev" : "mod"), e.label || "?"),
       );
-      row1.appendChild(
+      title.appendChild(document.createTextNode(" "));
+      title.appendChild(
         span(
           "act",
           e.kind === "concurrent"
@@ -253,20 +274,26 @@
         ),
       );
     } else if (e.type === "action") {
-      row1.appendChild(
+      title.appendChild(
         span(
           "chip " + (e.role === "dev" ? "dev" : "mod"),
           (e.role || "?").toUpperCase(),
         ),
       );
-      row1.appendChild(
+      title.appendChild(document.createTextNode(" "));
+      title.appendChild(
         span("who " + (e.role === "dev" ? "dev" : "mod"), e.label || "?"),
       );
-      row1.appendChild(span("act", e.action || "?"));
+      title.appendChild(document.createTextNode(" "));
+      title.appendChild(span("act", e.action || "?"));
     } else if (e.type === "notification") {
-      row1.appendChild(span("chip mod", (e.kind || "notice").toUpperCase()));
-      if (e.by || e.label) row1.appendChild(span("who", e.by || e.label));
-      row1.appendChild(
+      title.appendChild(span("chip mod", (e.kind || "notice").toUpperCase()));
+      title.appendChild(document.createTextNode(" "));
+      if (e.by || e.label) {
+        title.appendChild(span("who", e.by || e.label));
+        title.appendChild(document.createTextNode(" "));
+      }
+      title.appendChild(
         span(
           "act",
           e.kind === "abuse"
@@ -281,62 +308,56 @@
         ),
       );
     } else {
-      row1.appendChild(uref(e.username || "?", e.userId));
+      title.appendChild(uref(e.username || "?", e.userId));
       const evt =
         e.event === "rename"
           ? "changed name"
           : e.event === "forced-rename"
             ? "force-renamed by staff"
             : "signed in";
-      row1.appendChild(span("act", evt));
+      title.appendChild(document.createTextNode(" "));
+      title.appendChild(span("act", evt));
     }
-    row1.appendChild(span("when", fmtTime(e.ts)));
-    card.appendChild(row1);
+    head.appendChild(title);
+    const when = divc("e-when");
+    when.textContent = relTime(e.ts) || fmtTime(e.ts);
+    when.title = fmtTime(e.ts);
+    head.appendChild(when);
+    top.appendChild(head);
+    card.appendChild(top);
 
-    const meta = document.createElement("div");
-    meta.className = "meta";
+    const body = divc("e-body");
     if (e.type === "security") {
-      metaBit(meta, "key:", e.label);
-      metaBit(meta, "role:", e.role);
-      metaBit(meta, "IP:", e.ip, "ip");
+      addKv(body, "Key", e.label);
+      addKv(body, "Role", e.role);
+      addKv(body, "IP", e.ip, "ip");
     } else if (e.type === "action") {
       const t = parseTarget(e.target);
-      if (t) {
-        meta.appendChild(span("k", "target: "));
-        meta.appendChild(uref(t.name, t.uid));
-        meta.appendChild(document.createTextNode("   "));
-      } else {
-        metaBit(meta, "target:", e.target);
-      }
-      metaBit(meta, "room:", e.room);
-      metaBit(meta, "by IP:", e.ip, "ip");
+      if (t) addKv(body, "Target", uref(t.name, t.uid));
+      else addKv(body, "Target", e.target);
+      addKv(body, "Room", e.room, "dimv");
+      addKv(body, "Staff IP", e.ip, "ip");
     } else if (e.type === "notification") {
       const tn = parseTarget(e.target);
-      if (tn) {
-        meta.appendChild(span("k", "target: "));
-        meta.appendChild(uref(tn.name, tn.uid));
-        meta.appendChild(document.createTextNode("   "));
-      } else {
-        metaBit(meta, "target:", e.target);
-      }
-      metaBit(meta, "room:", e.room);
+      if (tn) addKv(body, "Target", uref(tn.name, tn.uid));
+      else addKv(body, "Target", e.target);
+      addKv(body, "Room", e.room, "dimv");
     } else {
-      metaBit(meta, "was:", e.prevUsername);
-      metaBit(meta, "location:", e.location);
+      addKv(body, "Was", e.prevUsername, "dimv");
+      addKv(body, "Location", e.location, "dimv");
       // Show the prior location too when a rename changed it, so the location
       // history is visible on the entry itself, not only in the trace summary.
-      metaBit(
-        meta,
-        "was location:",
-        e.prevLocation && e.prevLocation !== e.location
-          ? e.prevLocation
-          : null,
+      addKv(
+        body,
+        "Was at",
+        e.prevLocation && e.prevLocation !== e.location ? e.prevLocation : null,
+        "dimv",
       );
-      metaBit(meta, "IP:", e.ip, "ip");
-      metaBit(meta, "user:", e.userId, null, e.userId);
-      metaBit(meta, "by:", e.by);
+      addKv(body, "Their IP", e.ip, "ip");
+      addKv(body, "User id", e.userId, "dimv", e.userId);
+      addKv(body, "By", e.by, "dimv");
     }
-    if (meta.childNodes.length) card.appendChild(meta);
+    if (body.childNodes.length) card.appendChild(body);
 
     const detailText =
       e.details || e.detail || (e.type === "notification" ? e.text : null);
@@ -571,10 +592,14 @@
     });
   }
 
-  // ── Ban list tab (dev only) ──
+  // ── Ban list tab (full mods + devs) ──
   let bans = [];
   let banHistory = []; // ban/unban events (Bans tab history feed)
   let bansTimer = null;
+  let bansQuery = "";
+  let bansFilter = "all"; // all | perm | temp | id
+  let banHistQuery = "";
+  let banHistFilter = "all"; // all | ban | unban
   function fmtRemaining(b) {
     if (b.permanent) return null;
     const ms = (b.expiry || 0) - Date.now();
@@ -669,137 +694,220 @@
     });
   }
 
-  function buildBanCard(b, isDev) {
-    const card = divc("bancard" + (b.permanent ? " perm" : ""));
-    // Keyed by the opaque ref (mods never receive the IP), used by the live
-    // countdown timer to find this ban again.
-    card.dataset.ref = b.ref || "";
+  // Everything searchable about one block entry.
+  function banSearchable(b) {
+    return [
+      b.label,
+      b.by,
+      b.reason,
+      b.ip,
+      b.did,
+      ...(b.users || []).flatMap((u) => [u.name, u.id]),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+  }
 
-    // Header: avatar, name, who/when/where meta, live countdown pill
+  // Group active blocks that belong to the same person: shared client id
+  // first, then a shared display name. Newest group first, newest block first
+  // inside each group.
+  function groupBans(list) {
+    const byDid = new Map();
+    const byName = new Map();
+    const solos = [];
+    for (const b of list) {
+      if (b.did) {
+        if (!byDid.has(b.did)) byDid.set(b.did, []);
+        byDid.get(b.did).push(b);
+      } else if (b.label) {
+        const k = b.label.trim().toLowerCase();
+        if (!byName.has(k)) byName.set(k, []);
+        byName.get(k).push(b);
+      } else {
+        solos.push([b]);
+      }
+    }
+    // Fold name-only blocks into an id group carrying the same name.
+    for (const [nameKey, blocks] of [...byName]) {
+      for (const g of byDid.values()) {
+        if (g.some((x) => (x.label || "").trim().toLowerCase() === nameKey)) {
+          g.push(...blocks);
+          byName.delete(nameKey);
+          break;
+        }
+      }
+    }
+    const groups = [...byDid.values(), ...byName.values(), ...solos];
+    groups.forEach((g) => g.sort((a, b) => (b.ts || 0) - (a.ts || 0)));
+    const newest = (g) => Math.max(...g.map((x) => x.ts || 0));
+    groups.sort((a, b) => newest(b) - newest(a));
+    return groups;
+  }
+
+  // One block line inside a person's ban card: kind tag, address (devs only),
+  // live countdown, and per-block controls.
+  function buildBlockRow(b, isDev) {
+    const row = divc("blockrow");
+    const kind = b.kind || "ip";
+    const tag = span("btag " + (kind === "id" ? "uid" : kind));
+    tag.textContent = kind === "id" ? "ID" : kind === "range" ? "RANGE" : "IP";
+    row.appendChild(tag);
+    const addrText = isDev
+      ? kind === "id"
+        ? String(b.ip || "").replace(/^id:/, "")
+        : b.ip
+      : null;
+    const addr = span("addr" + (addrText ? "" : " dim"));
+    addr.textContent =
+      addrText || (kind === "id" ? "client id" : "address hidden");
+    row.appendChild(addr);
+
+    const pill = span("pill " + (b.permanent ? "perm" : "live"));
+    pill.dataset.ref = b.ref || "";
+    pill.textContent = b.permanent
+      ? "Permanent"
+      : fmtRemaining(b) || "expiring";
+    row.appendChild(pill);
+
+    const mkIcon = (fa, titleText, danger, fn) => {
+      const btn = document.createElement("button");
+      btn.className = "ibtn" + (danger ? " danger" : "");
+      btn.title = titleText;
+      btn.appendChild(icon(fa));
+      btn.addEventListener("click", fn);
+      return btn;
+    };
+    if (isDev) {
+      row.appendChild(
+        mkIcon("fa-hourglass-half", "Change duration", false, () =>
+          openBanDurationMenu(b),
+        ),
+      );
+      row.appendChild(
+        mkIcon(
+          "fa-comment",
+          b.reason ? "Edit message" : "Add message",
+          false,
+          () => editBanMessage(b),
+        ),
+      );
+    }
+    row.appendChild(
+      mkIcon("fa-unlock", "Unban", true, async () => {
+        // A dev sends the raw key; a mod (no address) sends the opaque ref.
+        // Send both - the server uses whichever it gets.
+        const payload = { ip: b.ip, ref: b.ref };
+        if (!window.StaffUI) {
+          socket.emit("dev unblock ip", payload);
+          return;
+        }
+        const who =
+          (b.label || "this user") + (isDev && b.ip ? " (" + b.ip + ")" : "");
+        const ok = await StaffUI.confirm({
+          title: "Unban",
+          message: "Unblock " + who + "?",
+          confirmText: "Unban",
+        });
+        if (ok) socket.emit("dev unblock ip", payload);
+      }),
+    );
+    return row;
+  }
+
+  // One card per person: who they are, every block covering them, the ban
+  // screen message, and the accounts seen behind those blocks.
+  function buildBanGroup(blocks, isDev) {
+    const anyPerm = blocks.some((b) => b.permanent);
+    const first = blocks[0];
+    const name = blocks.map((b) => b.label).find(Boolean) || null;
+    const did = blocks.map((b) => b.did).find(Boolean) || null;
+    const maxBans = Math.max(...blocks.map((b) => b.bans || 0));
+
+    const card = divc("bancard" + (anyPerm ? " perm" : ""));
+
     const head = divc("bc-head");
     const av = divc("avatar");
-    av.style.background = b.permanent ? "var(--red)" : "var(--amber)";
-    av.textContent = initialOf(b.label || b.ip);
+    av.style.background = anyPerm ? "var(--red)" : "var(--amber)";
+    // A named account gets its initial; a block with no account behind it gets
+    // an icon, since the first digit of an address means nothing.
+    if (name) av.textContent = initialOf(name);
+    else av.appendChild(icon(did ? "fa-fingerprint" : "fa-globe"));
     head.appendChild(av);
-
     const idc = divc("bc-id");
-    idc.appendChild(span("bc-name", b.label || "Unknown user"));
+    idc.appendChild(
+      span("bc-name", name || (did ? "Unnamed account" : "No account on file")),
+    );
     const meta = divc("bc-meta");
-    if (isDev) meta.appendChild(span("ip", b.ip));
-    if (b.by) {
+    const bys = [...new Set(blocks.map((b) => b.by).filter(Boolean))];
+    if (bys.length) {
       const by = span(null, "");
       by.appendChild(document.createTextNode("by "));
       const bb = document.createElement("b");
-      bb.textContent = b.by;
+      bb.textContent = bys.join(", ");
       by.appendChild(bb);
       meta.appendChild(by);
     }
-    if (b.ts) {
-      const placed = span(null, "placed " + relTime(b.ts));
-      placed.title = fmtTime(b.ts);
+    if (first.ts) {
+      const placed = span(null, "banned " + relTime(first.ts));
+      placed.title = fmtTime(first.ts);
       meta.appendChild(placed);
     }
-    // Repeat-offender count: how many times this IP has ever been banned.
-    if (b.bans && b.bans >= 2) {
+    if (blocks.length > 1)
+      meta.appendChild(span(null, blocks.length + " blocks"));
+    if (maxBans >= 2) {
       const rep = span("bc-repeat");
       rep.appendChild(icon("fa-rotate-right"));
-      rep.appendChild(document.createTextNode(" Banned " + b.bans + " times"));
+      rep.appendChild(
+        document.createTextNode(" Banned " + maxBans + " times"),
+      );
       meta.appendChild(rep);
     }
     idc.appendChild(meta);
     head.appendChild(idc);
-
-    const pill = document.createElement("span");
-    pill.className = "pill " + (b.permanent ? "perm" : "live");
-    pill.dataset.ttl = "1";
-    pill.textContent = b.permanent
-      ? "Permanent"
-      : fmtRemaining(b) || "expiring";
-    head.appendChild(pill);
     card.appendChild(head);
 
-    // The message the blocked user actually sees
-    const msg = divc("bc-msg" + (b.reason ? "" : " none"));
+    const rows = divc("blocks");
+    blocks.forEach((b) => rows.appendChild(buildBlockRow(b, isDev)));
+    card.appendChild(rows);
+
+    const withMsg = blocks.find((b) => b.reason);
+    const msg = divc("bc-msg" + (withMsg ? "" : " none"));
     msg.appendChild(span("lbl", "Message shown to them"));
     msg.appendChild(
       document.createTextNode(
-        b.reason || "No message set. They see a generic ban screen.",
+        withMsg
+          ? withMsg.reason
+          : "No message set. They see a generic ban screen.",
       ),
     );
     card.appendChild(msg);
 
-    // Accounts seen behind this IP/range, so staff know who a ban hits.
-    const seen = divc("bc-msg" + (b.userCount ? "" : " none"));
-    seen.appendChild(
-      span("lbl", "Seen accounts" + (b.userCount ? " (" + b.userCount + ")" : "")),
+    const seen = new Map();
+    blocks.forEach((b) =>
+      (b.users || []).forEach((u) => {
+        const k = u.id || u.name || "?";
+        if (!seen.has(k)) seen.set(k, u);
+      }),
     );
-    if (b.userCount && b.users && b.users.length) {
-      const names = b.users
-        .map((u) => u.name || "Unknown")
-        .slice(0, 12)
-        .join(", ");
-      seen.appendChild(document.createTextNode(names));
-      if (isDev)
-        b.users.slice(0, 12).forEach((u) => {
-          const line = span("mono", "");
-          line.appendChild(
-            document.createTextNode((u.name || "Unknown") + "  id: " + (u.id || "?")),
-          );
-          if (u.ips && u.ips.length) {
-            line.appendChild(document.createTextNode("  IP: "));
-            line.appendChild(span("ip", u.ips.join(", ")));
-          }
-          seen.appendChild(line);
-        });
-    } else {
-      seen.appendChild(
-        document.createTextNode("No known accounts for this address yet."),
+    if (seen.size) {
+      const box = divc("bc-msg");
+      box.appendChild(span("lbl", "Seen accounts (" + seen.size + ")"));
+      box.appendChild(
+        document.createTextNode(
+          [...seen.values()]
+            .map((u) => u.name || "Unknown")
+            .slice(0, 12)
+            .join(", "),
+        ),
       );
+      card.appendChild(box);
     }
-    card.appendChild(seen);
-
-    // Actions: re-time / edit message (dev), then unban
-    const foot = divc("bc-foot");
-    if (isDev) {
-      const dur = document.createElement("button");
-      dur.className = "btn sm";
-      dur.appendChild(icon("fa-hourglass-half"));
-      dur.appendChild(document.createTextNode(" Change duration"));
-      dur.addEventListener("click", () => openBanDurationMenu(b));
-      foot.appendChild(dur);
-
-      const editMsg = document.createElement("button");
-      editMsg.className = "btn sm";
-      editMsg.appendChild(icon("fa-comment"));
-      editMsg.appendChild(
-        document.createTextNode(b.reason ? " Edit message" : " Add message"),
-      );
-      editMsg.addEventListener("click", () => editBanMessage(b));
-      foot.appendChild(editMsg);
+    if (did) {
+      const idLine = divc("bc-idline mono");
+      idLine.textContent = "id: " + did;
+      card.appendChild(idLine);
     }
-    foot.appendChild(span("spacer"));
-    const unban = document.createElement("button");
-    unban.className = "btn sm danger";
-    unban.appendChild(icon("fa-unlock"));
-    unban.appendChild(document.createTextNode(" Unban"));
-    unban.addEventListener("click", async () => {
-      // A dev sends the IP; a mod (no IP) sends the opaque ref. Send both - the
-      // server uses whichever it gets.
-      const payload = { ip: b.ip, ref: b.ref };
-      if (!window.StaffUI) {
-        socket.emit("dev unblock ip", payload);
-        return;
-      }
-      const who = (b.label || "this user") + (b.ip ? " (" + b.ip + ")" : "");
-      const ok = await StaffUI.confirm({
-        title: "Unban",
-        message: "Unblock " + who + "?",
-        confirmText: "Unban",
-      });
-      if (ok) socket.emit("dev unblock ip", payload);
-    });
-    foot.appendChild(unban);
-    card.appendChild(foot);
     return card;
   }
 
@@ -817,7 +925,20 @@
       );
       return;
     }
-    bans.forEach((b) => wrap.appendChild(buildBanCard(b, isDev)));
+    let list = bans.slice();
+    if (bansFilter === "perm") list = list.filter((b) => b.permanent);
+    else if (bansFilter === "temp") list = list.filter((b) => !b.permanent);
+    else if (bansFilter === "id")
+      list = list.filter((b) => b.kind === "id" || b.did);
+    if (bansQuery)
+      list = list.filter((b) => banSearchable(b).includes(bansQuery));
+    if (!list.length) {
+      wrap.appendChild(
+        emptyBox("fa-filter-circle-xmark", "No blocks match your filter."),
+      );
+      return;
+    }
+    groupBans(list).forEach((g) => wrap.appendChild(buildBanGroup(g, isDev)));
     startBanTimer();
   }
   function startBanTimer() {
@@ -825,9 +946,8 @@
     bansTimer = setInterval(() => {
       if (tab !== "bans") return;
       let anyLive = false;
-      document.querySelectorAll("#bansList .pill[data-ttl]").forEach((pill) => {
-        const ref = pill.closest(".bancard")?.dataset.ref;
-        const b = bans.find((x) => x.ref === ref);
+      document.querySelectorAll("#bansList .pill[data-ref]").forEach((pill) => {
+        const b = bans.find((x) => x.ref === pill.dataset.ref);
         if (!b || b.permanent) return;
         anyLive = true;
         pill.textContent = fmtRemaining(b) || "expiring";
@@ -839,8 +959,10 @@
     }, 1000);
   }
 
-  // Ban / unban history: who banned or unbanned whom, newest first. The IP only
-  // appears for devs (the server omits it for mods).
+  // Ban / unban history: who banned or unbanned whom, newest first, with a
+  // search box and a Bans / Unbans filter. The raw IP appears for devs only
+  // (the server omits it for mods). A ban that is still in force gets a green
+  // ACTIVE chip so open blocks stand out from history at a glance.
   function renderBanHistory() {
     const wrap = $("banHistoryList");
     if (!wrap) return;
@@ -858,7 +980,27 @@
       );
       return;
     }
-    banHistory.forEach((e) => {
+    // Keys of blocks still in force (devs receive the key; mods do not, so the
+    // ACTIVE chip is effectively dev-only).
+    const activeKeys = new Set(bans.map((b) => b.ip).filter(Boolean));
+    let list = banHistory.slice();
+    if (banHistFilter !== "all")
+      list = list.filter((e) => e.action === banHistFilter);
+    if (banHistQuery)
+      list = list.filter((e) =>
+        [e.name, e.by, e.reason, e.ip, e.duration]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(banHistQuery),
+      );
+    if (!list.length) {
+      wrap.appendChild(
+        emptyBox("fa-filter-circle-xmark", "No history matches your filter."),
+      );
+      return;
+    }
+    list.forEach((e) => {
       const isUnban = e.action === "unban";
       const row = divc("bhrow " + (isUnban ? "unban" : "ban"));
       const ic = divc("bh-ic");
@@ -879,7 +1021,8 @@
       );
       line.appendChild(document.createTextNode(" "));
       const target = document.createElement("b");
-      target.textContent = e.name || e.ip || "a user";
+      target.textContent =
+        e.name || (e.ip ? String(e.ip).replace(/^id:/, "") : "a user");
       line.appendChild(target);
       if (!isUnban && e.duration) {
         line.appendChild(document.createTextNode(" "));
@@ -887,14 +1030,21 @@
       }
       main.appendChild(line);
 
-      const subBits = [];
-      if (e.ip) subBits.push("IP " + e.ip); // present for devs only
-      if (e.reason) subBits.push('"' + e.reason + '"');
-      if (subBits.length) {
-        const s = divc("bh-sub");
-        s.textContent = subBits.join("   ·   ");
-        main.appendChild(s);
+      const s = divc("bh-sub");
+      if (e.kind === "id" || e.kind === "range") {
+        const tag = span("btag " + (e.kind === "id" ? "uid" : "range"));
+        tag.textContent = e.kind === "id" ? "ID BAN" : "RANGE";
+        s.appendChild(tag);
       }
+      if (e.ip)
+        s.appendChild(span("ip", String(e.ip).replace(/^id:/, "id "))); // devs only
+      if (e.reason) s.appendChild(span(null, '"' + e.reason + '"'));
+      if (!isUnban && e.ip && activeKeys.has(e.ip)) {
+        const st = span("stchip active");
+        st.textContent = "ACTIVE";
+        s.appendChild(st);
+      }
+      if (s.childNodes.length) main.appendChild(s);
       row.appendChild(main);
 
       const when = span("bh-when", relTime(e.at));
@@ -907,6 +1057,7 @@
 
   // ── Moderators tab (dev only) ──
   let modKeys = [];
+  let modsFilter = "all"; // all | dev | l2 | l1 | active | inactive
   // Turn a last-connected timestamp into a label + freshness colour, so a stale
   // (long-inactive) mod stands out at a glance.
   function lastSeenMeta(ts) {
@@ -927,121 +1078,221 @@
     s.appendChild(val);
     return s;
   }
-  function buildModCard(k) {
-    const card = divc("modcard");
+  // Active = connected right now, or seen within the last 7 days.
+  function isActiveStaff(m) {
+    return m.online || (m.lastSeen && Date.now() - m.lastSeen < 7 * 86400000);
+  }
+  const RANKS = {
+    dev: { chip: "chip dev", name: "DEV", color: "var(--red)" },
+    l2: { chip: "chip l2", name: "MOD L2", color: "var(--blue)" },
+    l1: { chip: "chip l1", name: "MOD L1", color: "var(--purple)" },
+  };
+  // The full staff roster: mod keys from the server, plus dev keys taken from
+  // the key-activity history (Sessions data), so devs appear on the same board.
+  function buildStaffRoster() {
+    const online = new Set((sessionData.sessions || []).map((s) => s.hash));
+    const activityByHash = new Map(
+      (sessionData.history || []).map((h) => [h.hash, h]),
+    );
+    const roster = [];
+    for (const h of sessionData.history || []) {
+      if (h.role !== "dev") continue;
+      const last = Math.max(0, ...(h.ips || []).map((x) => x.last || 0));
+      roster.push({
+        rank: "dev",
+        label: h.label || "dev",
+        hash: h.hash,
+        lastSeen: last || null,
+        networks: (h.ips || []).length,
+        online: online.has(h.hash),
+      });
+    }
+    for (const k of modKeys) {
+      const act = activityByHash.get(k.hash);
+      roster.push({
+        rank: k.level === 1 ? "l1" : "l2",
+        label: k.label || "mod",
+        hash: k.hash,
+        lastSeen: k.lastSeen || null,
+        networks: act ? (act.ips || []).length : 0,
+        grantedBy: k.grantedBy || null,
+        grantedAt: k.grantedAt || null,
+        online: online.has(k.hash),
+        key: k,
+      });
+    }
+    return roster;
+  }
 
+  function buildModCard(m) {
+    const rank = RANKS[m.rank] || RANKS.l2;
+    const card = divc("modcard rank-" + m.rank);
+
+    const top = divc("mc-top");
     const av = divc("avatar");
-    av.style.background = "var(--orange)";
-    av.textContent = initialOf(k.label);
-    card.appendChild(av);
-
-    const main = divc("mc-main");
+    av.style.background = rank.color;
+    av.textContent = initialOf(m.label);
+    top.appendChild(av);
     const title = divc("mc-title");
-    title.appendChild(document.createTextNode(k.label || "mod"));
-    title.appendChild(span("chip mod", k.level === 1 ? "MOD L1" : "MOD L2"));
-    main.appendChild(title);
+    title.appendChild(span("nm", m.label || "staff"));
+    title.appendChild(span(rank.chip, rank.name));
+    top.appendChild(title);
+    const active = isActiveStaff(m);
+    const dot = span(
+      "live-dot " + (m.online ? "on" : active ? "idle" : "off"),
+    );
+    dot.appendChild(
+      document.createTextNode(
+        m.online ? "Online now" : active ? "Active" : "Inactive",
+      ),
+    );
+    top.appendChild(dot);
+    card.appendChild(top);
 
     const grid = divc("mc-grid");
-    const ls = lastSeenMeta(k.lastSeen);
+    const ls = lastSeenMeta(m.lastSeen);
     grid.appendChild(
       modStat(
         "Last seen",
         ls.text,
         ls.cls,
-        k.lastSeen ? fmtTime(k.lastSeen) : null,
+        m.lastSeen ? fmtTime(m.lastSeen) : null,
       ),
     );
     grid.appendChild(
       modStat(
-        "Granted by",
-        k.grantedBy || "Unknown",
-        k.grantedBy ? null : "dim",
+        "Networks",
+        m.networks ? String(m.networks) : "None yet",
+        m.networks ? null : "dim",
+        "Distinct addresses this key has connected from",
       ),
     );
+    if (m.rank === "dev") {
+      grid.appendChild(modStat("Granted by", "Server owner", "dim"));
+    } else {
+      grid.appendChild(
+        modStat(
+          "Granted by",
+          m.grantedBy || "Unknown",
+          m.grantedBy ? null : "dim",
+        ),
+      );
+      grid.appendChild(
+        modStat(
+          "Granted",
+          m.grantedAt ? relTime(m.grantedAt) : "Unknown",
+          m.grantedAt ? null : "dim",
+          m.grantedAt ? fmtTime(m.grantedAt) : null,
+        ),
+      );
+    }
     grid.appendChild(
-      modStat(
-        "Granted",
-        k.grantedAt ? relTime(k.grantedAt) : "Unknown",
-        k.grantedAt ? null : "dim",
-        k.grantedAt ? fmtTime(k.grantedAt) : null,
-      ),
+      modStat("Key", m.hash ? m.hash.slice(0, 12) + "…" : "?", "mono"),
     );
-    grid.appendChild(
-      modStat("Key", k.hash ? k.hash.slice(0, 12) + "…" : "?", "mono"),
-    );
-    main.appendChild(grid);
-    card.appendChild(main);
+    card.appendChild(grid);
 
-    const actions = divc("rc-actions");
-
-    // Promote (L1 -> L2) / demote (L2 -> L1). Dev only; the tab is dev-gated.
-    const toLevel = k.level === 1 ? 2 : 1;
-    const levelBtn = document.createElement("button");
-    levelBtn.className = "btn sm";
-    levelBtn.appendChild(icon(toLevel === 2 ? "fa-arrow-up" : "fa-arrow-down"));
-    levelBtn.appendChild(
-      document.createTextNode(
-        toLevel === 2 ? " Promote to L2" : " Demote to L1",
-      ),
-    );
-    levelBtn.addEventListener("click", async () => {
-      if (window.StaffUI) {
-        const ok = await StaffUI.confirm({
-          title: toLevel === 2 ? "Promote to L2" : "Demote to L1",
-          message:
-            toLevel === 2
-              ? 'Give "' +
-                (k.label || "mod") +
-                '" full (level 2) powers, including ban and IP block?'
-              : 'Limit "' +
-                (k.label || "mod") +
-                '" to junior (level 1) powers?',
-          confirmText: toLevel === 2 ? "Promote" : "Demote",
-        });
-        if (!ok) return;
-      }
-      socket.emit("dev set mod level", { hash: k.hash, level: toLevel });
-    });
-    actions.appendChild(levelBtn);
-
-    const revoke = document.createElement("button");
-    revoke.className = "btn sm danger";
-    revoke.appendChild(icon("fa-user-xmark"));
-    revoke.appendChild(document.createTextNode(" Revoke"));
-    revoke.addEventListener("click", async () => {
-      if (!window.StaffUI) {
-        socket.emit("dev revoke mod", { hash: k.hash });
-        return;
-      }
-      const ok = await StaffUI.confirm({
-        title: "Revoke mod",
-        message:
-          'Revoke "' +
-          (k.label || "mod") +
-          '" immediately? Their access is removed at once.',
-        danger: true,
-        confirmText: "Revoke",
+    // Promote / demote / revoke apply to mod keys only; dev keys live in the
+    // server config.
+    if (m.key) {
+      const k = m.key;
+      const actions = divc("mc-actions");
+      const toLevel = k.level === 1 ? 2 : 1;
+      const levelBtn = document.createElement("button");
+      levelBtn.className = "btn sm";
+      levelBtn.appendChild(
+        icon(toLevel === 2 ? "fa-arrow-up" : "fa-arrow-down"),
+      );
+      levelBtn.appendChild(
+        document.createTextNode(
+          toLevel === 2 ? " Promote to L2" : " Demote to L1",
+        ),
+      );
+      levelBtn.addEventListener("click", async () => {
+        if (window.StaffUI) {
+          const ok = await StaffUI.confirm({
+            title: toLevel === 2 ? "Promote to L2" : "Demote to L1",
+            message:
+              toLevel === 2
+                ? 'Give "' +
+                  (k.label || "mod") +
+                  '" full (level 2) powers, including ban and IP block?'
+                : 'Limit "' +
+                  (k.label || "mod") +
+                  '" to junior (level 1) powers?',
+            confirmText: toLevel === 2 ? "Promote" : "Demote",
+          });
+          if (!ok) return;
+        }
+        socket.emit("dev set mod level", { hash: k.hash, level: toLevel });
       });
-      if (ok) socket.emit("dev revoke mod", { hash: k.hash });
-    });
-    actions.appendChild(revoke);
-    card.appendChild(actions);
+      actions.appendChild(levelBtn);
+
+      const revoke = document.createElement("button");
+      revoke.className = "btn sm danger";
+      revoke.appendChild(icon("fa-user-xmark"));
+      revoke.appendChild(document.createTextNode(" Revoke"));
+      revoke.addEventListener("click", async () => {
+        if (!window.StaffUI) {
+          socket.emit("dev revoke mod", { hash: k.hash });
+          return;
+        }
+        const ok = await StaffUI.confirm({
+          title: "Revoke mod",
+          message:
+            'Revoke "' +
+            (k.label || "mod") +
+            '" immediately? Their access is removed at once.',
+          danger: true,
+          confirmText: "Revoke",
+        });
+        if (ok) socket.emit("dev revoke mod", { hash: k.hash });
+      });
+      actions.appendChild(revoke);
+      card.appendChild(actions);
+    }
     return card;
   }
+
   function renderMods() {
     const wrap = $("modsList");
+    if (!wrap) return;
     wrap.textContent = "";
+    const roster = buildStaffRoster();
     $("modsBadge").textContent = String(modKeys.length);
-    $("modsSub").textContent = modKeys.length
-      ? modKeys.length + " active mod key" + (modKeys.length === 1 ? "" : "s")
-      : "No mod keys yet";
-    if (modKeys.length === 0) {
+    const onlineCount = roster.filter((m) => m.online).length;
+    $("modsSub").textContent = roster.length
+      ? roster.length +
+        " staff  ·  " +
+        onlineCount +
+        " online now"
+      : "No staff yet";
+    let list = roster;
+    if (modsFilter === "dev" || modsFilter === "l2" || modsFilter === "l1")
+      list = roster.filter((m) => m.rank === modsFilter);
+    else if (modsFilter === "active") list = roster.filter(isActiveStaff);
+    else if (modsFilter === "inactive")
+      list = roster.filter((m) => !isActiveStaff(m));
+    // Devs first, then full mods, then juniors; freshest first inside a rank.
+    const order = { dev: 0, l2: 1, l1: 2 };
+    list = list
+      .slice()
+      .sort(
+        (a, b) =>
+          order[a.rank] - order[b.rank] ||
+          (b.lastSeen || 0) - (a.lastSeen || 0),
+      );
+    if (!list.length) {
       wrap.appendChild(
-        emptyBox("fa-user-shield", "No moderators yet. Grant one above."),
+        emptyBox(
+          "fa-user-shield",
+          roster.length
+            ? "No staff match this filter."
+            : "No moderators yet. Grant one above.",
+        ),
       );
       return;
     }
-    modKeys.forEach((k) => wrap.appendChild(buildModCard(k)));
+    list.forEach((m) => wrap.appendChild(buildModCard(m)));
   }
   async function grantMod() {
     if (!window.StaffUI) return;
@@ -1127,13 +1378,14 @@
   }
 
   function banReported(r, duration) {
-    const go = (reason) =>
+    const go = (reason, banRange) =>
       socket.emit("staff ip block", {
         targetUserId: r.targetUserId,
         duration,
         reason: reason || "",
+        banRange: !!banRange,
       });
-    if (!window.StaffUI) return go("");
+    if (!window.StaffUI) return go("", false);
     StaffUI.prompt({
       title: "IP block " + (r.name || "user"),
       icon: '<i class="fas fa-ban"></i>',
@@ -1151,11 +1403,18 @@
           placeholder: "e.g. Repeated harassment after warnings.",
           maxLength: 500,
         },
+        {
+          name: "banRange",
+          type: "checkbox",
+          label: "Also block the surrounding range",
+          value: true,
+          help: "Blocks the whole network they sit on (IPv6 /64, IPv4 /24), so a neighbouring address in the same pool is covered too.",
+        },
       ],
       danger: true,
       confirmText: "Block " + durationLabel(duration),
-    }).then((reason) => {
-      if (reason != null) go(reason);
+    }).then((res) => {
+      if (res != null) go(res.value, res.banRange);
     });
   }
   // Discard a report: tell the server to clear it, then drop it locally right
@@ -1202,19 +1461,25 @@
     });
   }
 
-  function openBanIpDialog() {
-    if (!window.StaffUI) return;
-    const isDev = me && me.role === "dev";
+  function banDurationOptions() {
     const durations = [
       { value: "1h", label: "1 hour" },
       { value: "24h", label: "24 hours" },
       { value: "7d", label: "7 days" },
     ];
-    if (isDev) durations.push({ value: "permanent", label: "Permanent" });
+    if (me && me.role === "dev")
+      durations.push({ value: "permanent", label: "Permanent" });
+    return durations;
+  }
+
+  function openBanIpDialog() {
+    if (!window.StaffUI) return;
     StaffUI.prompt({
       title: "Ban an IP",
       icon: '<i class="fas fa-ban"></i>',
-      message: "Blocks the address right away and disconnects anyone on it.",
+      subtitle: "Blocks the address right away",
+      message:
+        "Anyone currently connected on this address is disconnected on the spot, and new connections are refused until the ban ends. They see your message on the ban screen.",
       fields: [
         {
           name: "ip",
@@ -1227,21 +1492,21 @@
           name: "duration",
           label: "Duration",
           type: "select",
-          options: durations,
+          options: banDurationOptions(),
           value: "24h",
         },
         {
           name: "banRange",
           type: "checkbox",
-          label: "Also block the whole IPv6 /64 range",
-          help: "IPv6 only, stops them rotating their address. No effect on IPv4.",
+          label: "Also block the surrounding range",
+          help: "Blocks the whole network the address sits on (IPv6 /64, IPv4 /24), so a neighbouring address in the same pool is covered too.",
         },
         {
           name: "reason",
           label: "Message shown to them (optional)",
           type: "textarea",
           maxLength: 500,
-          placeholder: "e.g. Ban evasion.",
+          placeholder: "e.g. Ban evasion. Appeal from the ban screen.",
         },
       ],
       confirmText: "Ban IP",
@@ -1252,6 +1517,50 @@
         duration: v.duration || "24h",
         reason: (v.reason || "").trim(),
         banRange: !!v.banRange,
+      });
+    });
+  }
+
+  // Ban a client id directly. The id is the identifier shown on report,
+  // appeal, and ban cards, so it can be copied straight from those.
+  function openBanIdDialog() {
+    if (!window.StaffUI) return;
+    StaffUI.prompt({
+      title: "Ban an ID",
+      icon: '<i class="fas fa-fingerprint"></i>',
+      subtitle: "Blocks a client id, whatever address it moves to",
+      message:
+        "Use this for someone who keeps coming back from new addresses. Paste the id shown on their report, appeal, or ban card. They are disconnected right away and see the normal ban screen.",
+      fields: [
+        {
+          name: "id",
+          label: "Client id",
+          type: "text",
+          required: true,
+          placeholder: "e.g. 1d9a444c-b844-4a7b-b55c-04c6810fb7bd",
+        },
+        {
+          name: "duration",
+          label: "Duration",
+          type: "select",
+          options: banDurationOptions(),
+          value: "7d",
+        },
+        {
+          name: "reason",
+          label: "Message shown to them (optional)",
+          type: "textarea",
+          maxLength: 500,
+          placeholder: "e.g. Ban evasion. Appeal from the ban screen.",
+        },
+      ],
+      confirmText: "Ban ID",
+    }).then((v) => {
+      if (!v || !v.id || !v.id.trim()) return;
+      socket.emit("staff ban ip", {
+        ip: v.id.trim(),
+        duration: v.duration || "7d",
+        reason: (v.reason || "").trim(),
       });
     });
   }
@@ -2159,6 +2468,20 @@
       document.createTextNode(" " + (a.status || "pending").toUpperCase()),
     );
     meta.appendChild(badge);
+    // Discord link. An applicant who has connected their Discord can be found
+    // in the Talkomatic server and given the site mod role, so this is worth
+    // seeing at a glance.
+    const dbadge = span("rbadge " + (a.discordId ? "on" : "off"));
+    dbadge.appendChild(icon(a.discordId ? "fa-check" : "fa-xmark"));
+    dbadge.appendChild(
+      document.createTextNode(a.discordId ? " Discord linked" : " No Discord"),
+    );
+    dbadge.title = a.discordId
+      ? "Discord id " +
+        a.discordId +
+        ". Check they are in the Talkomatic server, then give them the site mod role once approved."
+      : "This applicant has not linked a Discord account.";
+    meta.appendChild(dbadge);
     if (a.submittedAt) {
       const t = span(null, "applied " + relTime(a.submittedAt));
       t.title = fmtTime(a.submittedAt);
@@ -2216,6 +2539,11 @@
     }
     // Identity line: device id for all staff, raw IP only when the server sent
     // one (dev-only), matching the reports board and audit feed.
+    if (a.discordId) {
+      const dLine = span("mono", "discord: " + a.discordId);
+      dLine.title = "Search this id in the Talkomatic Discord server";
+      info.appendChild(dLine);
+    }
     if (a.deviceId || a.ip) {
       const idLine = span("mono", "");
       if (a.deviceId)
@@ -2245,7 +2573,12 @@
             message:
               "Approve " +
               (a.username || "this user") +
-              " as a junior (L1) moderator? They get a mod key right away.",
+              " as a junior (L1) moderator? They get a mod key right away." +
+              (a.discordId
+                ? " Remember to give them the site mod role in the Talkomatic Discord (id " +
+                  a.discordId +
+                  ") so they can reach the rest of the team."
+                : " They have no Discord linked, so there is no way to reach them off-site."),
             fields: [
               {
                 name: "value",
@@ -2398,17 +2731,80 @@
 
   // ── Sessions tab (dev only): who is connected on which staff key ──
   let sessionData = { sessions: [], history: [] };
-  function keyRow(label, role, ipsText, pillClass, pillText, sub2) {
-    const row = document.createElement("div");
-    row.className = "rowcard";
-    const av = document.createElement("div");
-    av.className = "avatar";
+
+  // Collapse an IPv6 address to its /64 network so one phone or router shows
+  // as a single line instead of a wall of rotating addresses. IPv4 stays as-is.
+  function netKeyOf(ip) {
+    const s = String(ip || "");
+    if (s.indexOf(":") === -1) return { key: s, label: s, v6: false };
+    let head = s.split("::")[0].split(":").filter(Boolean);
+    if (head.length < 4) {
+      const tail = (s.split("::")[1] || "").split(":").filter(Boolean);
+      const missing = 8 - head.length - tail.length;
+      head = head.concat(new Array(Math.max(0, missing)).fill("0"), tail);
+    }
+    const prefix = head.slice(0, 4).join(":");
+    return { key: "v6:" + prefix, label: prefix + "::/64", v6: true };
+  }
+
+  // Group address entries ({ ip, last, count } objects or plain strings) by
+  // network, freshest network first.
+  function groupNetworks(entries) {
+    const groups = new Map();
+    for (const e of entries) {
+      const ip = typeof e === "string" ? e : e.ip;
+      const meta = typeof e === "string" ? {} : e;
+      const nk = netKeyOf(ip);
+      if (!groups.has(nk.key))
+        groups.set(nk.key, {
+          label: nk.label,
+          v6: nk.v6,
+          ips: [],
+          last: 0,
+          count: 0,
+        });
+      const g = groups.get(nk.key);
+      g.ips.push(ip);
+      g.count += meta.count || 1;
+      if (meta.last && meta.last > g.last) g.last = meta.last;
+    }
+    return [...groups.values()].sort((a, b) => b.last - a.last);
+  }
+
+  function netRow(g) {
+    const row = divc("netrow");
+    row.appendChild(span("net", g.v6 && g.ips.length > 1 ? g.label : g.ips[0]));
+    if (g.ips.length > 1)
+      row.appendChild(span("cnt", g.ips.length + " addresses"));
+    if (g.last) {
+      const t = span("lastseen", "last " + relTime(g.last));
+      t.title = fmtTime(g.last);
+      row.appendChild(t);
+    }
+    if (g.ips.length > 1) {
+      const btn = document.createElement("button");
+      btn.className = "net-expand";
+      btn.textContent = "show all";
+      const list = divc("netlist");
+      g.ips.forEach((ip) => list.appendChild(span("one", ip)));
+      btn.addEventListener("click", () => {
+        const open = row.classList.toggle("open");
+        btn.textContent = open ? "hide" : "show all";
+      });
+      row.appendChild(btn);
+      row.appendChild(list);
+    }
+    return row;
+  }
+
+  function sessKeyCard(label, role, groups, pill) {
+    const card = divc("sesscard");
+    const top = divc("sess-top");
+    const av = divc("avatar");
     av.style.background = role === "dev" ? "var(--red)" : "var(--orange)";
     av.textContent = initialOf(label);
-    row.appendChild(av);
-    const main = document.createElement("div");
-    main.className = "rc-main";
-    const title = span("rc-title", "");
+    top.appendChild(av);
+    const title = divc("sess-title");
     title.appendChild(document.createTextNode(label || "?"));
     title.appendChild(
       span(
@@ -2416,21 +2812,16 @@
         (role || "?").toUpperCase(),
       ),
     );
-    main.appendChild(title);
-    const sub = span("rc-sub", "");
-    if (sub2) sub.appendChild(document.createTextNode(sub2 + " "));
-    sub.appendChild(span("ip", ipsText || "none"));
-    main.appendChild(sub);
-    row.appendChild(main);
-    const actions = document.createElement("div");
-    actions.className = "rc-actions";
-    const pill = document.createElement("span");
-    pill.className = "pill " + pillClass;
-    pill.textContent = pillText;
-    actions.appendChild(pill);
-    row.appendChild(actions);
-    return row;
+    top.appendChild(title);
+    if (pill) top.appendChild(pill);
+    card.appendChild(top);
+    const nets = divc("sess-nets");
+    if (!groups.length) nets.appendChild(span("cnt", "No addresses recorded yet."));
+    else groups.forEach((g) => nets.appendChild(netRow(g)));
+    card.appendChild(nets);
+    return card;
   }
+
   function emptyCard(wrap, ic, text) {
     const e = document.createElement("div");
     e.className = "empty";
@@ -2443,14 +2834,16 @@
     const hist = $("sessionsHistory");
     const sessions = sessionData.sessions || [];
     const history = sessionData.history || [];
-    const flagged = sessions.filter((s) => s.multiIp).length;
+    const flagged = sessions.filter(
+      (s) => groupNetworks(s.ips || []).length > 1,
+    ).length;
     $("sessionsBadge").textContent = String(sessions.length);
     $("sessionsSub").textContent = sessions.length
       ? sessions.length +
         " key" +
         (sessions.length === 1 ? "" : "s") +
         " connected" +
-        (flagged ? ", " + flagged + " from multiple IPs" : "")
+        (flagged ? ", " + flagged + " on multiple networks" : "")
       : "No staff connected right now";
 
     active.textContent = "";
@@ -2462,21 +2855,25 @@
       );
     } else {
       sessions.forEach((s) => {
-        const tabs =
-          (s.sessionCount || 1) +
-          " tab" +
-          ((s.sessionCount || 1) === 1 ? "" : "s") +
-          " from";
-        active.appendChild(
-          keyRow(
-            s.label,
-            s.role,
-            (s.ips || []).join(", "),
-            s.multiIp ? "perm" : "live",
-            s.multiIp ? "Multiple IPs" : "OK",
-            tabs,
-          ),
+        const groups = groupNetworks(s.ips || []);
+        const multiNet = groups.length > 1;
+        const pill = span(
+          "pill " + (multiNet ? "perm" : "live"),
+          multiNet ? groups.length + " networks" : "OK",
         );
+        pill.title = multiNet
+          ? "Connected from more than one network at once - the key may be shared."
+          : "All connections come from one network.";
+        const card = sessKeyCard(s.label, s.role, groups, pill);
+        const tabs = span(
+          "cnt",
+          (s.sessionCount || 1) +
+            " tab" +
+            ((s.sessionCount || 1) === 1 ? "" : "s") +
+            " open",
+        );
+        card.querySelector(".sess-nets").prepend(tabs);
+        active.appendChild(card);
       });
     }
 
@@ -2485,17 +2882,12 @@
       emptyCard(hist, "fa-clock-rotate-left", "No key history yet.");
     } else {
       history.forEach((h) => {
-        const ips = h.ips || [];
-        hist.appendChild(
-          keyRow(
-            h.label,
-            h.role,
-            ips.map((x) => x.ip).join(", "),
-            ips.length > 1 ? "perm" : "live",
-            ips.length + " IP" + (ips.length === 1 ? "" : "s"),
-            "seen from",
-          ),
+        const groups = groupNetworks(h.ips || []);
+        const pill = span(
+          "pill " + (groups.length > 1 ? "perm" : "live"),
+          groups.length + " network" + (groups.length === 1 ? "" : "s"),
         );
+        hist.appendChild(sessKeyCard(h.label, h.role, groups, pill));
       });
     }
   }
@@ -2517,7 +2909,12 @@
       socket.emit("staff get ban history");
       startBanTimer();
     }
-    if (name === "mods") socket.emit("dev list mod keys");
+    if (name === "mods") {
+      socket.emit("dev list mod keys");
+      // The roster also shows devs and online state, both derived from the
+      // sessions data, so refresh that too.
+      socket.emit("dev get sessions");
+    }
     if (name === "sessions") socket.emit("dev get sessions");
     if (name === "applications") socket.emit("mod applications list");
     if (name === "reports") socket.emit("staff get reports");
@@ -2629,11 +3026,11 @@
   });
 
   socket.on("dev blocks", (list) => {
-    bans = (Array.isArray(list) ? list : []).slice().sort((a, b) => {
-      if (a.permanent !== b.permanent) return a.permanent ? -1 : 1;
-      return (a.expiry || 0) - (b.expiry || 0);
-    });
+    // Ordering happens in the renderer (grouped by person, newest first).
+    bans = Array.isArray(list) ? list : [];
     renderBans();
+    // The history feed marks bans that are still in force, so refresh it too.
+    renderBanHistory();
   });
 
   socket.on("staff ban history", (list) => {
@@ -2701,6 +3098,8 @@
   socket.on("dev sessions", (data) => {
     sessionData = data || { sessions: [], history: [] };
     renderSessions();
+    // The moderators roster shows devs and online state from this data.
+    renderMods();
   });
 
   socket.on("dev mod granted", (d) => {
@@ -2821,9 +3220,65 @@
     socket.emit("staff get ban history");
   });
   $("banIpBtn") && $("banIpBtn").addEventListener("click", openBanIpDialog);
-  $("modsRefresh").addEventListener("click", () =>
-    socket.emit("dev list mod keys"),
-  );
+  $("banIdBtn") && $("banIdBtn").addEventListener("click", openBanIdDialog);
+
+  // Ban list: search + type filter
+  let banSearchDebounce = null;
+  $("banSearch") &&
+    $("banSearch").addEventListener("input", () => {
+      clearTimeout(banSearchDebounce);
+      banSearchDebounce = setTimeout(() => {
+        bansQuery = $("banSearch").value.trim().toLowerCase();
+        renderBans();
+      }, 200);
+    });
+  document.querySelectorAll("#banSeg button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document
+        .querySelectorAll("#banSeg button")
+        .forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      bansFilter = btn.dataset.b || "all";
+      renderBans();
+    });
+  });
+
+  // Ban history: search + bans/unbans filter
+  let banHistDebounce = null;
+  $("banHistSearch") &&
+    $("banHistSearch").addEventListener("input", () => {
+      clearTimeout(banHistDebounce);
+      banHistDebounce = setTimeout(() => {
+        banHistQuery = $("banHistSearch").value.trim().toLowerCase();
+        renderBanHistory();
+      }, 200);
+    });
+  document.querySelectorAll("#banHistSeg button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document
+        .querySelectorAll("#banHistSeg button")
+        .forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      banHistFilter = btn.dataset.h || "all";
+      renderBanHistory();
+    });
+  });
+
+  // Moderators: rank / activity filter
+  document.querySelectorAll("#modsSeg button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document
+        .querySelectorAll("#modsSeg button")
+        .forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      modsFilter = btn.dataset.m || "all";
+      renderMods();
+    });
+  });
+  $("modsRefresh").addEventListener("click", () => {
+    socket.emit("dev list mod keys");
+    socket.emit("dev get sessions");
+  });
   $("sessionsRefresh") &&
     $("sessionsRefresh").addEventListener("click", () =>
       socket.emit("dev get sessions"),

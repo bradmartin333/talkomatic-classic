@@ -34,9 +34,9 @@
   .tk-body{padding:16px 18px;overflow-y:auto;overflow-x:hidden;font-size:14px;line-height:1.55;color:#fff;}
   .tk-body p{margin:0 0 10px;word-break:break-word;}
   .tk-foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 18px;border-top:1px solid #616161;flex-wrap:wrap;}
-  .tk-btn{appearance:none;border:1px solid #616161;background:#000;color:#fff;border-radius:4px;
-    padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;font-family:inherit;transition:all .2s;max-width:100%;}
-  .tk-btn:hover{border-color:#ff9800;color:#ff9800;}
+  .tk-btn{appearance:none;border:1px solid transparent;background:#1b1b1b;color:#fff;border-radius:5px;
+    padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;font-family:inherit;transition:all .15s;max-width:100%;}
+  .tk-btn:hover{background:#242424;border-color:#616161;}
   .tk-btn.tk-primary{background:#ff9800;border-color:#ff9800;color:#000;}
   .tk-btn.tk-primary:hover{background:#ffad33;border-color:#ffad33;color:#000;}
   .tk-btn.tk-danger{background:#000;border-color:#616161;color:#ff5468;}
@@ -46,7 +46,7 @@
   .tk-field:last-child{margin-bottom:0;}
   .tk-label{display:block;font-size:12px;font-weight:bold;color:#ff9800;margin:0 0 6px;}
   .tk-input,.tk-textarea,.tk-select{width:100%;background:#000;color:#fff;
-    border:1px solid #616161;border-radius:4px;padding:10px 12px;font-size:14px;font-family:inherit;
+    border:1px solid #616161;border-radius:5px;padding:10px 12px;font-size:14px;font-family:inherit;
     outline:none;transition:border-color .12s;}
   .tk-textarea{min-height:84px;resize:vertical;line-height:1.5;}
   .tk-input:focus,.tk-textarea:focus,.tk-select:focus{border-color:#ff9800;}
@@ -58,36 +58,42 @@
   /* menu */
   .tk-group{margin:4px 0 18px;}
   .tk-group:last-child{margin-bottom:0;}
-  .tk-gtitle{font-size:11px;font-weight:bold;letter-spacing:.6px;text-transform:uppercase;
-    color:#ff9800;margin:0 0 11px;padding-bottom:6px;border-bottom:1px solid #616161;}
-  .tk-item{display:flex;align-items:center;gap:13px;width:100%;text-align:left;background:#000;
-    border:1px solid #333;border-radius:8px;padding:11px 13px;margin:0 0 8px;cursor:pointer;
+  /* Cream section strip, same as the lobby's "Be Known As..." bar and the
+     dashboard's section headers, so every staff surface reads the same. */
+  .tk-gtitle{font-size:12.5px;font-weight:bold;letter-spacing:.3px;
+    color:#000;background:#fdf5e6;margin:0 0 10px;padding:7px 12px;border-radius:5px;}
+  .tk-item{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:#1b1b1b;
+    border:1px solid transparent;border-radius:5px;padding:11px 12px;margin:0 0 6px;cursor:pointer;
     transition:border-color .15s,background .15s;font-family:inherit;color:#fff;}
   .tk-item:last-child{margin-bottom:0;}
-  .tk-item:hover{background:#0a0a0a;border-color:#ff9800;}
+  .tk-item:hover{background:#242424;border-color:#ff9800;}
   .tk-item:disabled{opacity:.45;cursor:not-allowed;}
-  .tk-item .tk-iico{font-size:15px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;
-    border-radius:8px;flex:none;background:rgba(255,152,0,.12);color:#ff9800;border:1px solid rgba(255,152,0,.3);}
+  .tk-item .tk-iico{font-size:15px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;
+    border-radius:5px;flex:none;background:rgba(255,152,0,.12);color:#ff9800;}
   .tk-item .tk-itxt{flex:1;min-width:0;}
   .tk-item .tk-ilabel{font-size:14px;font-weight:bold;color:#fff;word-break:break-word;}
   .tk-item .tk-idesc{font-size:12px;color:#9a9a9a;margin-top:2px;line-height:1.4;word-break:break-word;}
   button.tk-item::after{content:"›";color:#616161;font-size:19px;line-height:1;flex:none;font-weight:bold;margin-left:2px;transition:color .15s;}
   button.tk-item:hover::after{color:#ff9800;}
   .tk-item.tk-d .tk-ilabel{color:#ff8a8e;}
-  .tk-item.tk-d:hover{border-color:#ff5468;background:#160a0b;}
+  .tk-item.tk-d:hover{border-color:#ff5468;background:#241416;}
   button.tk-item.tk-d:hover::after{color:#ff5468;}
-  .tk-iico.t-default{background:rgba(255,152,0,.12);color:#ff9800;border-color:rgba(255,152,0,.3);}
-  .tk-iico.t-danger{background:rgba(255,84,104,.14);color:#ff5468;border-color:rgba(255,84,104,.32);}
-  .tk-iico.t-info{background:rgba(90,169,255,.15);color:#5aa9ff;border-color:rgba(90,169,255,.32);}
-  .tk-iico.t-success{background:rgba(87,217,163,.14);color:#57d9a3;border-color:rgba(87,217,163,.3);}
-  .tk-iico.t-warn{background:rgba(255,180,84,.15);color:#ffb454;border-color:rgba(255,180,84,.32);}
-  .tk-iico.t-broadcast{background:rgba(192,139,255,.16);color:#c08bff;border-color:rgba(192,139,255,.32);}
-  .tk-iico.t-dev{background:rgba(255,84,104,.15);color:#ff5468;border-color:rgba(255,84,104,.32);}
-  .tk-iico.t-mod{background:rgba(255,152,0,.15);color:#ff9800;border-color:rgba(255,152,0,.3);}
+  .tk-iico.t-default{background:rgba(255,152,0,.12);color:#ff9800;}
+  .tk-iico.t-danger{background:rgba(255,84,104,.14);color:#ff5468;}
+  .tk-iico.t-info{background:rgba(90,169,255,.15);color:#5aa9ff;}
+  .tk-iico.t-success{background:rgba(87,217,163,.14);color:#57d9a3;}
+  .tk-iico.t-warn{background:rgba(255,180,84,.15);color:#ffb454;}
+  .tk-iico.t-broadcast{background:rgba(192,139,255,.16);color:#c08bff;}
+  .tk-iico.t-dev{background:rgba(255,84,104,.15);color:#ff5468;}
+  .tk-iico.t-mod{background:rgba(90,169,255,.15);color:#5aa9ff;}
+  .tk-iico.t-jr{background:rgba(192,139,255,.16);color:#c08bff;}
+  /* Rank chips match the room flair and the dashboard: dev red, full mod blue,
+     junior mod purple. */
   .tk-chip{display:inline-block;font-size:10px;font-weight:bold;padding:2px 7px;border-radius:4px;
     letter-spacing:.4px;vertical-align:middle;}
-  .tk-chip.dev{background:#ffcf3f;color:#3a2c00;}
-  .tk-chip.mod{background:#00bcd4;color:#003;}
+  .tk-chip.dev{background:#ff5468;color:#1a0005;}
+  .tk-chip.mod{background:#5aa9ff;color:#001229;}
+  .tk-chip.jr{background:#c08bff;color:#16002b;}
   /* toasts */
   .tk-toasts,.tk-toast,.tk-toast *{box-sizing:border-box;}
   .tk-toasts{position:fixed;top:14px;right:14px;left:auto;z-index:100002;display:flex;flex-direction:column;
@@ -816,10 +822,42 @@
   }
 
   // ── Help: what every tool does and how to use it ─────────────────────────
+  // ── Help: what every tool does, and the lowest rank that may use it ──────
+  // "jr" = junior mod (L1) and up, "mod" = full mod (L2) and up, "dev" = devs.
   const HELP = [
     {
       title: "Per-user actions (tap a user's row in a room)",
       items: [
+        [
+          "Wipe typed text",
+          "jr",
+          "Clears what the user has typed from everyone's screen. The fastest way to pull a slur off the page.",
+        ],
+        [
+          "Reset name to Anonymous",
+          "jr",
+          "Resets an offensive username.",
+        ],
+        [
+          "Reset location",
+          "jr",
+          "Puts an offensive location line back to \"On The Web\".",
+        ],
+        [
+          "Turn profile picture off",
+          "jr",
+          "Removes their picture and stops them re-adding it until staff allow it again.",
+        ],
+        [
+          "Warn",
+          "jr",
+          "Sends a private warning to one user, a heads up before you kick.",
+        ],
+        [
+          "Kick from room",
+          "jr",
+          "Removes the user from the room. They can come back, so pair it with a warning.",
+        ],
         [
           "Kick + room ban",
           "mod",
@@ -828,19 +866,8 @@
         [
           "IP block",
           "mod",
-          "Blocks the user's IP and disconnects them. Mods pick 1h / 24h / 7d; devs can also pick permanent.",
+          "Blocks the user's address and disconnects them. Full mods pick 1h / 24h / 7d; devs can also pick permanent.",
         ],
-        [
-          "Wipe typed text",
-          "mod",
-          "Clears what the user has typed from everyone's screen.",
-        ],
-        [
-          "Warn",
-          "mod",
-          "Sends a private warning to one user, a heads up before you kick.",
-        ],
-        ["Force rename", "mod", "Resets an offensive username to Anonymous."],
         [
           "Freeze / unfreeze",
           "dev",
@@ -853,17 +880,22 @@
       items: [
         [
           "Clear Talkoboard",
-          "mod",
+          "jr",
           "Wipes the shared drawing board for the room.",
         ],
         [
+          "Rename room",
+          "jr",
+          "Fixes a bad or misleading room name. Everyone in the room is told, and it is logged.",
+        ],
+        [
           "Lock room",
-          "mod",
+          "jr",
           "Blocks new joins; people already inside stay. Good for calming a raid.",
         ],
         [
           "Slow mode",
-          "mod",
+          "jr",
           "Throttles how fast the room updates for everyone.",
         ],
         [
@@ -890,12 +922,27 @@
       ],
     },
     {
+      title: "Boards (Mod Dashboard)",
+      items: [
+        [
+          "Reports, appeals, applications",
+          "mod",
+          "The review queues. Full mods and devs triage what the community reports and who applies to help.",
+        ],
+        [
+          "Ban list",
+          "mod",
+          "Every active block, grouped per person, with one-tap unban.",
+        ],
+      ],
+    },
+    {
       title: "Lobby / global (Dev Panel button in the lobby)",
       items: [
         [
           "Grant mod key",
-          "dev",
-          "Creates a new mod key shown once; give it to the person to paste into their browser.",
+          "mod",
+          "Full mods may mint a junior (L1) key; only devs can grant a full (L2) key.",
         ],
         [
           "Manage / revoke mod keys",
@@ -924,13 +971,13 @@
         ],
         [
           "Spectate",
-          "dev",
+          "mod",
           "Watch any room read-only without taking a slot or appearing.",
         ],
         [
           "Clear blacklist / unblock IP",
           "dev",
-          "Lifts bot-blacklist entries or a specific IP block.",
+          "Lifts bot-blacklist entries or a specific block.",
         ],
         ["Nuke", "dev", "Emergency clear of ALL rooms. Requires confirmation."],
       ],
@@ -940,44 +987,55 @@
       items: [
         [
           "Mod Dashboard",
-          "mod",
-          "Open mod dashboard to see every staff action and every username/IP/name-change, live. Keeps everyone honest.",
+          "jr",
+          "Every staff action and every username / name change, live. Keeps everyone honest, including you.",
         ],
       ],
     },
   ];
 
+  // role: "dev" | "mod" (full, L2) | "jr" (junior, L1). Anything a viewer
+  // cannot use yet is dimmed rather than hidden, so a junior can see what the
+  // next level unlocks.
   function help(role) {
-    const isDev = role === "dev";
+    const RANKS = {
+      jr: { n: 1, chip: "jr", label: "All staff", icon: "fa-shield-halved" },
+      mod: { n: 2, chip: "mod", label: "Full mod", icon: "fa-shield-halved" },
+      dev: { n: 3, chip: "dev", label: "Dev only", icon: "fa-crown" },
+    };
+    const mine = RANKS[role] ? RANKS[role].n : 1;
     const wrap = el("div");
     wrap.appendChild(
       el("p", {
-        text: isDev
-          ? "You are a Dev, so you can use everything below."
-          : "You are a Mod. Items marked Dev only are restricted to devs.",
+        text:
+          mine >= 3
+            ? "You are a developer, so everything below is available to you."
+            : mine === 2
+              ? "You are a full mod (L2). Items marked Dev only are restricted to developers."
+              : "You are a junior mod (L1). Items marked Full mod or Dev only are not available to you yet; they are listed so you can see what the next level adds.",
       }),
     );
     HELP.forEach((sec) => {
       const g = el("div", { class: "tk-group" });
       g.appendChild(el("div", { class: "tk-gtitle", text: sec.title }));
       sec.items.forEach(([name, who, desc]) => {
-        const row = el("div", { class: "tk-item", style: "cursor:default" });
+        const r = RANKS[who] || RANKS.jr;
+        const locked = r.n > mine;
+        const row = el("div", {
+          class: "tk-item",
+          style: "cursor:default" + (locked ? ";opacity:.5" : ""),
+        });
         row.appendChild(
           iconNode(
-            who === "dev"
-              ? '<i class="fas fa-crown"></i>'
-              : '<i class="fas fa-shield-halved"></i>',
-            "tk-iico " + (who === "dev" ? "t-dev" : "t-mod"),
+            '<i class="fas ' + r.icon + '"></i>',
+            "tk-iico t-" + r.chip,
           ),
         );
         const tx = el("div", { class: "tk-itxt" });
         const labelRow = el("div", { class: "tk-ilabel" });
         labelRow.appendChild(document.createTextNode(name + "  "));
         labelRow.appendChild(
-          el("span", {
-            class: "tk-chip " + (who === "dev" ? "dev" : "mod"),
-            text: who === "dev" ? "Dev only" : "Mod + Dev",
-          }),
+          el("span", { class: "tk-chip " + r.chip, text: r.label }),
         );
         tx.appendChild(labelRow);
         tx.appendChild(el("div", { class: "tk-idesc", text: desc }));

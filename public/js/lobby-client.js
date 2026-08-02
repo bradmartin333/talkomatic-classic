@@ -2544,7 +2544,7 @@ async function openModApply() {
     icon: '<i class="fas fa-user-pen"></i>',
     subtitle: "Junior moderators help keep rooms friendly",
     message:
-      "If approved you'll get a junior moderator role - you can kick and warn, but not ban or IP-block. Misuse loses it; trusted juniors may be promoted later by a dev.",
+      "If approved you get the junior moderator role: you can warn and kick, clear what someone has typed, reset a bad name, location or profile picture, and rename, lock or slow a room. Bans and IP blocks stay with full mods. Misuse loses the role; trusted juniors may be promoted later by a dev.\n\nLink your Discord picture and join the Talkomatic Discord before applying. We can only reach you there, applicants we can reach are much likelier to be accepted, and once approved you get the site mod role in the server so you can talk to the other moderators and the devs.",
     fields: [
       {
         name: "why",

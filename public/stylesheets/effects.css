@@ -15,8 +15,7 @@
 .sb-title,
 .stats-modal-title,
 .room-name,
-.brand,
-.pong-title {
+.brand {
   font-family: var(--tk-font-heading, inherit);
 }
 
@@ -63,8 +62,6 @@ html.tk-shaped .go-chat-button,
 html.tk-shaped .enter-button,
 html.tk-shaped .app-directory-dropdown,
 html.tk-shaped .app-item,
-html.tk-shaped .pong-card,
-html.tk-shaped .pong-chip,
 html.tk-shaped .chat-row,
 html.tk-shaped .chat-input {
   border-radius: var(--tk-radius) !important;
@@ -102,7 +99,6 @@ html.tk-fx-glass .sb-chip,
 html.tk-fx-glass .pfp-card,
 html.tk-fx-glass .app-directory-dropdown,
 html.tk-fx-glass .app-item,
-html.tk-fx-glass .pong-card,
 html.tk-fx-glass .chat-row {
   background: color-mix(in srgb, var(--tk-tile) 42%, transparent) !important;
   backdrop-filter: blur(var(--tk-blur, 14px)) saturate(1.2);
@@ -129,7 +125,6 @@ html.tk-fx-brutal .go-chat-button,
 html.tk-fx-brutal .enter-button,
 html.tk-fx-brutal .app-directory-dropdown,
 html.tk-fx-brutal .app-item,
-html.tk-fx-brutal .pong-card,
 html.tk-fx-brutal .chat-row {
   border: 3px solid var(--tk-text) !important;
   border-radius: 0 !important;
@@ -155,7 +150,6 @@ html.tk-fx-soft .sb-chip,
 html.tk-fx-soft .pfp-card,
 html.tk-fx-soft .app-directory-dropdown,
 html.tk-fx-soft .app-item,
-html.tk-fx-soft .pong-card,
 html.tk-fx-soft .chat-row {
   border: none !important;
   border-radius: 16px !important;

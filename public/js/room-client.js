@@ -44,7 +44,6 @@ const CLIENT_PROTOCOL = 1;
 let pendingRestoreText = null;
 let talkoboardInstance = null;
 let pianoInstance = null;
-let pongInstance = null;
 
 // Dev mode state
 let currentUserIsDev = false;
@@ -1515,16 +1514,6 @@ const APPS_DATA = {
     openInNewTab: false,
     action: "piano",
   },
-  pong: {
-    name: "Multiplayer Pong",
-    description: "Play Pong together in real-time",
-    icon: "🏓",
-    iconClass: "placeholder",
-    status: "available",
-    url: null,
-    openInNewTab: false,
-    action: "pong",
-  },
   puzzle: {
     name: "Puzzle",
     description: "Solve a jigsaw together from any picture",
@@ -1618,8 +1607,6 @@ function createAppDirectoryDropdown() {
           openTalkoboard();
         } else if (app.action === "piano") {
           openPiano();
-        } else if (app.action === "pong") {
-          openPong();
         } else if (app.action === "puzzle") {
           if (window.TalkomaticPuzzle) window.TalkomaticPuzzle.open();
         } else if (app.action === "themeEditor") {
@@ -1727,30 +1714,6 @@ function openPiano() {
     console.error("Piano failed to open:", err);
     showErrorModal(
       "Sorry, the Piano failed to open. Please refresh the page and try again.",
-    );
-  }
-}
-
-function openPong() {
-  if (!currentRoomId || !currentUserId) {
-    showErrorModal("You must be in a room to play Pong.");
-    return;
-  }
-  if (typeof Pong === "undefined") {
-    showErrorModal(
-      "Pong is still loading. Please refresh the page and try again.",
-    );
-    return;
-  }
-  try {
-    if (!pongInstance) {
-      pongInstance = new Pong(socket, currentUserId, currentUsername);
-    }
-    pongInstance.open();
-  } catch (err) {
-    console.error("Pong failed to open:", err);
-    showErrorModal(
-      "Pong failed to open. Please refresh the page and try again.",
     );
   }
 }
@@ -2325,6 +2288,24 @@ function applyDevAppearanceToRow(row, user) {
   const loudDev = !!user.isDev && !user.isHidden;
   const showCrown = !!user.isDev && (!user.isHidden || devSeesConcealed);
 
+  // Loud mod flair follows the same hide rule as the dev flair, keyed to rank.
+  const loudMod = !!user.isMod && !user.isDev && !user.isHidden;
+  const modRowClass =
+    loudMod && (user.modLevel || 2) >= 2
+      ? "mod-user"
+      : loudMod
+        ? "jrmod-user"
+        : null;
+  const modTextClass =
+    loudMod && (user.modLevel || 2) >= 2
+      ? "mod-glow-text"
+      : loudMod
+        ? "jrmod-glow-text"
+        : null;
+
+  row.classList.remove("mod-user", "jrmod-user");
+  ci.classList.remove("mod-glow-text", "jrmod-glow-text");
+
   if (loudDev) {
     row.classList.add("dev-user");
     ci.classList.add("dev-fire-text");
@@ -2336,6 +2317,8 @@ function applyDevAppearanceToRow(row, user) {
     row.classList.remove("dev-user");
     ci.classList.remove("dev-fire-text");
     ci.style.removeProperty("color");
+    if (modRowClass) row.classList.add(modRowClass);
+    if (modTextClass) ci.classList.add(modTextClass);
   }
 
   if (showCrown) {
@@ -2387,6 +2370,8 @@ function refreshCurrentUserAppearance() {
   const user = {
     id: currentUserId,
     isDev: currentUserIsDev,
+    isMod: currentUserIsMod,
+    modLevel: currentUserModLevel,
     isHidden: currentUserIsHidden,
     devColor:
       currentUserIsDev && !currentUserIsHidden
@@ -2620,8 +2605,14 @@ function createUserRow(user, container) {
   // loud row styling stays off for concealed staff - just the badge + a marker.
   const devSeesConcealed = currentUserIsDev && user.id !== currentUserId;
 
+  // Rank flair on the row itself: dev red, full mod (L2) blue, junior mod (L1)
+  // purple. Hidden staff get no loud styling, same rule as the dev crown.
   if (user.isDev && !user.isHidden) {
     row.classList.add("dev-user");
+  } else if (user.isMod && !user.isDev && !user.isHidden) {
+    row.classList.add(
+      (user.modLevel || 2) >= 2 ? "mod-user" : "jrmod-user",
+    );
   }
 
   syncUserRowNote(row, user);
@@ -2769,6 +2760,10 @@ function createUserRow(user, container) {
 
   if (user.isDev && !user.isHidden) {
     div.classList.add("dev-fire-text");
+  } else if (user.isMod && !user.isDev && !user.isHidden) {
+    div.classList.add(
+      (user.modLevel || 2) >= 2 ? "mod-glow-text" : "jrmod-glow-text",
+    );
   }
 
   if (user.devColor && user.isDev && !user.isHidden) {
@@ -3869,7 +3864,8 @@ function notify(message, type, opts) {
 }
 
 function staffRole() {
-  return currentUserIsDev ? "dev" : "mod";
+  if (currentUserIsDev) return "dev";
+  return currentUserModLevel >= 2 ? "mod" : "jr";
 }
 
 function createModBadge(level) {
@@ -3992,12 +3988,80 @@ async function openUserNoteDialog(user, { viewOnly = true } = {}) {
 function openUserStaffMenu(user) {
   if (!window.StaffUI) return;
   const name = user.username || "user";
-  // Full (level 2) mods and devs get the heavy actions; junior (level 1) mods
-  // are limited to kick (no ban), wipe, warn, and rename. The server enforces
+  // Junior (level 1) mods handle what is on screen: wipe text, reset a name or
+  // location, turn a picture off, warn, and kick. Full (level 2) mods add the
+  // things that outlast the room - room bans and IP blocks. The server enforces
   // this on every action regardless of what this menu shows.
   const isFullMod =
     currentUserIsDev || (currentUserIsMod && currentUserModLevel >= 2);
+  // Grouped so the menu reads as "tidy this up" then "remove them" then "roles"
+  const cleanup = [];
   const items = [];
+
+  cleanup.push({
+    icon: '<i class="fas fa-broom"></i>',
+    label: "Wipe typed text",
+    desc: "Clear what they have typed, for everyone",
+    onClick: () => socket.emit("staff wipe buffer", { targetUserId: user.id }),
+  });
+  cleanup.push({
+    icon: '<i class="fas fa-user-secret"></i>',
+    label: "Reset name to Anonymous",
+    desc: "Clear an offensive username",
+    onClick: async () => {
+      if (
+        await StaffUI.confirm({
+          title: "Reset name",
+          message: `Reset ${name}'s username to Anonymous?`,
+          confirmText: "Reset name",
+        })
+      )
+        socket.emit("staff rename", { targetUserId: user.id });
+    },
+  });
+  cleanup.push({
+    icon: '<i class="fas fa-location-dot"></i>',
+    label: "Reset location",
+    desc: "Set their location back to On The Web",
+    onClick: async () => {
+      if (
+        await StaffUI.confirm({
+          title: "Reset location",
+          message: `Reset ${name}'s location to "On The Web"?`,
+          confirmText: "Reset location",
+        })
+      )
+        socket.emit("staff reset location", { targetUserId: user.id });
+    },
+  });
+  cleanup.push({
+    icon: '<i class="fas fa-image-portrait"></i>',
+    label: "Turn profile picture off",
+    desc: "Remove it and stop them re-adding it",
+    onClick: async () => {
+      if (
+        await StaffUI.confirm({
+          title: "Turn profile picture off",
+          message: `Remove ${name}'s profile picture? They cannot put it back until staff allow it again.`,
+          confirmText: "Turn it off",
+        })
+      )
+        socket.emit("staff set pfp blocked", {
+          targetUserId: user.id,
+          blocked: true,
+        });
+    },
+  });
+  cleanup.push({
+    icon: '<i class="fas fa-rotate-left"></i>',
+    label: "Allow profile picture again",
+    desc: "Undo a picture block",
+    onClick: () =>
+      socket.emit("staff set pfp blocked", {
+        targetUserId: user.id,
+        blocked: false,
+      }),
+  });
 
   // Kick. Full mods/devs also place a room ban; junior mods can only remove.
   items.push({
@@ -4049,16 +4113,9 @@ function openUserStaffMenu(user) {
       desc: "Block this user's IP for a set time",
       onClick: () => openIpBlockPicker(user),
     });
-    items.push({
-      icon: '<i class="fas fa-broom"></i>',
-      label: "Wipe typed text",
-      desc: "Clear what they've typed for everyone",
-      onClick: () =>
-        socket.emit("staff wipe buffer", { targetUserId: user.id }),
-    });
   }
 
-  // Warn and force rename: available to every mod level.
+  // Warn: available to every mod level.
   items.push({
     icon: '<i class="fas fa-bullhorn"></i>',
     label: "Warn...",
@@ -4081,20 +4138,6 @@ function openUserStaffMenu(user) {
       });
       if (r != null)
         socket.emit("staff warn", { targetUserId: user.id, message: r });
-    },
-  });
-  items.push({
-    icon: '<i class="fas fa-user-secret"></i>',
-    label: "Force rename to Anonymous",
-    desc: "Reset an offensive name",
-    onClick: async () => {
-      if (
-        await StaffUI.confirm({
-          title: "Force rename",
-          message: `Reset ${name}'s username to Anonymous?`,
-        })
-      )
-        socket.emit("staff rename", { targetUserId: user.id });
     },
   });
 
@@ -4153,17 +4196,18 @@ function openUserStaffMenu(user) {
     },
   };
 
+  const roles = [];
   if (currentUserIsDev) {
-    items.push({
+    roles.push({
       icon: '<i class="fas fa-snowflake"></i>',
       label: "Freeze / unfreeze input",
       desc: "Lock their typing without kicking",
       onClick: () => socket.emit("staff freeze", { targetUserId: user.id }),
     });
-    if (!user.isDev && !user.isMod) items.push(makeModItem);
+    if (!user.isDev && !user.isMod) roles.push(makeModItem);
     if (user.isMod && !user.isDev) {
       const lvl = user.modLevel || 2;
-      items.push(
+      roles.push(
         lvl < 2
           ? {
             icon: '<i class="fas fa-arrow-up"></i>',
@@ -4202,7 +4246,7 @@ function openUserStaffMenu(user) {
             },
           },
       );
-      items.push({
+      roles.push({
         icon: '<i class="fas fa-user-xmark"></i>',
         label: "Remove mod (revoke key)",
         desc: "Revoke this user's mod key now",
@@ -4221,14 +4265,20 @@ function openUserStaffMenu(user) {
       });
     }
   } else if (currentUserIsMod && currentUserModLevel >= 2) {
-    if (!user.isDev && !user.isMod) items.push(makeModItem);
+    if (!user.isDev && !user.isMod) roles.push(makeModItem);
   }
+
+  const groups = [
+    { title: "Clean up what they show", items: cleanup },
+    { title: "Warn and remove", items },
+  ];
+  if (roles.length) groups.push({ title: "Role", items: roles });
 
   StaffUI.menu({
     title: `Actions: ${name}`,
     icon: '<i class="fas fa-shield-halved"></i>',
     subtitle: "Per-user moderation",
-    groups: [{ items }],
+    groups,
     onHelp: () => StaffUI.help(staffRole()),
   });
 }
@@ -4275,9 +4325,9 @@ function openIpBlockPicker(user) {
                 {
                   name: "banRange",
                   type: "checkbox",
-                  label: "Also block their IPv6 range (/64)",
+                  label: "Also block their surrounding range",
                   value: true,
-                  help: "Stops evasion when someone rotates their IPv6 address. Has no effect on IPv4 users (they stay a single-IP block).",
+                  help: "Blocks the whole network they sit on (IPv6 /64, IPv4 /24) instead of the one address, so they cannot come back on a neighbouring address. Turn this off if you only want the single address.",
                 },
               ],
               danger: true,
@@ -4318,60 +4368,86 @@ function createStaffPanelButton() {
 function openStaffPanel() {
   if (!window.StaffUI) return;
   const rid = currentRoomId;
-  // Full (level 2) mods and devs get the room-disruptive actions (lock, slow,
-  // close); junior (level 1) mods only get the Talkoboard clear. The server
-  // enforces this on every action regardless of what the panel shows.
+  // Every staff level can tidy a room: clear the board, rename it, lock it, or
+  // slow it down, all reversible. Closing a room deletes it, so that stays with
+  // full (level 2) mods. The server enforces this regardless of what shows here.
   const isFullMod =
     currentUserIsDev || (currentUserIsMod && currentUserModLevel >= 2);
-  const roomItems = [];
+  const roomItems = [
+    {
+      icon: '<i class="fas fa-eraser"></i>',
+      label: "Clear Talkoboard",
+      desc: "Wipe the shared drawing board",
+      onClick: () => socket.emit("board clear"),
+    },
+    {
+      icon: '<i class="fas fa-pen"></i>',
+      label: "Rename room...",
+      desc: "Fix a bad or misleading room name",
+      onClick: async () => {
+        const name = await StaffUI.prompt({
+          title: "Rename room",
+          icon: '<i class="fas fa-pen"></i>',
+          subtitle: currentRoomName || "this room",
+          message:
+            "Everyone in the room is told about the change, and it is written to the audit log.",
+          fields: [
+            {
+              name: "value",
+              label: "New room name",
+              type: "text",
+              value: currentRoomName || "",
+              maxLength: 30,
+              required: true,
+            },
+          ],
+          confirmText: "Rename",
+        });
+        if (name != null)
+          socket.emit("staff rename room", { roomId: rid, name });
+      },
+    },
+    {
+      icon: currentRoomLocked
+        ? '<i class="fas fa-lock-open"></i>'
+        : '<i class="fas fa-lock"></i>',
+      label: currentRoomLocked ? "Unlock room" : "Lock room",
+      desc: "Block new joins; current users stay",
+      onClick: () =>
+        socket.emit("staff lock room", {
+          roomId: rid,
+          locked: !currentRoomLocked,
+        }),
+    },
+    {
+      icon: '<i class="fas fa-gauge"></i>',
+      label: currentRoomSlow ? "Slow mode: turn OFF" : "Slow mode: turn ON",
+      desc: "Throttle the room's update speed",
+      onClick: () =>
+        socket.emit("staff slow mode", {
+          roomId: rid,
+          enabled: !currentRoomSlow,
+        }),
+    },
+  ];
   if (isFullMod) {
-    roomItems.push(
-      {
-        icon: '<i class="fas fa-eraser"></i>',
-        label: "Clear Talkoboard",
-        desc: "Wipe the shared drawing board",
-        onClick: () => socket.emit("board clear"),
+    roomItems.push({
+      icon: '<i class="fas fa-trash"></i>',
+      label: "Close room",
+      danger: true,
+      desc: "Kick everyone and delete the room",
+      onClick: async () => {
+        if (
+          await StaffUI.confirm({
+            title: "Close room",
+            message: "Kick everyone and delete this room?",
+            danger: true,
+            confirmText: "Close room",
+          })
+        )
+          socket.emit("staff close room", { roomId: rid });
       },
-      {
-        icon: currentRoomLocked
-          ? '<i class="fas fa-lock-open"></i>'
-          : '<i class="fas fa-lock"></i>',
-        label: currentRoomLocked ? "Unlock room" : "Lock room",
-        desc: "Block new joins; current users stay",
-        onClick: () =>
-          socket.emit("staff lock room", {
-            roomId: rid,
-            locked: !currentRoomLocked,
-          }),
-      },
-      {
-        icon: '<i class="fas fa-gauge"></i>',
-        label: currentRoomSlow ? "Slow mode: turn OFF" : "Slow mode: turn ON",
-        desc: "Throttle the room's update speed",
-        onClick: () =>
-          socket.emit("staff slow mode", {
-            roomId: rid,
-            enabled: !currentRoomSlow,
-          }),
-      },
-      {
-        icon: '<i class="fas fa-trash"></i>',
-        label: "Close room",
-        danger: true,
-        desc: "Kick everyone and delete the room",
-        onClick: async () => {
-          if (
-            await StaffUI.confirm({
-              title: "Close room",
-              message: "Kick everyone and delete this room?",
-              danger: true,
-              confirmText: "Close room",
-            })
-          )
-            socket.emit("staff close room", { roomId: rid });
-        },
-      },
-    );
+    });
   }
   const groups = [];
   if (roomItems.length) groups.push({ title: "This room", items: roomItems });
@@ -4446,11 +4522,11 @@ function openStaffPanel() {
       },
     });
   }
-  groups.push({ title: "Appearance", items: appearanceItems });
+  groups.push({ title: "How you appear", items: appearanceItems });
 
   if (currentUserIsDev) {
     groups.push({
-      title: "Dev tools (this room)",
+      title: "Announce to this room",
       items: [
         {
           icon: '<i class="fas fa-tower-broadcast"></i>',
@@ -4504,7 +4580,7 @@ function openStaffPanel() {
       ],
     });
     groups.push({
-      title: "Dev tools (global)",
+      title: "Whole server",
       items: [
         {
           icon: '<i class="fas fa-flag"></i>',
@@ -4554,7 +4630,7 @@ function openStaffPanel() {
   }
 
   groups.push({
-    title: "Accountability",
+    title: "Records",
     items: [
       {
         icon: '<i class="fas fa-clipboard"></i>',
@@ -4565,12 +4641,20 @@ function openStaffPanel() {
     ],
   });
 
+  // Name the rank in the subtitle so a junior can see at a glance why some
+  // actions are not offered to them.
+  const rankLabel = currentUserIsDev
+    ? "Developer"
+    : currentUserModLevel >= 2
+      ? "Full mod (L2)"
+      : "Junior mod (L1)";
+
   StaffUI.panel({
     title: "Staff panel",
     icon: currentUserIsDev
       ? '<i class="fas fa-screwdriver-wrench"></i>'
       : '<i class="fas fa-shield-halved"></i>',
-    subtitle: currentUserIsDev ? "Dev tools" : "Mod tools",
+    subtitle: rankLabel,
     groups,
     onHelp: () => StaffUI.help(staffRole()),
     // Reflow the user-box grid when the drawer pushes the room aside, so a busy
@@ -4859,6 +4943,15 @@ socket.on("room lock status", (data) => {
     "info",
   );
 });
+socket.on("room renamed", (data) => {
+  if (!data || !data.name) return;
+  currentRoomName = data.name;
+  const rn = document.querySelector(".second-navbar .room-name");
+  if (rn) rn.textContent = data.name;
+  const nameEl = document.querySelector(".room-name");
+  if (nameEl && nameEl !== rn) nameEl.textContent = `Room: ${data.name}`;
+  notify(`This room was renamed to "${data.name}" by staff.`, "info");
+});
 socket.on("room slow mode", (data) => {
   currentRoomSlow = !!(data && data.enabled);
   applyRoomFlags({ slowMode: currentRoomSlow });
@@ -5030,8 +5123,8 @@ window.addEventListener("hashchange", () => {
     .user-info{flex-wrap:nowrap;overflow:hidden;}
     .ui-name{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
     .dev-meta{flex:0 0 auto;max-width:42%;overflow:hidden;text-overflow:ellipsis;}
-    .mod-badge{display:inline-block;background:#00bcd4;color:#003;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:8px;margin:0 5px 0 0;letter-spacing:.5px;vertical-align:middle;flex:0 0 auto;}
-    .mod-badge.mod-badge-jr{background:#ab47bc;color:#fff;}
+    .mod-badge{display:inline-block;background:#5aa9ff;color:#001229;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:8px;margin:0 5px 0 0;letter-spacing:.5px;vertical-align:middle;flex:0 0 auto;}
+    .mod-badge.mod-badge-jr{background:#c08bff;color:#16002b;}
     .device-icon{color:#7f8794;font-size:11px;margin-right:6px;flex:0 0 auto;}
     .invite-trophy{height:15px;width:auto;margin-right:5px;flex:0 0 auto;vertical-align:middle;}
     .staff-action-button{background:none;border:none;cursor:pointer;font-size:13px;margin-left:4px;opacity:.75;}
