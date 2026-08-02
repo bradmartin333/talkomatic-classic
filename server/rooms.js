@@ -7172,6 +7172,49 @@ function startCleanupIntervals() {
     }
   }, 600000);
 
+  // Per-IP connection count reconcile (30s).
+  //
+  // The count is taken in the connect middleware and given back on disconnect.
+  // That pairing can still be broken by a client that vanishes in between: a
+  // websocket upgrade that fails after the handshake, a request killed by an
+  // extension or a proxy, a tab closed mid-connect. In those cases the socket
+  // never reaches the connection handler, so nothing ever releases its count.
+  // One stale count is invisible; MAX_CONNECTIONS_PER_IP of them lock that
+  // address out of the site completely with "Too many connections", and only a
+  // restart clears it.
+  //
+  // Rather than trying to enumerate every way that pairing can break, recount
+  // from the sockets that actually exist. Any leak, from any cause, heals
+  // within half a minute.
+  setInterval(() => {
+    if (!io()) return;
+    const live = new Map();
+    for (const [, s] of io().sockets.sockets) {
+      const ip = s.clientIp;
+      if (!ip) continue;
+      live.set(ip, (live.get(ip) || 0) + 1);
+    }
+    // Report what was corrected. If the logs stay quiet the pairing is sound;
+    // if they show counts drifting above the live socket count, that names the
+    // leak and how fast it grows.
+    let leaked = 0;
+    let worst = null;
+    for (const ip of [...state.ipConnections.keys()]) {
+      const had = state.ipConnections.get(ip) || 0;
+      const now = live.get(ip) || 0;
+      if (had > now) {
+        leaked += had - now;
+        if (!worst || had - now > worst.by) worst = { ip, had, now, by: had - now };
+      }
+      if (!live.has(ip)) state.ipConnections.delete(ip);
+    }
+    for (const [ip, n] of live) state.ipConnections.set(ip, n);
+    if (leaked)
+      console.warn(
+        `[conn] reclaimed ${leaked} stale connection slot(s); worst: ${worst.ip} counted ${worst.had} with ${worst.now} live`,
+      );
+  }, 30000);
+
   // Ghost user cleanup (1 min): removes room users with no live socket
   setInterval(() => {
     const activeIds = new Set();
