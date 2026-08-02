@@ -20,6 +20,7 @@
     box-shadow:0 18px 55px rgba(0,0,0,.6);animation:tkRise .18s ease-out;overflow:hidden;
     box-sizing:border-box;font-family:inherit;color:#fff;}
   .tk-card.tk-wide{max-width:560px;}
+  .tk-card.tk-xwide{max-width:960px;max-height:92vh;}
   .tk-head{display:flex;align-items:center;gap:13px;padding:15px 18px;border-bottom:1px solid #616161;
     background:linear-gradient(to bottom,#616161,#303030);}
   .tk-head .tk-ico{font-size:18px;line-height:1;flex:none;width:42px;height:42px;display:flex;
@@ -313,7 +314,10 @@
   function modal(opts) {
     const o = opts || {};
     const backdrop = el("div", { class: "tk-backdrop" });
-    const card = el("div", { class: "tk-card" + (o.wide ? " tk-wide" : "") });
+    const card = el("div", {
+      class:
+        "tk-card" + (o.xwide ? " tk-xwide" : o.wide ? " tk-wide" : ""),
+    });
 
     const head = el("div", { class: "tk-head" });
     if (o.icon) head.appendChild(iconNode(o.icon, "tk-ico"));

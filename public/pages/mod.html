@@ -488,16 +488,101 @@
       .grid2 > * {
         min-width: 0;
       }
-      /* Nothing inside a card may grow without bound: long free text scrolls
-         inside its own box, and a long list collapses behind a Show all. */
+      /* Every card in a grid is the SAME height, whatever it holds, so rows
+         line up instead of ending raggedly. The card is a flex column: header
+         and footer keep their size, the middle scrolls when the content does
+         not fit. Matching the tallest card in each row was tried first and was
+         worse, because one big card inflated everything beside it. */
+      .grid3 > .entry,
+      .grid2 > .appcard,
+      .grid2 > .appealcard,
+      .grid2 > .report-card,
+      .grid3 > .modcard,
+      .grid3 > .sesscard {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .grid3 > .entry {
+        height: 236px;
+      }
+      .grid2 > .appcard,
+      .grid2 > .appealcard {
+        height: 320px;
+      }
+      .grid2 > .report-card {
+        height: 420px;
+      }
+      .grid3 > .modcard {
+        height: 232px;
+      }
+      .grid3 > .sesscard {
+        height: 210px;
+      }
+      /* The scrolling middle of each card type */
+      .entry .e-body,
+      .appcard .ac-qa,
+      .appealcard .ap-grid,
+      .modcard .mc-grid,
+      .sesscard .sess-nets {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      .report-card .report-log {
+        flex: 1;
+        min-height: 0;
+        max-height: none;
+      }
+      /* Footers stay put at the bottom of the card */
+      .entry .cmtbox,
+      .appcard .ac-foot,
+      .appealcard .ap-foot,
+      .report-card .rc-foot,
+      .modcard .mc-actions {
+        flex: none;
+        margin-top: auto;
+      }
+      .entry .e-top,
+      .entry .detail,
+      .appcard .ac-head,
+      .appealcard .ap-head,
+      .report-card .rc-head,
+      .report-card .rc-cats,
+      .report-card .rc-typed,
+      .report-card .report-log-head,
+      .modcard .mc-top,
+      .sesscard .sess-top {
+        flex: none;
+      }
+      /* A long free-text block scrolls inside itself rather than pushing the
+         rest of the card out of view. */
       .entry .detail {
-        max-height: 200px;
+        max-height: 96px;
         overflow-y: auto;
       }
       .qa-a,
       .ap-box .val {
-        max-height: 220px;
+        max-height: 140px;
         overflow-y: auto;
+      }
+      .rc-typed .txt {
+        max-height: 72px;
+        overflow-y: auto;
+      }
+      /* Thin scrollbars so the inner scroll areas stay unobtrusive */
+      .grid3 ::-webkit-scrollbar,
+      .grid2 ::-webkit-scrollbar {
+        width: 8px;
+      }
+      .grid3 ::-webkit-scrollbar-thumb,
+      .grid2 ::-webkit-scrollbar-thumb {
+        background: var(--line-soft);
+        border-radius: 4px;
+      }
+      .grid3 ::-webkit-scrollbar-thumb:hover,
+      .grid2 ::-webkit-scrollbar-thumb:hover {
+        background: var(--line);
       }
       .grid3 {
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2957,6 +3042,6 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="js/staff-ui.js?v=1.7.1"></script>
-    <script src="js/mod.js?v=4.3.0"></script>
+    <script src="js/mod.js?v=4.4.0"></script>
   </body>
 </html>

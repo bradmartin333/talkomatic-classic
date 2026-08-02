@@ -298,34 +298,152 @@ function baseAction(action) {
     .toLowerCase();
 }
 
-// Everything one staff member has ever done, newest first, with a tally per
-// kind of action. Visible to all staff: the point is that moderators can be
-// held to account by their peers, not just by devs.
-function historyFor(label, role, limit = 500) {
+// Which bucket an action belongs to. "passive" is deliberately separate: it is
+// things a staff member did that are not moderation work (watching a room,
+// unlocking the panel), so counting them towards someone's workload would make
+// a lurker look busier than a moderator who actually clears queues.
+const ACTION_GROUPS = [
+  {
+    key: "enforcement",
+    label: "Acting on users",
+    match: /^(kick|kick\+ban|ban|ip block|ban ip|unblock ip|warn|wipe buffer|rename|reset location|turn pfp off|allow pfp|freeze|force kick)/,
+  },
+  {
+    key: "reviews",
+    label: "Clearing queues",
+    match: /^(dismiss report|approve mod application|reject mod application|review application|dismiss appeal|lift ban|approve suggestion|decline suggestion|purge invites|undo invite purge)/,
+  },
+  {
+    key: "rooms",
+    label: "Looking after rooms",
+    match: /^(lock room|unlock room|slow mode|close room|rename room|clear board|spotlight|set room size|wipe)/,
+  },
+  {
+    key: "records",
+    label: "Record keeping",
+    match: /^(set note|clear note|set block message|set block duration)/,
+  },
+  {
+    key: "admin",
+    label: "Server and roles",
+    match: /^(grant mod|revoke mod|set mod level|megaphone|party|ticker|maintenance|flag|nuke|clear blacklist)/,
+  },
+  {
+    key: "passive",
+    label: "Not counted as work",
+    match: /^(spectate|unspectate|staff key entered|staff login|staff logout)/,
+  },
+];
+
+function groupOf(action) {
+  const a = baseAction(action);
+  for (const g of ACTION_GROUPS) if (g.match.test(a)) return g.key;
+  return "enforcement"; // an unrecognised staff action is still real work
+}
+
+// Anything that is not passive counts towards a moderator's workload.
+function isUsefulAction(action) {
+  return groupOf(action) !== "passive";
+}
+
+const HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+// One staff member's record. The tallies are lifetime and never move; the
+// listed entries cover the last 30 days only and are paged, so a moderator
+// with tens of thousands of actions cannot hang the page.
+function historyFor(label, role, opts = {}) {
   const want = String(label || "");
-  if (!want) return { label: want, total: 0, counts: [], entries: [] };
-  const mine = [];
+  const offset = Math.max(0, Number(opts.offset) || 0);
+  const limit = Math.max(1, Math.min(Number(opts.limit) || 50, 200));
+  if (!want)
+    return {
+      label: want, total: 0, useful: 0, counts: [], groups: [],
+      entries: [], offset, limit, windowTotal: 0, windowDays: 30,
+    };
+
   const counts = new Map();
+  const groupTotals = new Map();
+  const recent = [];
+  const cutoff = Date.now() - HISTORY_WINDOW_MS;
+  let total = 0;
+  let useful = 0;
+  let first = null;
+  let last = null;
+
   for (const e of entries) {
     if (e.type !== "action") continue;
     if (e.label !== want) continue;
     if (role && e.role && e.role !== role) continue;
-    mine.push(e);
-    const k = baseAction(e.action);
-    counts.set(k, (counts.get(k) || 0) + 1);
+    total++;
+    if (first == null) first = e.ts;
+    last = e.ts;
+    const a = baseAction(e.action);
+    counts.set(a, (counts.get(a) || 0) + 1);
+    const g = groupOf(e.action);
+    groupTotals.set(g, (groupTotals.get(g) || 0) + 1);
+    if (g !== "passive") useful++;
+    if ((e.ts || 0) >= cutoff) recent.push(e);
   }
-  const n = Math.max(1, Math.min(Number(limit) || 500, 2000));
+
+  recent.reverse(); // newest first
+  const groups = ACTION_GROUPS.map((g) => ({
+    key: g.key,
+    label: g.label,
+    n: groupTotals.get(g.key) || 0,
+    actions: [...counts.entries()]
+      .filter(([a]) => groupOf(a) === g.key)
+      .map(([action, n]) => ({ action, n }))
+      .sort((a, b) => b.n - a.n),
+  })).filter((g) => g.n > 0);
+
   return {
     label: want,
     role: role || null,
-    total: mine.length,
-    first: mine.length ? mine[0].ts : null,
-    last: mine.length ? mine[mine.length - 1].ts : null,
+    total,
+    useful,
+    first,
+    last,
+    groups,
     counts: [...counts.entries()]
-      .map(([action, n2]) => ({ action, n: n2 }))
+      .map(([action, n]) => ({ action, n }))
       .sort((a, b) => b.n - a.n),
-    entries: mine.slice(-n).reverse(),
+    windowDays: 30,
+    windowTotal: recent.length,
+    offset,
+    limit,
+    entries: recent.slice(offset, offset + limit),
   };
+}
+
+// Every staff member's workload in one pass, for the leaderboard and for
+// spotting a junior who has earned a look at promotion.
+function leaderboard() {
+  const by = new Map(); // "role:label" -> stats
+  const cutoff = Date.now() - HISTORY_WINDOW_MS;
+  for (const e of entries) {
+    if (e.type !== "action" || !e.label) continue;
+    const key = (e.role || "mod") + ":" + e.label;
+    let s = by.get(key);
+    if (!s) {
+      s = {
+        label: e.label, role: e.role || "mod",
+        total: 0, useful: 0, recentUseful: 0,
+        enforcement: 0, reviews: 0, rooms: 0, last: null,
+      };
+      by.set(key, s);
+    }
+    s.total++;
+    s.last = e.ts;
+    const g = groupOf(e.action);
+    if (g !== "passive") {
+      s.useful++;
+      if ((e.ts || 0) >= cutoff) s.recentUseful++;
+    }
+    if (g === "enforcement") s.enforcement++;
+    else if (g === "reviews") s.reviews++;
+    else if (g === "rooms") s.rooms++;
+  }
+  return [...by.values()].sort((a, b) => b.useful - a.useful);
 }
 
 function setAuditSub(socket, on) {
@@ -371,6 +489,8 @@ module.exports = {
   recordComment,
   recent,
   historyFor,
+  leaderboard,
+  isUsefulAction,
   startOfPacificDay,
   setAuditSub,
   load,

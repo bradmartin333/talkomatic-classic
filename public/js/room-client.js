@@ -4326,8 +4326,12 @@ function openIpBlockPicker(user) {
                   name: "banRange",
                   type: "checkbox",
                   label: "Also block their surrounding range",
-                  value: true,
-                  help: "Blocks the whole network they sit on (IPv6 /64, IPv4 /24) instead of the one address, so they cannot come back on a neighbouring address. Turn this off if you only want the single address.",
+                  // Off by default. This used to be on, which was harmless
+                  // because a range only ever applied to IPv6. Now that IPv4
+                  // resolves to a /24 it can cover 256 addresses, so it has to
+                  // be a deliberate choice rather than a default.
+                  value: false,
+                  help: "Covers the whole network they sit on (IPv6 /64, or IPv4 /24, which is up to 256 addresses) instead of the single address. Use it for someone who keeps returning on a neighbouring address, not as a matter of course.",
                 },
               ],
               danger: true,

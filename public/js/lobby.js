@@ -152,11 +152,16 @@ let dbPromise;
 async function initDB() {
   dbPromise = idb.openDB("talkomatic-themes", 2, {
     upgrade(db, oldVersion, newVersion, transaction) {
-      if (oldVersion < 1) {
+      // Check before creating rather than trusting oldVersion. A browser whose
+      // database was left half-upgraded reports an old version while already
+      // holding the store, and createObjectStore then throws ConstraintError,
+      // which aborts the whole upgrade transaction and leaves themes broken
+      // with an AbortError in the console on every load.
+      if (!db.objectStoreNames.contains("themes")) {
         const store = db.createObjectStore("themes", { keyPath: "id" });
         store.createIndex("by-date", "dateAdded");
       }
-      if (oldVersion < 2) {
+      if (!db.objectStoreNames.contains("settings")) {
         db.createObjectStore("settings", { keyPath: "key" });
       }
     },

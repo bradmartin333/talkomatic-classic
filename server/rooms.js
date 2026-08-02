@@ -2289,12 +2289,34 @@ function handleTyping(socket, userId, username, isTyping) {
 function registerSocketHandlers() {
   io().on("connection", (socket) => {
     const clientIp = socket.clientIp || socket.handshake.address;
+
+    // Give the per-IP connection slot back, registered before anything else and
+    // kept separate from the main disconnect handler further down. The slot is
+    // taken in the connect middleware, so if any setup below threw before the
+    // handlers were attached, that slot would never come back and the IP would
+    // creep up to the cap until it could not connect at all ("Too many
+    // connections"). The process survives thrown errors, so this must not
+    // depend on the rest of this function running.
+    let slotReleased = false;
+    const releaseSlot = () => {
+      if (slotReleased || !socket.clientIp) return;
+      slotReleased = true;
+      const c = state.ipConnections.get(socket.clientIp) || 0;
+      if (c > 1) state.ipConnections.set(socket.clientIp, c - 1);
+      else state.ipConnections.delete(socket.clientIp);
+    };
+    socket.on("disconnect", releaseSlot);
+
     socket.deviceType = deviceTypeFromUA(socket.handshake.headers["user-agent"]);
 
     // Tell this browser whether the puzzle app is on, so the room can hide the
     // tile when a dev has turned it off.
     socket.emit("puzzle state", { enabled: !!state.puzzleEnabled });
 
+    // Best-effort setup for a returning browser. Wrapped because it must never
+    // abort this function: the handlers below (chat, room, disconnect) would
+    // then never be attached and the socket would sit there half-alive.
+    try {
     // Durable per-browser device id: record presence for "active vs new" and
     // invite credit. Not a secret; never gates a privileged action. Bots and
     // the Mod Log board carry none, so this is a no-op for them.
@@ -2394,6 +2416,9 @@ function registerSocketHandlers() {
           detail: `The ${role} key "${label}" connected from an IP it has never been used from before`,
         });
       }
+    }
+    } catch (setupErr) {
+      console.error("Socket setup failed for", clientIp, setupErr);
     }
 
     // Wraps handlers so one error cannot crash the process; disconnects
@@ -5767,7 +5792,10 @@ function registerSocketHandlers() {
         if (!requireStaff(socket)) return;
         const label = typeof data?.label === "string" ? data.label : "";
         const role = data?.role === "dev" ? "dev" : "mod";
-        const h = audit.historyFor(label, role, 500);
+        const h = audit.historyFor(label, role, {
+          offset: data?.offset,
+          limit: data?.limit,
+        });
         socket.emit("staff mod history", {
           ...h,
           entries: socket.isDev
@@ -5778,6 +5806,29 @@ function registerSocketHandlers() {
               return c;
             }),
         });
+      }),
+    );
+
+    // Workload across the whole team. Any staff member can see it: it is meant
+    // to be visible, both so effort is recognised and so a quiet account is
+    // obvious. Junior mods past the threshold are flagged for a promotion look.
+    socket.on(
+      "staff get mod leaderboard",
+      safe(async () => {
+        if (!requireStaff(socket)) return;
+        const board = audit.leaderboard();
+        // Attach the live rank so the board can colour rows and tell juniors
+        // apart from full mods without a second lookup.
+        const levelByLabel = new Map(
+          roles.listModKeys().map((k) => [k.label, k.level]),
+        );
+        socket.emit(
+          "staff mod leaderboard",
+          board.map((s) => ({
+            ...s,
+            modLevel: s.role === "dev" ? 0 : levelByLabel.get(s.label) || 2,
+          })),
+        );
       }),
     );
 
@@ -6932,11 +6983,7 @@ function registerSocketHandlers() {
           }
           state.users.delete(userId);
         }
-        if (socket.clientIp) {
-          const c = state.ipConnections.get(socket.clientIp) || 0;
-          if (c > 1) state.ipConnections.set(socket.clientIp, c - 1);
-          else state.ipConnections.delete(socket.clientIp);
-        }
+        releaseSlot(); // no-op when the dedicated listener already ran
         console.log(
           `Disconnected: "${username}" from "${location}" (${reason}) IP:${socket.clientIp}${socket.isBot ? " [BOT]" : ""}${socket.isDev ? " [DEV]" : ""}`,
         );
