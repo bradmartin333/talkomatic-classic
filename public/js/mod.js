@@ -882,9 +882,13 @@
         ),
       );
     }
-    row.appendChild(
-      mkIcon("fa-unlock", "Unban this one", true, () => confirmUnban([b], isDev)),
-    );
+    // Lifting a block is a full-mod action; juniors read the list only.
+    if (viewerIsFullMod())
+      row.appendChild(
+        mkIcon("fa-unlock", "Unban this one", true, () =>
+          confirmUnban([b], isDev),
+        ),
+      );
     return row;
   }
 
@@ -1047,6 +1051,7 @@
         detail.appendChild(idLine);
       }
 
+      if (!viewerIsFullMod()) return;
       const foot = divc("bandetail-foot");
       const unbanAll = document.createElement("button");
       unbanAll.className = "btn sm danger";
@@ -1393,9 +1398,9 @@
     histBtn.addEventListener("click", () => openModHistory(m));
     actions.appendChild(histBtn);
 
-    // Promote / demote / revoke apply to mod keys only; dev keys live in the
-    // server config.
-    if (m.key) {
+    // Promote / demote / revoke apply to mod keys only, and only a dev may do
+    // them; dev keys themselves live in the server config.
+    if (m.key && viewerIsDev()) {
       const k = m.key;
       const toLevel = k.level === 1 ? 2 : 1;
       const levelBtn = document.createElement("button");
@@ -2354,6 +2359,8 @@
         b.addEventListener("click", fn);
         return b;
       };
+      // Warning and kicking are junior-mod powers, so every staff level gets
+      // them here. Blocking and discarding are full-mod work.
       foot.appendChild(
         mkBtn("Warn", "fa-triangle-exclamation", false, () => warnReported(r)),
       );
@@ -2363,21 +2370,25 @@
             socket.emit("staff kick", { targetUserId: r.targetUserId }),
           ),
         );
-      if (r.online || r.canBanOffline)
-        foot.appendChild(
-          mkBtn("IP block", "fa-ban", true, () => openReportBanMenu(r)),
-        );
-      else
-        foot.appendChild(
-          span("note", "Offline with no address on file, cannot block."),
-        );
+      if (viewerIsFullMod()) {
+        if (r.online || r.canBanOffline)
+          foot.appendChild(
+            mkBtn("IP block", "fa-ban", true, () => openReportBanMenu(r)),
+          );
+        else
+          foot.appendChild(
+            span("note", "Offline with no address on file, cannot block."),
+          );
+      }
       foot.appendChild(span("spacer"));
-      const discard = mkBtn("Discard", "fa-xmark", false, () =>
-        dismissReport(r),
-      );
-      discard.classList.add("rc-discard");
-      discard.title = "Clear this report as false or already handled";
-      foot.appendChild(discard);
+      if (viewerIsFullMod()) {
+        const discard = mkBtn("Discard", "fa-xmark", false, () =>
+          dismissReport(r),
+        );
+        discard.classList.add("rc-discard");
+        discard.title = "Clear this report as false or already handled";
+        foot.appendChild(discard);
+      }
       card.appendChild(foot);
 
       wrap.appendChild(card);
@@ -2548,7 +2559,7 @@
       }
       foot.appendChild(info);
 
-      if (a.status === "open") {
+      if (a.status === "open" && viewerIsFullMod()) {
         const actions = divc("ap-actions");
         if (isDev && a.stillBlocked) {
           const lift = document.createElement("button");
@@ -2677,7 +2688,7 @@
       }
       foot.appendChild(info);
 
-      if (s.status === "open") {
+      if (s.status === "open" && viewerIsFullMod()) {
         const actions = divc("ap-actions");
         const approve = document.createElement("button");
         approve.className = "btn sm primary";
@@ -2795,12 +2806,14 @@
           info.appendChild(span("ip", c.ip));
         }
         row.appendChild(info);
-        const rm = document.createElement("button");
-        rm.className = "btn sm danger";
-        rm.appendChild(icon("fa-trash"));
-        rm.appendChild(document.createTextNode(" Remove " + c.count));
-        rm.addEventListener("click", () => confirmPurge(it, c.index, c.count));
-        row.appendChild(rm);
+        if (viewerIsFullMod()) {
+          const rm = document.createElement("button");
+          rm.className = "btn sm danger";
+          rm.appendChild(icon("fa-trash"));
+          rm.appendChild(document.createTextNode(" Remove " + c.count));
+          rm.addEventListener("click", () => confirmPurge(it, c.index, c.count));
+          row.appendChild(rm);
+        }
         box.appendChild(row);
       });
     }
@@ -2921,7 +2934,7 @@
         );
         foot.appendChild(investigate);
       }
-      if (it.pending > 0) {
+      if (it.pending > 0 && viewerIsFullMod()) {
         const purgeAll = document.createElement("button");
         purgeAll.className = "btn sm danger";
         purgeAll.appendChild(icon("fa-broom"));
@@ -3148,7 +3161,7 @@
     }
     foot.appendChild(info);
 
-    if (a.status === "pending") {
+    if (a.status === "pending" && viewerIsFullMod()) {
       const actions = divc("ac-actions");
       const approve = document.createElement("button");
       approve.className = "btn sm primary";
@@ -3343,7 +3356,10 @@
   function groupNetworks(entries) {
     const groups = new Map();
     for (const e of entries) {
-      const ip = typeof e === "string" ? e : e.ip;
+      const ip = typeof e === "string" ? e : e && e.ip;
+      // Non-devs receive the history entries without their addresses, so there
+      // is nothing to group; the count is shown instead.
+      if (!ip) continue;
       const meta = typeof e === "string" ? {} : e;
       const nk = netKeyOf(ip);
       if (!groups.has(nk.key))
@@ -3388,7 +3404,7 @@
     return row;
   }
 
-  function sessKeyCard(label, role, groups, pill) {
+  function sessKeyCard(label, role, groups, pill, hiddenCount) {
     const card = divc("sesscard");
     const top = divc("sess-top");
     const av = divc("avatar");
@@ -3407,8 +3423,20 @@
     if (pill) top.appendChild(pill);
     card.appendChild(top);
     const nets = divc("sess-nets");
-    if (!groups.length) nets.appendChild(span("cnt", "No addresses recorded yet."));
-    else groups.forEach((g) => nets.appendChild(netRow(g)));
+    if (!groups.length) {
+      // Non-devs are not sent the addresses at all (they belong to other staff),
+      // so show the shape of it instead of an empty box.
+      nets.appendChild(
+        span(
+          "cnt",
+          hiddenCount == null
+            ? "No addresses recorded yet."
+            : hiddenCount +
+              (hiddenCount === 1 ? " address" : " addresses") +
+              " on file. Only developers can see the addresses themselves.",
+        ),
+      );
+    } else groups.forEach((g) => nets.appendChild(netRow(g)));
     card.appendChild(nets);
     return card;
   }
@@ -3447,15 +3475,19 @@
     } else {
       sessions.forEach((s) => {
         const groups = groupNetworks(s.ips || []);
-        const multiNet = groups.length > 1;
+        // multiIp comes from the server, so the warning still works for a mod
+        // who is not sent the addresses themselves.
+        const multiNet = groups.length ? groups.length > 1 : !!s.multiIp;
         const pill = span(
           "pill " + (multiNet ? "perm" : "live"),
-          multiNet ? groups.length + " networks" : "OK",
+          multiNet
+            ? (groups.length || s.ipCount || 2) + " networks"
+            : "OK",
         );
         pill.title = multiNet
           ? "Connected from more than one network at once - the key may be shared."
           : "All connections come from one network.";
-        const card = sessKeyCard(s.label, s.role, groups, pill);
+        const card = sessKeyCard(s.label, s.role, groups, pill, s.ipCount);
         const tabs = span(
           "cnt",
           (s.sessionCount || 1) +
@@ -3474,11 +3506,14 @@
     } else {
       history.forEach((h) => {
         const groups = groupNetworks(h.ips || []);
+        const n = groups.length || h.ipCount || 0;
         const pill = span(
-          "pill " + (groups.length > 1 ? "perm" : "live"),
-          groups.length + " network" + (groups.length === 1 ? "" : "s"),
+          "pill " + (n > 1 ? "perm" : "live"),
+          groups.length
+            ? n + " network" + (n === 1 ? "" : "s")
+            : n + " address" + (n === 1 ? "" : "es"),
         );
-        hist.appendChild(sessKeyCard(h.label, h.role, groups, pill));
+        hist.appendChild(sessKeyCard(h.label, h.role, groups, pill, h.ipCount));
       });
     }
   }
@@ -3522,25 +3557,93 @@
     b.style.display = unreadNotifs > 0 ? "" : "none";
   }
 
+  // Can this viewer act, not just look? Every one of these is re-checked on the
+  // server; this only decides whether it is worth showing the button.
+  const viewerIsDev = () => !!(me && me.role === "dev");
+  const viewerIsFullMod = () =>
+    viewerIsDev() || !!(me && (me.modLevel || 2) >= 2);
+
+  // A short line at the top of a board telling a junior what they are looking
+  // at and why the buttons are missing, rather than leaving them to guess.
+  function readOnlyNote(panelId, text) {
+    const panel = $(panelId);
+    if (!panel) return;
+    const existing = panel.querySelector(".ro-note");
+    if (viewerIsFullMod()) {
+      if (existing) existing.remove();
+      return;
+    }
+    if (existing) return;
+    const note = divc("ro-note");
+    note.appendChild(icon("fa-eye"));
+    note.appendChild(document.createTextNode(" " + text));
+    const strip = panel.querySelector(".strip");
+    if (strip && strip.nextSibling)
+      panel.insertBefore(note, strip.nextSibling);
+    else panel.insertBefore(note, panel.firstChild);
+  }
+
   function applyRoleGating() {
-    const isDev = me && me.role === "dev";
-    const fullMod = isDev || (me && (me.modLevel || 2) >= 2);
-    document.querySelectorAll(".nav-item[data-dev]").forEach((n) => {
-      n.style.display = isDev ? "" : "none";
+    // Every board is readable by every staff level. What differs is what you
+    // can DO on it: the action buttons below are gated, and the server refuses
+    // anything above your level regardless. Raw IPs stay dev-only everywhere.
+    document
+      .querySelectorAll(".nav-item[data-dev], .nav-item[data-min2]")
+      .forEach((n) => {
+        n.style.display = "";
+      });
+    // The inbox filter surfaces reports and mod-abuse flags; those are a full
+    // mod's job, so it stays where it was.
+    document.querySelectorAll("#filterSeg [data-min2]").forEach((n) => {
+      n.style.display = viewerIsFullMod() ? "" : "none";
     });
-    // Notifications (reports + mod-abuse flags) are for full mods + devs only.
-    document.querySelectorAll("[data-min2]").forEach((n) => {
-      n.style.display = fullMod ? "" : "none";
+
+    // Dev-only controls on otherwise-readable boards
+    const devOnly = [
+      ["grantMod", viewerIsDev()],
+      ["appsToggle", viewerIsDev()],
+    ];
+    devOnly.forEach(([id, ok]) => {
+      const el = $(id);
+      if (el) el.style.display = ok ? "" : "none";
     });
-    if (!isDev && (tab === "mods" || tab === "sessions"))
-      switchTab("activity");
-    if (!fullMod && tab === "bans") switchTab("activity");
-    if (!fullMod && tab === "applications") switchTab("activity");
+    // Placing a new block is a full-mod action
+    ["banIpBtn", "banIdBtn"].forEach((id) => {
+      const el = $(id);
+      if (el) el.style.display = viewerIsFullMod() ? "" : "none";
+    });
+
+    readOnlyNote(
+      "tab-reports",
+      "You can warn and kick from here. Discarding a report and IP blocking are full-mod actions.",
+    );
+    readOnlyNote(
+      "tab-applications",
+      "Read-only for junior mods. Approving or declining an application is a full-mod action.",
+    );
+    readOnlyNote(
+      "tab-appeals",
+      "Read-only for junior mods. Dismissing an appeal is a full-mod action, and lifting a ban is dev-only.",
+    );
+    readOnlyNote(
+      "tab-invites",
+      "Read-only for junior mods. Removing farmed invites is a full-mod action.",
+    );
+    readOnlyNote(
+      "tab-bans",
+      "Read-only for junior mods. Placing and lifting blocks are full-mod actions. Addresses are only ever shown to developers.",
+    );
+    readOnlyNote(
+      "tab-mods",
+      "Anyone on staff can read the roster and any record. Granting, promoting, and revoking keys are dev-only.",
+    );
+    readOnlyNote(
+      "tab-sessions",
+      "Addresses here belong to other staff, so only developers see them. You see how many networks each key is live on.",
+    );
+
     renderApplicationsToggle();
-    if (!fullMod && tab === "reports") switchTab("activity");
-    if (!fullMod && tab === "suggestions") switchTab("activity");
-    if (!fullMod && tab === "invites") switchTab("activity");
-    if (!fullMod && feedFilter === "notification") {
+    if (!viewerIsFullMod() && feedFilter === "notification") {
       feedFilter = "all";
       document
         .querySelectorAll("#filterSeg button")

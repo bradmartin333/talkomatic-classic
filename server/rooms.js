@@ -5346,7 +5346,7 @@ function registerSocketHandlers() {
     socket.on(
       "dev list blocks",
       safe(async () => {
-        if (!requireModLevel(socket, 2)) return;
+        if (!requireStaff(socket)) return;
         socket.emit("dev blocks", buildBlockList(!!socket.isDev));
       }),
     );
@@ -5356,7 +5356,7 @@ function registerSocketHandlers() {
     socket.on(
       "staff get ban history",
       safe(async () => {
-        if (!requireModLevel(socket, 2)) return;
+        if (!requireStaff(socket)) return;
         socket.emit("staff ban history", buildBanHistory(!!socket.isDev));
       }),
     );
@@ -5367,7 +5367,7 @@ function registerSocketHandlers() {
     socket.on(
       "dev get sessions",
       safe(async () => {
-        if (!requireDev(socket)) return;
+        if (!requireStaff(socket)) return;
         const byKey = new Map();
         for (const [, s] of io().sockets.sockets) {
           if (!s.isDev && !s.isMod) continue;
@@ -5385,18 +5385,35 @@ function registerSocketHandlers() {
           g.ips.add(s.clientIp || s.handshake.address || "?");
           g.count += 1;
         }
+        // Moderators may look at this board, but never at raw addresses: these
+        // are other staff members' home IPs, and a mod does not see any other
+        // IP anywhere else in the dashboard. They still get the shape of the
+        // problem (how many addresses a key is live on), which is the point of
+        // the board, without the addresses themselves.
+        const isDev = !!socket.isDev;
         const sessions = [...byKey.values()].map((g) => ({
-          hash: g.hash,
+          hash: isDev ? g.hash : g.hash.slice(0, 8),
           label: g.label,
           role: g.role,
-          ips: [...g.ips],
+          ips: isDev ? [...g.ips] : [],
+          ipCount: g.ips.size,
           sessionCount: g.count,
           multiIp: g.ips.size > 1,
         }));
-        socket.emit("dev sessions", {
-          sessions,
-          history: roles.getKeyActivity(),
-        });
+        const history = roles.getKeyActivity().map((h) => ({
+          hash: isDev ? h.hash : String(h.hash || "").slice(0, 8),
+          label: h.label,
+          role: h.role,
+          ips: isDev
+            ? h.ips
+            : (h.ips || []).map((x) => ({
+              first: x.first,
+              last: x.last,
+              count: x.count,
+            })),
+          ipCount: (h.ips || []).length,
+        }));
+        socket.emit("dev sessions", { sessions, history });
       }),
     );
 
@@ -5628,8 +5645,16 @@ function registerSocketHandlers() {
     socket.on(
       "dev list mod keys",
       safe(async () => {
-        if (!requireDev(socket)) return;
-        socket.emit("dev mod keys", roles.listModKeys());
+        if (!requireStaff(socket)) return;
+        // Mods see the roster, not the key material. Only a dev acts on keys,
+        // so only a dev needs the hash that identifies one.
+        const keys = roles.listModKeys();
+        socket.emit(
+          "dev mod keys",
+          socket.isDev
+            ? keys
+            : keys.map((k) => ({ ...k, hash: String(k.hash || "").slice(0, 8) })),
+        );
       }),
     );
 
@@ -5843,7 +5868,7 @@ function registerSocketHandlers() {
     socket.on(
       "staff get reports",
       safe(async () => {
-        if (!requireModLevel(socket, 2)) return;
+        if (!requireStaff(socket)) return;
         socket.emit("staff reports", buildReportsList(!!socket.isDev));
       }),
     );
@@ -5874,7 +5899,7 @@ function registerSocketHandlers() {
     socket.on(
       "staff get appeals",
       safe(async () => {
-        if (!requireModLevel(socket, 2)) return;
+        if (!requireStaff(socket)) return;
         socket.emit("staff appeals", buildAppealsList(!!socket.isDev));
       }),
     );
@@ -5974,7 +5999,7 @@ function registerSocketHandlers() {
     socket.on(
       "staff get suggestions",
       safe(async () => {
-        if (!requireModLevel(socket, 2)) return;
+        if (!requireStaff(socket)) return;
         socket.emit("staff suggestions", buildSuggestionsList(!!socket.isDev));
       }),
     );
@@ -6384,7 +6409,7 @@ function registerSocketHandlers() {
     socket.on(
       "mod applications list",
       safe(async () => {
-        if (!requireModLevel(socket, 2)) return;
+        if (!requireStaff(socket)) return;
         sendAppsList(socket);
       }),
     );
@@ -6616,7 +6641,7 @@ function registerSocketHandlers() {
     socket.on(
       "staff get invite report",
       safe(async (data) => {
-        if (!requireModLevel(socket, 2)) return;
+        if (!requireStaff(socket)) return;
         const now = Date.now();
         if (now - (socket._invAt || 0) < 2000) return; // light throttle
         socket._invAt = now;

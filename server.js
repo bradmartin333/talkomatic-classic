@@ -569,15 +569,31 @@ const PAGES = [
   "sponsors",
   "themes",
 ];
+// The pages carry nonce="<%= nonce %>" on their script tags, but nothing was
+// ever substituting it: sendFile ships the file byte for byte, so that literal
+// text went to the browser and the nonce matched nothing. Any inline script
+// would have been blocked by our own CSP. Stamp the per-request nonce in as the
+// page is sent. Read fresh each time, as sendFile did, so editing a page during
+// development still shows up without a restart.
+function sendPage(req, res, file) {
+  fs
+    .readFile(file, "utf8")
+    .then((html) => {
+      res.set(PAGE_HEADERS);
+      res.type("html").send(
+        html.replace(/<%=\s*nonce\s*%>/g, res.locals.nonce || ""),
+      );
+    })
+    .catch(() => res.status(404).end());
+}
+
 for (const page of PAGES) {
   app.get(`/${page}.html`, (req, res) =>
-    res.sendFile(path.join(PAGES_DIR, `${page}.html`), {
-      headers: PAGE_HEADERS,
-    }),
+    sendPage(req, res, path.join(PAGES_DIR, `${page}.html`)),
   );
 }
 app.get("/", (req, res) =>
-  res.sendFile(path.join(PAGES_DIR, "index.html"), { headers: PAGE_HEADERS }),
+  sendPage(req, res, path.join(PAGES_DIR, "index.html")),
 );
 
 // ── API Routes ──────────────────────────────────────────────────────────────
