@@ -3652,7 +3652,29 @@
   }
 
   // ── Socket wiring ──
-  socket.on("connect", () => socket.emit("staff get audit", { limit: 20000 }));
+  // Ask for everything the moment we connect, so the tab badges show real
+  // counts straight away instead of sitting at 0 until each tab is opened.
+  // These used to run after the audit snapshot arrived and only for full mods,
+  // which meant juniors never got counts at all and everyone else waited on the
+  // largest payload on the page. Every one of these is readable by any staff
+  // level; the server redacts per role and refuses anything above it.
+  function loadBoards() {
+    [
+      "dev list blocks",
+      "staff get ban history",
+      "mod applications list",
+      "staff get reports",
+      "staff get appeals",
+      "staff get invite report",
+      "dev list mod keys",
+      "dev get sessions",
+    ].forEach((ev) => socket.emit(ev));
+  }
+
+  socket.on("connect", () => {
+    socket.emit("staff get audit", { limit: 20000 });
+    loadBoards();
+  });
 
   socket.on("audit snapshot", (data) => {
     authorized = true;
@@ -3684,20 +3706,6 @@
     renderLegend();
     renderActivity();
 
-    // Populate the left-panel counts immediately, not only when a tab is opened.
-    const fullMod = me && (me.role === "dev" || (me.modLevel || 0) >= 2);
-    if (me && me.role === "dev") {
-      socket.emit("dev list mod keys");
-      socket.emit("dev get sessions");
-    }
-    if (fullMod) {
-      socket.emit("dev list blocks");
-      socket.emit("staff get ban history");
-      socket.emit("mod applications list");
-      socket.emit("staff get reports");
-      socket.emit("staff get appeals");
-      socket.emit("staff get invite report");
-    }
   });
 
   socket.on("audit entry", (e) => {
