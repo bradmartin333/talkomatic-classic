@@ -56,6 +56,13 @@
     color:#fff;font-size:13.5px;user-select:none;}
   .tk-checkbox-row input{accent-color:#ff9800;width:16px;height:16px;flex:none;margin:0;}
   .tk-err{font-size:12px;color:#ff5468;margin:6px 0 0;display:none;}
+  /* Staff key reveal: masked until asked for, monospace once shown */
+  .tk-keybox{display:flex;gap:8px;align-items:center;background:#000;border:1px solid #616161;
+    border-radius:5px;padding:10px 12px;margin:10px 0 0;}
+  .tk-keyval{flex:1;min-width:0;font-family:"Courier New",monospace;font-size:13px;color:#8d8d8d;
+    letter-spacing:2px;word-break:break-all;}
+  .tk-keyval.revealed{color:#ff9800;letter-spacing:0;}
+  .tk-keyeye{flex:none;padding:6px 12px;font-size:12px;}
   /* menu */
   .tk-group{margin:4px 0 18px;}
   .tk-group:last-child{margin-bottom:0;}

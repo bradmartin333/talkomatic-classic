@@ -276,8 +276,21 @@ function startOfPacificDay(now = Date.now()) {
 
 function recent(limit = 500, includeIp = true, modLevel = 2, since = 0) {
   const n = Math.max(1, Number(limit) || 500);
-  let slice = entries.slice(-n);
-  if (since > 0) slice = slice.filter((e) => (e.ts || 0) >= since);
+  let slice;
+  if (since > 0) {
+    // Walk back from the newest entry until we leave the window or hit the
+    // cap, so a long history is never copied wholesale just to be filtered
+    // away. This runs on every dashboard connect.
+    let i = entries.length - 1;
+    let taken = 0;
+    while (i >= 0 && (entries[i].ts || 0) >= since && taken < n) {
+      i--;
+      taken++;
+    }
+    slice = entries.slice(i + 1);
+  } else {
+    slice = entries.slice(-n);
+  }
   // Devs see everything; mods get IP-redacted entries with dev-only ones and
   // anything above their level removed.
   if (includeIp) return slice;

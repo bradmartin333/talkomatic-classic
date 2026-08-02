@@ -1315,7 +1315,7 @@ socket.on("signin status", (data) => {
   currentUserIsDev = !!data.isDev;
   currentUserIsMod = !!data.isMod;
   currentUserModLevel = data.modLevel || 0;
-  if (currentUserIsDev) ensureDevPanelButton();
+  if (currentUserIsDev || currentUserIsMod) ensureDevPanelButton();
   updateStaffLink();
   if (data.isSignedIn) {
     currentUsername = data.username;
@@ -1746,9 +1746,15 @@ function ensureDevPanelButton() {
   const btn = document.createElement("button");
   btn.id = "devPanelButton";
   btn.type = "button";
-  btn.innerHTML = '<i class="fas fa-screwdriver-wrench"></i> Dev Panel';
-  btn.title = "Dev tools";
-  btn.addEventListener("click", openDevPanel);
+  // Moderators get a panel here too. Without one they had no way to reach
+  // their own key or the dashboard from the lobby.
+  btn.innerHTML = currentUserIsDev
+    ? '<i class="fas fa-screwdriver-wrench"></i> Dev Panel'
+    : '<i class="fas fa-shield-halved"></i> Mod Panel';
+  btn.title = currentUserIsDev ? "Dev tools" : "Mod tools";
+  btn.addEventListener("click", () =>
+    currentUserIsDev ? openDevPanel() : openModLobbyPanel(),
+  );
   document.body.appendChild(btn);
 }
 
@@ -1931,7 +1937,7 @@ function openDevPanel() {
         ],
       },
       {
-        title: "Accountability",
+        title: "Records",
         items: [
           {
             icon: '<i class="fas fa-clipboard"></i>',
@@ -1939,8 +1945,118 @@ function openDevPanel() {
             desc: "Every staff action + identity change",
             onClick: () => window.open("/mod.html", "_blank"),
           },
+          myKeyItem(),
         ],
       },
+    ],
+  });
+}
+
+// The lobby panel for moderators. Devs get openDevPanel with the global tools;
+// a mod's global surface is their record and their key.
+function openModLobbyPanel() {
+  if (!window.StaffUI) return;
+  StaffUI.panel({
+    title: "Mod panel",
+    icon: '<i class="fas fa-shield-halved"></i>',
+    subtitle:
+      currentUserModLevel >= 2 ? "Full mod (L2)" : "Junior mod (L1)",
+    onHelp: () => StaffUI.help(currentUserModLevel >= 2 ? "mod" : "jr"),
+    groups: [
+      {
+        title: "Records",
+        items: [
+          {
+            icon: '<i class="fas fa-clipboard"></i>',
+            label: "Open Mod Dashboard",
+            desc: "Every staff action, and your own record",
+            onClick: () => window.open("/mod.html", "_blank"),
+          },
+          myKeyItem(),
+        ],
+      },
+    ],
+  });
+}
+
+// Show the staff key this browser is signed in with. Kept hidden behind a
+// click, because it is the only proof of role: anyone who reads it over your
+// shoulder becomes you.
+function myKeyItem() {
+  return {
+    icon: '<i class="fas fa-key"></i>',
+    label: "Show my staff key",
+    desc: "Reveal and copy the key this browser uses",
+    onClick: () => openMyKey(),
+  };
+}
+
+function openMyKey() {
+  if (!window.StaffUI) return;
+  const devKey = localStorage.getItem("talkomatic_devKey");
+  const modKey = localStorage.getItem("talkomatic_modKey");
+  const key = devKey || modKey;
+  const wrap = StaffUI.el("div");
+
+  if (!key) {
+    wrap.appendChild(
+      StaffUI.el("p", {
+        text: "This browser has no staff key saved. If you were given one, paste it in with Enter staff key and it will be remembered here.",
+      }),
+    );
+    StaffUI.modal({
+      title: "Your staff key",
+      icon: '<i class="fas fa-key"></i>',
+      body: wrap,
+      actions: [{ label: "Close", kind: "primary", onClick: () => {} }],
+    });
+    return;
+  }
+
+  wrap.appendChild(
+    StaffUI.el("p", {
+      text:
+        "This is the " +
+        (devKey ? "developer" : "moderator") +
+        " key this browser is signed in with. Treat it like a password: it is the only proof of your role, so never paste it anywhere public or share it, not even with other staff. If it leaks, tell a developer and it will be revoked.",
+    }),
+  );
+
+  // The reveal lives in the body, not the footer: footer buttons close the
+  // modal, and hiding it again should not mean reopening the whole thing.
+  const box = StaffUI.el("div", { class: "tk-keybox" });
+  const shown = StaffUI.el("div", { class: "tk-keyval", text: "•".repeat(28) });
+  const eye = StaffUI.el("button", { class: "tk-btn tk-keyeye", text: "Show" });
+  let visible = false;
+  eye.addEventListener("click", (e) => {
+    e.preventDefault();
+    visible = !visible;
+    shown.textContent = visible ? key : "•".repeat(28);
+    shown.classList.toggle("revealed", visible);
+    eye.textContent = visible ? "Hide" : "Show";
+  });
+  box.appendChild(shown);
+  box.appendChild(eye);
+  wrap.appendChild(box);
+
+  StaffUI.modal({
+    title: "Your staff key",
+    icon: '<i class="fas fa-key"></i>',
+    subtitle: "Keep it to yourself",
+    body: wrap,
+    actions: [
+      {
+        label: "Copy key",
+        onClick: () => {
+          StaffUI.copy(key);
+          lobbyNotify(
+            "Your staff key is on the clipboard. Paste it somewhere safe, and clear your clipboard afterwards.",
+            "success",
+            { title: "Copied" },
+          );
+        },
+      },
+      { label: "Done", kind: "primary", onClick: () => {} },
     ],
   });
 }
