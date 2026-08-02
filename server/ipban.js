@@ -174,6 +174,56 @@ function normalizeIp(ip) {
   }
 }
 
+// ── Bulk matching ───────────────────────────────────────────────────────────
+// Checking "which of these N block keys covers this address?" one key at a time
+// re-parses the same CIDRs for every address tested, which is what made the
+// dashboard take about a second to redraw once the identity store grew. Parse
+// the key set once up front, then each address is a Set lookup plus a compare
+// against the (few) ranges.
+
+function prepareKeys(keys) {
+  const exact = new Set();
+  const ranges = [];
+  for (const key of keys) {
+    if (isIdKey(key)) continue; // identifier keys never match an address
+    if (isRangeKey(key)) {
+      try {
+        const [range, bits] = ipaddr.parseCIDR(String(key));
+        ranges.push({ key, range, bits, kind: range.kind() });
+      } catch (_) {}
+    } else {
+      exact.add(key);
+    }
+  }
+  return { exact, ranges };
+}
+
+// Every prepared key that covers `ip`.
+function keysCovering(ip, prepared) {
+  const hits = [];
+  if (!ip || !prepared) return hits;
+  if (prepared.exact.has(ip)) hits.push(ip);
+  if (!prepared.ranges.length) return hits;
+  let addr;
+  try {
+    addr = ipaddr.parse(String(ip));
+  } catch (_) {
+    return hits;
+  }
+  for (const r of prepared.ranges) {
+    let a = addr;
+    if (a.kind() !== r.kind) {
+      if (a.kind() === "ipv6" && a.isIPv4MappedAddress() && r.kind === "ipv4")
+        a = a.toIPv4Address();
+      else continue;
+    }
+    try {
+      if (a.match(r.range, r.bits)) hits.push(r.key);
+    } catch (_) {}
+  }
+  return hits;
+}
+
 // Remove every block that applies to `ip`: the exact entry plus any CIDR range
 // that contains it. Used when a ban is lifted (e.g. a granted appeal) so a
 // range-banned user is actually let back in instead of silently staying blocked
@@ -208,4 +258,6 @@ module.exports = {
   isValidIp,
   normalizeIp,
   removeBlocksForIp,
+  prepareKeys,
+  keysCovering,
 };

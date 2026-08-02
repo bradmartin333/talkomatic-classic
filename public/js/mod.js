@@ -54,6 +54,65 @@
   const INV_PAGE = 12;
   const inviteDetails = new Map(); // deviceId -> last forensic detail
 
+  // The feed covers one Pacific day, 12:00am to 11:59pm, so every staff member
+  // sees the same window whatever timezone they are in, and it empties at
+  // midnight PT. Computed with Intl so PST/PDT is handled automatically.
+  const PACIFIC_FMT = (() => {
+    try {
+      return new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/Los_Angeles",
+        hourCycle: "h23",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+    } catch (_) {
+      return null;
+    }
+  })();
+  function startOfPacificDay(now = Date.now()) {
+    if (!PACIFIC_FMT) return 0;
+    try {
+      const partsAt = (t) =>
+        PACIFIC_FMT.formatToParts(new Date(t)).reduce(
+          (a, p) => ((a[p.type] = p.value), a),
+          {},
+        );
+      const offsetAt = (t) => {
+        const p = partsAt(t);
+        return (
+          Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) -
+          Math.floor(t / 1000) * 1000
+        );
+      };
+      const today = partsAt(now);
+      const localMidnight = Date.UTC(+today.year, +today.month - 1, +today.day);
+      // Resolve with the offset in force at midnight, not right now, so the two
+      // daylight-saving switchover days land correctly.
+      let guess = localMidnight - offsetAt(now);
+      guess = localMidnight - offsetAt(guess);
+      return guess;
+    } catch (_) {
+      return 0;
+    }
+  }
+  let dayStart = startOfPacificDay();
+  const pacificDayLabel = () => {
+    try {
+      return new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/Los_Angeles",
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+      }).format(new Date());
+    } catch (_) {
+      return "today";
+    }
+  };
+
   const DOM_CAP = 250; // max activity cards kept in the DOM at once
   let pendingNew = []; // live entries waiting for the next batched flush
   let flushTimer = null;
@@ -236,6 +295,7 @@
     return false;
   }
   function passes(e) {
+    if (dayStart && (e.ts || 0) < dayStart) return false;
     if (feedFilter !== "all" && e.type !== feedFilter) return false;
     if (focusUid && !matchesFocus(e, focusUid)) return false;
     if (query && !searchable(e).includes(query)) return false;
@@ -459,6 +519,32 @@
     }
   }
 
+  // Say which day is on screen, since the feed deliberately only covers one.
+  function updateDayLabel() {
+    const el = $("dayLabel");
+    if (!el) return;
+    el.textContent =
+      pacificDayLabel() + ", 12:00am to 11:59pm Pacific";
+  }
+
+  // Roll the feed over at midnight Pacific: drop yesterday and redraw, so a
+  // dashboard left open overnight starts the new day empty on its own.
+  function checkDayRollover() {
+    const fresh = startOfPacificDay();
+    if (fresh === dayStart) return;
+    dayStart = fresh;
+    entries = entries.filter((e) => (e.ts || 0) >= dayStart);
+    commentsByRef.clear();
+    for (const e of entries)
+      if (e.type === "comment" && e.refId) {
+        if (!commentsByRef.has(e.refId)) commentsByRef.set(e.refId, []);
+        commentsByRef.get(e.refId).push(e);
+      }
+    updateDayLabel();
+    if (tab === "activity") renderActivity();
+  }
+  setInterval(checkDayRollover, 30000);
+
   // Batched insert of new live entries (keeps existing cards, their comments and
   // scroll intact) plus a DOM trim, so a flood of sign-ins can't thrash the page.
   function scheduleFlush() {
@@ -598,6 +684,9 @@
   let bansTimer = null;
   let bansQuery = "";
   let bansFilter = "all"; // all | perm | temp | id
+  // Which people are expanded, so a live refresh does not collapse the row a
+  // moderator is reading.
+  const openBanKeys = new Set();
   let banHistQuery = "";
   let banHistFilter = "all"; // all | ban | unban
   function fmtRemaining(b) {
@@ -745,8 +834,8 @@
     return groups;
   }
 
-  // One block line inside a person's ban card: kind tag, address (devs only),
-  // live countdown, and per-block controls.
+  // One block line inside an expanded person row: kind tag, address (devs
+  // only), live countdown, and the per-block controls.
   function buildBlockRow(b, isDev) {
     const row = divc("blockrow");
     const kind = b.kind || "ip";
@@ -794,121 +883,204 @@
       );
     }
     row.appendChild(
-      mkIcon("fa-unlock", "Unban", true, async () => {
-        // A dev sends the raw key; a mod (no address) sends the opaque ref.
-        // Send both - the server uses whichever it gets.
-        const payload = { ip: b.ip, ref: b.ref };
-        if (!window.StaffUI) {
-          socket.emit("dev unblock ip", payload);
-          return;
-        }
-        const who =
-          (b.label || "this user") + (isDev && b.ip ? " (" + b.ip + ")" : "");
-        const ok = await StaffUI.confirm({
-          title: "Unban",
-          message: "Unblock " + who + "?",
-          confirmText: "Unban",
-        });
-        if (ok) socket.emit("dev unblock ip", payload);
-      }),
+      mkIcon("fa-unlock", "Unban this one", true, () => confirmUnban([b], isDev)),
     );
     return row;
   }
 
-  // One card per person: who they are, every block covering them, the ban
-  // screen message, and the accounts seen behind those blocks.
-  function buildBanGroup(blocks, isDev) {
+  // Confirm, then lift one block or every block covering a person. A dev sends
+  // the raw key; a mod (who never sees the address) sends the opaque ref.
+  async function confirmUnban(blocks, isDev, name) {
+    const send = () =>
+      blocks.forEach((b) =>
+        socket.emit("dev unblock ip", { ip: b.ip, ref: b.ref }),
+      );
+    if (!window.StaffUI) return send();
+    const many = blocks.length > 1;
+    const who = name || blocks.map((b) => b.label).find(Boolean) || "this user";
+    const ok = await StaffUI.confirm({
+      title: many ? "Unban " + blocks.length + " blocks" : "Unban",
+      message: many
+        ? "Lift every block covering " +
+          who +
+          " (" +
+          blocks.length +
+          " in total)? They can connect again straight away."
+        : "Unblock " +
+          who +
+          (isDev && blocks[0].ip ? " (" + blocks[0].ip + ")" : "") +
+          "?",
+      danger: many,
+      confirmText: many ? "Unban all" : "Unban",
+    });
+    if (ok) send();
+  }
+
+  // One person = one table row of fixed height, so a repeat evader with thirty
+  // blocks takes no more vertical space than someone with one. Their blocks
+  // live in a detail panel that opens underneath.
+  function buildBanRow(blocks, isDev) {
     const anyPerm = blocks.some((b) => b.permanent);
     const first = blocks[0];
     const name = blocks.map((b) => b.label).find(Boolean) || null;
     const did = blocks.map((b) => b.did).find(Boolean) || null;
     const maxBans = Math.max(...blocks.map((b) => b.bans || 0));
+    const key = did || name || first.ref;
 
-    const card = divc("bancard" + (anyPerm ? " perm" : ""));
+    const wrap = divc("banrow-wrap");
+    const row = document.createElement("button");
+    row.className = "banrow" + (anyPerm ? " perm" : "");
+    row.type = "button";
+    row.setAttribute("aria-expanded", "false");
 
-    const head = divc("bc-head");
-    const av = divc("avatar");
+    const chev = divc("br-chev");
+    chev.appendChild(icon("fa-chevron-right"));
+    row.appendChild(chev);
+
+    const av = divc("avatar br-av");
     av.style.background = anyPerm ? "var(--red)" : "var(--amber)";
-    // A named account gets its initial; a block with no account behind it gets
-    // an icon, since the first digit of an address means nothing.
     if (name) av.textContent = initialOf(name);
     else av.appendChild(icon(did ? "fa-fingerprint" : "fa-globe"));
-    head.appendChild(av);
-    const idc = divc("bc-id");
-    idc.appendChild(
-      span("bc-name", name || (did ? "Unnamed account" : "No account on file")),
+    row.appendChild(av);
+
+    const whoCell = divc("br-who");
+    whoCell.appendChild(
+      span("br-name", name || (did ? "Unnamed account" : "No account on file")),
     );
-    const meta = divc("bc-meta");
-    const bys = [...new Set(blocks.map((b) => b.by).filter(Boolean))];
-    if (bys.length) {
-      const by = span(null, "");
-      by.appendChild(document.createTextNode("by "));
-      const bb = document.createElement("b");
-      bb.textContent = bys.join(", ");
-      by.appendChild(bb);
-      meta.appendChild(by);
-    }
-    if (first.ts) {
-      const placed = span(null, "banned " + relTime(first.ts));
-      placed.title = fmtTime(first.ts);
-      meta.appendChild(placed);
-    }
-    if (blocks.length > 1)
-      meta.appendChild(span(null, blocks.length + " blocks"));
+    const sub = divc("br-sub");
+    if (did) sub.appendChild(span("mono", did.slice(0, 18) + "…"));
+    else if (isDev && first.ip) sub.appendChild(span("mono", first.ip));
+    whoCell.appendChild(sub);
+    row.appendChild(whoCell);
+
+    // Blocks column: how many, and of what kinds
+    const blocksCell = divc("br-blocks");
+    const kinds = [...new Set(blocks.map((b) => b.kind || "ip"))];
+    const n = span("br-count", String(blocks.length));
+    blocksCell.appendChild(n);
+    blocksCell.appendChild(
+      span("br-unit", blocks.length === 1 ? "block" : "blocks"),
+    );
+    kinds.forEach((k) => {
+      const t = span("btag " + (k === "id" ? "uid" : k));
+      t.textContent = k === "id" ? "ID" : k === "range" ? "RANGE" : "IP";
+      blocksCell.appendChild(t);
+    });
     if (maxBans >= 2) {
       const rep = span("bc-repeat");
       rep.appendChild(icon("fa-rotate-right"));
-      rep.appendChild(
-        document.createTextNode(" Banned " + maxBans + " times"),
-      );
-      meta.appendChild(rep);
+      rep.appendChild(document.createTextNode(" " + maxBans + "x"));
+      rep.title = "Banned " + maxBans + " times over the life of this list";
+      blocksCell.appendChild(rep);
     }
-    idc.appendChild(meta);
-    head.appendChild(idc);
-    card.appendChild(head);
+    row.appendChild(blocksCell);
 
-    const rows = divc("blocks");
-    blocks.forEach((b) => rows.appendChild(buildBlockRow(b, isDev)));
-    card.appendChild(rows);
+    const bys = [...new Set(blocks.map((b) => b.by).filter(Boolean))];
+    row.appendChild(span("br-by", bys.join(", ") || "unknown"));
 
-    const withMsg = blocks.find((b) => b.reason);
-    const msg = divc("bc-msg" + (withMsg ? "" : " none"));
-    msg.appendChild(span("lbl", "Message shown to them"));
-    msg.appendChild(
-      document.createTextNode(
-        withMsg
-          ? withMsg.reason
-          : "No message set. They see a generic ban screen.",
-      ),
-    );
-    card.appendChild(msg);
+    const when = span("br-when", first.ts ? relTime(first.ts) : "");
+    if (first.ts) when.title = fmtTime(first.ts);
+    row.appendChild(when);
 
-    const seen = new Map();
-    blocks.forEach((b) =>
-      (b.users || []).forEach((u) => {
-        const k = u.id || u.name || "?";
-        if (!seen.has(k)) seen.set(k, u);
-      }),
-    );
-    if (seen.size) {
-      const box = divc("bc-msg");
-      box.appendChild(span("lbl", "Seen accounts (" + seen.size + ")"));
-      box.appendChild(
+    // Ends: permanent wins, otherwise the block that runs longest
+    const endCell = span("br-ends");
+    if (anyPerm) {
+      const p = span("pill perm", "Permanent");
+      endCell.appendChild(p);
+    } else {
+      const longest = blocks.reduce((m, b) =>
+        (b.expiry || 0) > (m.expiry || 0) ? b : m,
+      );
+      const p = span("pill live", fmtRemaining(longest) || "expiring");
+      p.dataset.ref = longest.ref || "";
+      endCell.appendChild(p);
+    }
+    row.appendChild(endCell);
+    wrap.appendChild(row);
+
+    // Detail panel, built once on first open
+    const detail = divc("bandetail");
+    detail.hidden = true;
+    let built = false;
+    const build = () => {
+      if (built) return;
+      built = true;
+      const rows = divc("blocks");
+      blocks.forEach((b) => rows.appendChild(buildBlockRow(b, isDev)));
+      detail.appendChild(rows);
+
+      const withMsg = blocks.find((b) => b.reason);
+      const msg = divc("bc-msg" + (withMsg ? "" : " none"));
+      msg.appendChild(span("lbl", "Message shown to them"));
+      msg.appendChild(
         document.createTextNode(
-          [...seen.values()]
-            .map((u) => u.name || "Unknown")
-            .slice(0, 12)
-            .join(", "),
+          withMsg
+            ? withMsg.reason
+            : "No message set. They see a generic ban screen.",
         ),
       );
-      card.appendChild(box);
+      detail.appendChild(msg);
+
+      const seen = new Map();
+      blocks.forEach((b) =>
+        (b.users || []).forEach((u) => {
+          const k = u.id || u.name || "?";
+          if (!seen.has(k)) seen.set(k, u);
+        }),
+      );
+      if (seen.size) {
+        const box = divc("bc-msg");
+        box.appendChild(span("lbl", "Seen accounts (" + seen.size + ")"));
+        box.appendChild(
+          document.createTextNode(
+            [...seen.values()]
+              .map((u) => u.name || "Unknown")
+              .slice(0, 12)
+              .join(", "),
+          ),
+        );
+        detail.appendChild(box);
+      }
+      if (did) {
+        const idLine = divc("bc-idline mono");
+        idLine.textContent = "id: " + did;
+        detail.appendChild(idLine);
+      }
+
+      const foot = divc("bandetail-foot");
+      const unbanAll = document.createElement("button");
+      unbanAll.className = "btn sm danger";
+      unbanAll.appendChild(icon("fa-unlock"));
+      unbanAll.appendChild(
+        document.createTextNode(
+          blocks.length > 1 ? " Unban all " + blocks.length : " Unban",
+        ),
+      );
+      unbanAll.addEventListener("click", () =>
+        confirmUnban(blocks, isDev, name),
+      );
+      foot.appendChild(unbanAll);
+      detail.appendChild(foot);
+    };
+
+    row.addEventListener("click", () => {
+      const open = detail.hidden;
+      if (open) build();
+      detail.hidden = !open;
+      row.classList.toggle("open", open);
+      row.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) openBanKeys.add(key);
+      else openBanKeys.delete(key);
+    });
+    // Re-open whatever was open before a live refresh redrew the table
+    if (openBanKeys.has(key)) {
+      build();
+      detail.hidden = false;
+      row.classList.add("open");
+      row.setAttribute("aria-expanded", "true");
     }
-    if (did) {
-      const idLine = divc("bc-idline mono");
-      idLine.textContent = "id: " + did;
-      card.appendChild(idLine);
-    }
-    return card;
+    wrap.appendChild(detail);
+    return wrap;
   }
 
   function renderBans() {
@@ -938,7 +1110,27 @@
       );
       return;
     }
-    groupBans(list).forEach((g) => wrap.appendChild(buildBanGroup(g, isDev)));
+    const groups = groupBans(list);
+    const head = divc("banhead");
+    [
+      "",
+      "",
+      "Who",
+      "Blocks",
+      "Placed by",
+      "Banned",
+      "Ends",
+    ].forEach((h) => head.appendChild(span(null, h)));
+    wrap.appendChild(head);
+    groups.forEach((g) => wrap.appendChild(buildBanRow(g, isDev)));
+    const note = divc("bantotal");
+    note.textContent =
+      groups.length +
+      (groups.length === 1 ? " person" : " people") +
+      "  ·  " +
+      list.length +
+      (list.length === 1 ? " block" : " blocks");
+    wrap.appendChild(note);
     startBanTimer();
   }
   function startBanTimer() {
@@ -1191,11 +1383,20 @@
     );
     card.appendChild(grid);
 
+    const actions = divc("mc-actions");
+    // Anyone on staff can read anyone's record, including a dev's.
+    const histBtn = document.createElement("button");
+    histBtn.className = "btn sm";
+    histBtn.appendChild(icon("fa-clock-rotate-left"));
+    histBtn.appendChild(document.createTextNode(" Their record"));
+    histBtn.title = "Everything " + (m.label || "this person") + " has ever done";
+    histBtn.addEventListener("click", () => openModHistory(m));
+    actions.appendChild(histBtn);
+
     // Promote / demote / revoke apply to mod keys only; dev keys live in the
     // server config.
     if (m.key) {
       const k = m.key;
-      const actions = divc("mc-actions");
       const toLevel = k.level === 1 ? 2 : 1;
       const levelBtn = document.createElement("button");
       levelBtn.className = "btn sm";
@@ -1248,9 +1449,116 @@
         if (ok) socket.emit("dev revoke mod", { hash: k.hash });
       });
       actions.appendChild(revoke);
-      card.appendChild(actions);
     }
+    card.appendChild(actions);
     return card;
+  }
+
+  // ── One staff member's whole record ──────────────────────────────────────
+  // Opens a modal with a tally of what they have done and the full list, so a
+  // quiet moderator and a busy one are both visible at a glance.
+  let historyFor = null; // { label, role } while a request is in flight
+  function openModHistory(m) {
+    historyFor = { label: m.label, role: m.rank === "dev" ? "dev" : "mod" };
+    socket.emit("staff get mod history", historyFor);
+    if (window.StaffUI)
+      StaffUI.toast("Loading " + (m.label || "their") + " record...", {
+        type: "info",
+        timeout: 2000,
+      });
+  }
+
+  function renderModHistory(h) {
+    if (!window.StaffUI || !h) return;
+    const wrap = document.createElement("div");
+
+    if (!h.total) {
+      const none = document.createElement("p");
+      none.textContent =
+        "No recorded actions yet. Either they are new, or they have not used any staff powers.";
+      wrap.appendChild(none);
+    } else {
+      const sum = divc("mh-sum");
+      const tot = divc("mh-tot");
+      tot.appendChild(span("mh-n", String(h.total)));
+      tot.appendChild(
+        span("mh-l", h.total === 1 ? "action, all time" : "actions, all time"),
+      );
+      sum.appendChild(tot);
+      if (h.first) {
+        const since = divc("mh-tot");
+        since.appendChild(span("mh-n", relTime(h.first).replace(" ago", "")));
+        since.appendChild(span("mh-l", "since first action"));
+        since.title = fmtTime(h.first);
+        sum.appendChild(since);
+      }
+      if (h.last) {
+        const last = divc("mh-tot");
+        last.appendChild(span("mh-n", relTime(h.last)));
+        last.appendChild(span("mh-l", "most recent"));
+        last.title = fmtTime(h.last);
+        sum.appendChild(last);
+      }
+      wrap.appendChild(sum);
+
+      const counts = divc("mh-counts");
+      h.counts.forEach((c) => {
+        const chip = divc("mh-chip");
+        chip.appendChild(span("n", String(c.n)));
+        chip.appendChild(span("a", c.action));
+        counts.appendChild(chip);
+      });
+      wrap.appendChild(counts);
+
+      const list = divc("mh-list");
+      h.entries.forEach((e) => {
+        const row = divc("mh-row");
+        const ic = divc("ico");
+        const cat = categorize(e);
+        ic.className = "ico cat-" + cat;
+        ic.appendChild(icon(CAT[cat] ? CAT[cat].icon : "fa-circle-info"));
+        row.appendChild(ic);
+        const main = divc("mh-main");
+        const line = divc("mh-act");
+        line.textContent = e.action || "?";
+        main.appendChild(line);
+        const bits = [];
+        const t = parseTarget(e.target);
+        if (t) bits.push("on " + t.name);
+        else if (e.target) bits.push("on " + e.target);
+        if (e.room) bits.push("in " + e.room);
+        if (bits.length) main.appendChild(span("mh-meta", bits.join("  ·  ")));
+        if (e.details) main.appendChild(span("mh-det", e.details));
+        row.appendChild(main);
+        const when = span("mh-when", relTime(e.ts));
+        when.title = fmtTime(e.ts);
+        row.appendChild(when);
+        list.appendChild(row);
+      });
+      wrap.appendChild(list);
+      if (h.total > h.entries.length)
+        wrap.appendChild(
+          span(
+            "mh-note",
+            "Showing the most recent " +
+              h.entries.length +
+              " of " +
+              h.total +
+              ".",
+          ),
+        );
+    }
+
+    StaffUI.modal({
+      title: (h.label || "Staff") + "'s record",
+      icon: '<i class="fas fa-clock-rotate-left"></i>',
+      subtitle:
+        (h.role === "dev" ? "Developer" : "Moderator") +
+        "  ·  everything they have done",
+      wide: true,
+      body: wrap,
+      actions: [{ label: "Close", kind: "primary", onClick: () => {} }],
+    });
   }
 
   function renderMods() {
@@ -2471,16 +2779,17 @@
     // Discord link. An applicant who has connected their Discord can be found
     // in the Talkomatic server and given the site mod role, so this is worth
     // seeing at a glance.
-    const dbadge = span("rbadge " + (a.discordId ? "on" : "off"));
-    dbadge.appendChild(icon(a.discordId ? "fa-check" : "fa-xmark"));
+    const hasDiscord = !!(a.discord || a.discordId);
+    const dbadge = span("rbadge " + (hasDiscord ? "on" : "off"));
+    dbadge.appendChild(icon(hasDiscord ? "fa-check" : "fa-xmark"));
     dbadge.appendChild(
-      document.createTextNode(a.discordId ? " Discord linked" : " No Discord"),
+      document.createTextNode(
+        a.discord ? " @" + a.discord : hasDiscord ? " Discord linked" : " No Discord",
+      ),
     );
-    dbadge.title = a.discordId
-      ? "Discord id " +
-        a.discordId +
-        ". Check they are in the Talkomatic server, then give them the site mod role once approved."
-      : "This applicant has not linked a Discord account.";
+    dbadge.title = hasDiscord
+      ? "Search this in the Talkomatic Discord. If you approve them, give them the site mod role there."
+      : "This applicant gave no Discord account.";
     meta.appendChild(dbadge);
     if (a.submittedAt) {
       const t = span(null, "applied " + relTime(a.submittedAt));
@@ -2539,9 +2848,12 @@
     }
     // Identity line: device id for all staff, raw IP only when the server sent
     // one (dev-only), matching the reports board and audit feed.
-    if (a.discordId) {
-      const dLine = span("mono", "discord: " + a.discordId);
-      dLine.title = "Search this id in the Talkomatic Discord server";
+    if (a.discord || a.discordId) {
+      const bits = [];
+      if (a.discord) bits.push("@" + a.discord);
+      if (a.discordId) bits.push("id " + a.discordId);
+      const dLine = span("mono", "discord: " + bits.join("  ·  "));
+      dLine.title = "Search this in the Talkomatic Discord server";
       info.appendChild(dLine);
     }
     if (a.deviceId || a.ip) {
@@ -2574,11 +2886,11 @@
               "Approve " +
               (a.username || "this user") +
               " as a junior (L1) moderator? They get a mod key right away." +
-              (a.discordId
-                ? " Remember to give them the site mod role in the Talkomatic Discord (id " +
-                  a.discordId +
-                  ") so they can reach the rest of the team."
-                : " They have no Discord linked, so there is no way to reach them off-site."),
+              (a.discord || a.discordId
+                ? " Remember to give " +
+                  (a.discord ? "@" + a.discord : "them") +
+                  " the site mod role in the Talkomatic Discord so they can reach the rest of the team."
+                : " They gave no Discord, so there is no way to reach them off-site."),
             fields: [
               {
                 name: "value",
@@ -2964,6 +3276,8 @@
     loadingEl.classList.add("hidden");
     deniedEl.classList.add("hidden");
     appEl.classList.remove("hidden");
+    if (data && data.dayStart) dayStart = data.dayStart;
+    updateDayLabel();
     entries = Array.isArray(data && data.entries) ? data.entries : [];
     commentsByRef.clear();
     for (const e of entries)
@@ -3095,6 +3409,11 @@
     renderInvites();
   });
 
+  socket.on("staff mod history", (h) => {
+    historyFor = null;
+    renderModHistory(h);
+  });
+
   socket.on("dev sessions", (data) => {
     sessionData = data || { sessions: [], history: [] };
     renderSessions();
@@ -3139,10 +3458,7 @@
   });
 
   socket.on("staff action result", (d) => {
-    if (d && window.StaffUI)
-      StaffUI.toast((d.ok ? "Done: " : "Failed: ") + (d.action || ""), {
-        type: d.ok ? "success" : "error",
-      });
+    if (d && window.StaffUI) StaffUI.actionToast(d);
   });
 
   const showDenied = () => {

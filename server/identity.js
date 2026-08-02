@@ -259,6 +259,39 @@ function devicesMatching(pred, limit = 25) {
   return out.slice(0, limit);
 }
 
+// Bucket every device by which blocklist keys cover its addresses, in a single
+// pass over the store. The ban list used to call devicesMatching() once per
+// block, so a store of a few thousand devices meant rescanning it twenty-odd
+// times on every redraw. `covering(ip, prepared)` comes from ipban.
+function devicesByKeys(prepared, covering, limit = 25) {
+  const out = new Map(); // block key -> [{ id, name, ips, last }]
+  if (!prepared) return out;
+  for (const id of Object.keys(store)) {
+    const r = store[id];
+    if (!r || !r.ips) continue;
+    let perKey = null;
+    for (const ip of Object.keys(r.ips)) {
+      const keys = covering(ip, prepared);
+      for (let i = 0; i < keys.length; i++) {
+        if (!perKey) perKey = new Map();
+        const k = keys[i];
+        if (!perKey.has(k)) perKey.set(k, []);
+        perKey.get(k).push(ip);
+      }
+    }
+    if (!perKey) continue;
+    for (const [key, ips] of perKey) {
+      if (!out.has(key)) out.set(key, []);
+      out.get(key).push({ id, name: r.name || null, ips, last: r.last || 0 });
+    }
+  }
+  for (const [key, arr] of out) {
+    arr.sort((a, b) => b.last - a.last);
+    if (arr.length > limit) out.set(key, arr.slice(0, limit));
+  }
+  return out;
+}
+
 function prune() {
   const now = Date.now();
   for (const id of Object.keys(store))
@@ -300,6 +333,7 @@ module.exports = {
   summary,
   getRecord,
   devicesMatching,
+  devicesByKeys,
   flushSync,
   ACTIVE_DAYS,
   ACTIVE_SEC,

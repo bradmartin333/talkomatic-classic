@@ -99,18 +99,48 @@
   .tk-toasts{position:fixed;top:14px;right:14px;left:auto;z-index:100002;display:flex;flex-direction:column;
     gap:10px;max-width:340px;}
   .tk-toasts.tk-full{left:14px;right:14px;max-width:none;align-items:center;}
-  .tk-toast{background:#000;border:1px solid #616161;border-left:5px solid #ff9800;border-radius:4px;
-    padding:13px 16px;box-shadow:0 8px 26px rgba(0,0,0,.6);animation:tkRise .16s ease-out;
-    color:#fff;font-size:14px;line-height:1.5;display:flex;gap:12px;align-items:flex-start;width:100%;}
+  .tk-toast{position:relative;background:#1b1b1b;border:1px solid #333;border-left:4px solid #ff9800;
+    border-radius:5px;padding:13px 14px 15px;box-shadow:0 10px 30px rgba(0,0,0,.55);
+    animation:tkToastIn .18s ease-out;overflow:hidden;
+    color:#fff;font-size:14px;line-height:1.5;display:flex;gap:11px;align-items:flex-start;width:100%;}
+  @keyframes tkToastIn{from{transform:translateX(14px);opacity:0}to{transform:translateX(0);opacity:1}}
+  .tk-toast.tk-tout{opacity:0;transform:translateX(14px);transition:opacity .15s ease,transform .15s ease;}
   .tk-toasts.tk-full .tk-toast{max-width:680px;}
+  /* Coloured edge + matching icon so the kind of message reads instantly */
+  .tk-toast .tk-tico{flex:none;width:28px;height:28px;border-radius:5px;display:flex;
+    align-items:center;justify-content:center;font-size:14px;}
   .tk-toast.info{border-left-color:#5aa9ff;}
+  .tk-toast.info .tk-tico{background:rgba(90,169,255,.15);color:#5aa9ff;}
+  .tk-toast.info .tk-ttitle{color:#5aa9ff;}
   .tk-toast.success{border-left-color:#57d9a3;}
-  .tk-toast.warning{border-left-color:#ff9800;}
+  .tk-toast.success .tk-tico{background:rgba(87,217,163,.15);color:#57d9a3;}
+  .tk-toast.success .tk-ttitle{color:#57d9a3;}
+  .tk-toast.warning{border-left-color:#ffb454;}
+  .tk-toast.warning .tk-tico{background:rgba(255,180,84,.15);color:#ffb454;}
+  .tk-toast.warning .tk-ttitle{color:#ffb454;}
   .tk-toast.error{border-left-color:#ff5468;}
+  .tk-toast.error .tk-tico{background:rgba(255,84,104,.15);color:#ff5468;}
+  .tk-toast.error .tk-ttitle{color:#ff5468;}
   .tk-toast .tk-ttext{flex:1;min-width:0;word-break:break-word;}
-  .tk-toast .tk-ttitle{font-weight:bold;margin-bottom:2px;color:#ff9800;}
-  .tk-toast .tk-tx{background:none;border:none;color:#8d8d8d;cursor:pointer;font-size:16px;line-height:1;padding:0 2px;flex:none;}
+  .tk-toast .tk-ttitle{font-weight:bold;font-size:14px;margin-bottom:2px;}
+  .tk-toast .tk-tbody{color:#d6d6d6;font-size:13.5px;}
+  .tk-toast .tk-tx{background:none;border:none;color:#8d8d8d;cursor:pointer;font-size:18px;line-height:1;
+    padding:0 2px;flex:none;border-radius:4px;}
   .tk-toast .tk-tx:hover{color:#fff;}
+  /* Time remaining, so a toast never just vanishes without warning. Hovering
+     or focusing the toast pauses it (WCAG 2.2.1, timing adjustable). */
+  .tk-toast .tk-tbar{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(255,255,255,.08);}
+  .tk-toast .tk-tfill{height:100%;width:100%;transform-origin:left center;background:currentColor;
+    animation-name:tkToastBar;animation-timing-function:linear;animation-fill-mode:forwards;}
+  .tk-toast.info .tk-tfill{color:#5aa9ff;}
+  .tk-toast.success .tk-tfill{color:#57d9a3;}
+  .tk-toast.warning .tk-tfill{color:#ffb454;}
+  .tk-toast.error .tk-tfill{color:#ff5468;}
+  @keyframes tkToastBar{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+  @media (prefers-reduced-motion: reduce){
+    .tk-toast{animation:none;}
+    .tk-toast .tk-tfill{animation:none;transform:scaleX(1);opacity:.4;}
+  }
   /* sliding staff panel: right drawer / bottom sheet / centered window */
   .tk-panel{background:#202020;color:#fff;display:flex;
     flex-direction:column;box-sizing:border-box;font-family:inherit;}
@@ -794,24 +824,216 @@
     toastHost.className = "tk-toasts" + (full ? " tk-full" : "");
     return toastHost;
   }
+  const TOAST_ICON = {
+    success: "fa-circle-check",
+    error: "fa-circle-exclamation",
+    warning: "fa-triangle-exclamation",
+    info: "fa-circle-info",
+  };
+
+  // How long a toast stays up. Short messages were vanishing before they could
+  // be read, so the floor is 5s and long text buys more time (roughly reading
+  // speed). Errors never auto-dismiss: if something failed you get to read it.
+  function toastDuration(type, text, title) {
+    if (type === "error") return 0;
+    const words = String((title || "") + " " + (text || "")).trim().split(/\s+/)
+      .length;
+    return Math.min(14000, Math.max(5000, 2200 + words * 380));
+  }
+
   function toast(message, opts) {
     const o = opts || {};
     const host = ensureHost(o.fullWidth);
-    const t = el("div", { class: "tk-toast " + (o.type || "info") });
+    const type = o.type || "info";
+    const body = String(message == null ? "" : message);
+    const t = el("div", { class: "tk-toast " + type });
+    // Routine confirmations announce politely; problems interrupt.
+    t.setAttribute("role", type === "error" ? "alert" : "status");
+    t.setAttribute("aria-live", type === "error" ? "assertive" : "polite");
+    t.setAttribute("aria-atomic", "true");
+
+    t.appendChild(
+      iconNode(
+        '<i class="fas ' + (TOAST_ICON[type] || TOAST_ICON.info) + '"></i>',
+        "tk-tico",
+      ),
+    );
+
     const txt = el("div", { class: "tk-ttext" });
     if (o.title)
       txt.appendChild(el("div", { class: "tk-ttitle", text: o.title }));
-    txt.appendChild(
-      el("div", { text: String(message == null ? "" : message) }),
-    );
+    if (body) txt.appendChild(el("div", { class: "tk-tbody", text: body }));
     t.appendChild(txt);
+
     const x = el("button", { class: "tk-tx", text: "×" });
-    x.addEventListener("click", () => t.remove());
+    x.setAttribute("aria-label", "Dismiss");
+    const close = () => {
+      t.classList.add("tk-tout");
+      setTimeout(() => t.remove(), 160);
+    };
+    x.addEventListener("click", close);
     t.appendChild(x);
+
+    const ms = o.timeout != null ? o.timeout : toastDuration(type, body, o.title);
+    if (ms > 0) {
+      // A progress bar makes the remaining time visible instead of the toast
+      // just disappearing, and hovering or focusing it holds the toast open.
+      const bar = el("div", { class: "tk-tbar" });
+      const fill = el("div", { class: "tk-tfill" });
+      fill.style.animationDuration = ms + "ms";
+      bar.appendChild(fill);
+      t.appendChild(bar);
+
+      let timer = null;
+      let startedAt = 0;
+      let left = ms;
+      const start = () => {
+        startedAt = Date.now();
+        fill.style.animationPlayState = "running";
+        timer = setTimeout(close, left);
+      };
+      const hold = () => {
+        if (!timer) return;
+        clearTimeout(timer);
+        timer = null;
+        left = Math.max(600, left - (Date.now() - startedAt));
+        fill.style.animationPlayState = "paused";
+      };
+      t.addEventListener("mouseenter", hold);
+      t.addEventListener("focusin", hold);
+      t.addEventListener("mouseleave", start);
+      t.addEventListener("focusout", start);
+      host.appendChild(t);
+      start();
+      return t;
+    }
+
     host.appendChild(t);
-    const ms = o.timeout != null ? o.timeout : 9000;
-    if (ms > 0) setTimeout(() => t.remove(), ms);
     return t;
+  }
+
+  // Turns a raw "staff action result" into something worth reading. The server
+  // sends a terse action name ("review application"), which on its own tells a
+  // moderator nothing about what actually happened or to whom.
+  function actionToast(d) {
+    if (!d) return;
+    const who = d.username || d.name || null;
+    const target = who ? '"' + who + '"' : "that user";
+    const A = d.action || "action";
+
+    if (!d.ok) {
+      toast(d.error || "The server refused it. You may not have the level for this action, or the user has already gone.", {
+        type: "error",
+        title: "Could not " + A,
+      });
+      return;
+    }
+
+    // title + body per action; anything unlisted falls back to the action name.
+    let title = null;
+    let body = null;
+    switch (A) {
+      case "kick":
+        title = d.ban ? "Kicked and room-banned" : "Kicked";
+        body = d.ban
+          ? target + " was removed and cannot rejoin this room."
+          : target + " was removed from the room. They can rejoin.";
+        break;
+      case "ip block":
+        title = "Blocked";
+        body =
+          (who ? target : "That user") +
+          " was disconnected and cannot reconnect for " +
+          (d.duration === "permanent" ? "good" : d.duration || "a while") +
+          (d.rangeApplied
+            ? ". Their whole network range is covered, so a neighbouring address will not get them back in."
+            : ". This covers one address only.");
+        break;
+      case "ban ip":
+        title = "Block placed";
+        body =
+          "It takes effect now, for " +
+          (d.duration === "permanent" ? "good" : d.duration || "a while") +
+          (d.rangeApplied ? ", across the whole surrounding range." : ".");
+        break;
+      case "unblock ip":
+        title = d.removed ? "Unbanned" : "Nothing to unban";
+        body = d.removed
+          ? "They can connect again straight away."
+          : "That block had already expired or been lifted.";
+        break;
+      case "set block duration":
+        title = "Ban re-timed";
+        body = "The countdown restarts from now.";
+        break;
+      case "set block message":
+        title = "Ban message saved";
+        body = "They will see it on the ban screen next time they try to connect.";
+        break;
+      case "warn":
+        title = "Warning sent";
+        body = target + " has been told. It is recorded in the audit log.";
+        break;
+      case "rename":
+        title = "Name reset";
+        body = "They are now shown as Anonymous.";
+        break;
+      case "reset location":
+        title = "Location reset";
+        body = 'Their location is back to "On The Web".';
+        break;
+      case "turn pfp off":
+        title = "Profile picture removed";
+        body = "They cannot put it back until staff allow it again.";
+        break;
+      case "allow pfp":
+        title = "Profile picture allowed";
+        body = "They can set one again.";
+        break;
+      case "rename room":
+        title = "Room renamed";
+        body = d.name ? 'It is now "' + d.name + '".' : "Everyone in it was told.";
+        break;
+      case "lock room":
+        title = d.locked ? "Room locked" : "Room unlocked";
+        body = d.locked
+          ? "Nobody new can join. People already inside stay."
+          : "Anyone can join again.";
+        break;
+      case "slow mode":
+        title = d.enabled ? "Slow mode on" : "Slow mode off";
+        body = d.enabled
+          ? "The room updates more slowly for everyone."
+          : "The room updates at normal speed again.";
+        break;
+      case "close room":
+        title = "Room closed";
+        body = "Everyone was removed and the room is gone.";
+        break;
+      case "wipe buffer":
+        title = "Text wiped";
+        body = "What they had typed is gone from every screen.";
+        break;
+      case "set note":
+        title = "Note saved";
+        body = "Other staff will see it on their row.";
+        break;
+      case "clear note":
+        title = "Note cleared";
+        break;
+      case "revoke mod":
+        title = "Mod key revoked";
+        body = "Their access was removed immediately.";
+        break;
+      case "review application":
+        title = "Application reviewed";
+        body = "The applicant has been told the outcome.";
+        break;
+      default:
+        title = A.charAt(0).toUpperCase() + A.slice(1);
+        body = "Done.";
+    }
+    toast(body, { type: "success", title });
   }
 
   function copy(text) {
@@ -1064,6 +1286,7 @@
     menu,
     panel,
     toast,
+    actionToast,
     copy,
     help,
   };

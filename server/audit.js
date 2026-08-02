@@ -217,15 +217,115 @@ function recordComment({ entryId, role, label, text, ip }) {
   });
 }
 
-function recent(limit = 500, includeIp = true, modLevel = 2) {
+// Midnight in Los Angeles, as a UTC timestamp. The dashboard shows one Pacific
+// day at a time so every staff member is looking at the same window whatever
+// timezone they are in. Uses Intl rather than a fixed offset so the switch
+// between PST and PDT is handled for us.
+const PACIFIC_FMT = (() => {
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles",
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch (_) {
+    return null;
+  }
+})();
+
+function startOfPacificDay(now = Date.now()) {
+  if (!PACIFIC_FMT) return 0; // no Intl: show everything rather than nothing
+  try {
+    const partsAt = (t) =>
+      PACIFIC_FMT.formatToParts(new Date(t)).reduce(
+        (a, p) => ((a[p.type] = p.value), a),
+        {},
+      );
+    // How far the Pacific wall clock sits from UTC at a given instant.
+    const offsetAt = (t) => {
+      const p = partsAt(t);
+      return (
+        Date.UTC(
+          +p.year,
+          +p.month - 1,
+          +p.day,
+          +p.hour,
+          +p.minute,
+          +p.second,
+        ) -
+        Math.floor(t / 1000) * 1000
+      );
+    };
+    const today = partsAt(now);
+    const localMidnight = Date.UTC(+today.year, +today.month - 1, +today.day);
+    // Convert local midnight to a real instant. The offset can change during
+    // the day (the two DST switchovers), so resolve with the offset that is
+    // actually in force at midnight, not the one in force right now.
+    let guess = localMidnight - offsetAt(now);
+    guess = localMidnight - offsetAt(guess);
+    return guess;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function recent(limit = 500, includeIp = true, modLevel = 2, since = 0) {
   const n = Math.max(1, Number(limit) || 500);
-  const slice = entries.slice(-n);
+  let slice = entries.slice(-n);
+  if (since > 0) slice = slice.filter((e) => (e.ts || 0) >= since);
   // Devs see everything; mods get IP-redacted entries with dev-only ones and
   // anything above their level removed.
   if (includeIp) return slice;
   return slice
     .filter((e) => !e.devOnly && (!e.minLevel || modLevel >= e.minLevel))
     .map(redactForMod);
+}
+
+// Action strings carry their parameters ("ip block 24h", "rename (was Bob)",
+// "grant mod L1"). Strip those so the per-moderator tally groups the same kind
+// of action together instead of splitting it across every variation.
+function baseAction(action) {
+  return String(action || "?")
+    .replace(/\s*\([^)]*\)/g, "")
+    .replace(/\s+(1h|24h|7d|permanent)\b/gi, "")
+    .replace(/\s+L\d\b/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+// Everything one staff member has ever done, newest first, with a tally per
+// kind of action. Visible to all staff: the point is that moderators can be
+// held to account by their peers, not just by devs.
+function historyFor(label, role, limit = 500) {
+  const want = String(label || "");
+  if (!want) return { label: want, total: 0, counts: [], entries: [] };
+  const mine = [];
+  const counts = new Map();
+  for (const e of entries) {
+    if (e.type !== "action") continue;
+    if (e.label !== want) continue;
+    if (role && e.role && e.role !== role) continue;
+    mine.push(e);
+    const k = baseAction(e.action);
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  const n = Math.max(1, Math.min(Number(limit) || 500, 2000));
+  return {
+    label: want,
+    role: role || null,
+    total: mine.length,
+    first: mine.length ? mine[0].ts : null,
+    last: mine.length ? mine[mine.length - 1].ts : null,
+    counts: [...counts.entries()]
+      .map(([action, n2]) => ({ action, n: n2 }))
+      .sort((a, b) => b.n - a.n),
+    entries: mine.slice(-n).reverse(),
+  };
 }
 
 function setAuditSub(socket, on) {
@@ -270,6 +370,8 @@ module.exports = {
   recordNotification,
   recordComment,
   recent,
+  historyFor,
+  startOfPacificDay,
   setAuditSub,
   load,
 };

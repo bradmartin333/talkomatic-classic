@@ -474,35 +474,30 @@
       }
 
       /* ── Column grids: 3 → 2 → 1 ──
-         Rows stretch so every card in a row is the same height; each card is a
-         flex column with its footer pinned to the bottom, so a short card next
-         to a tall one still lines up instead of leaving a ragged edge. */
+         Cards keep their natural height. Stretching them to match the tallest
+         card in the row turns one big card (a person with 29 blocks) into a
+         row of empty black bars, so instead the content that can run long is
+         capped below and every card stays a comparable size. */
       .grid3,
       .grid2 {
         display: grid;
         gap: 12px;
-        align-items: stretch;
+        align-items: start;
       }
       .grid3 > *,
       .grid2 > * {
         min-width: 0;
       }
-      .entry,
-      .bancard,
-      .modcard,
-      .appcard,
-      .appealcard,
-      .report-card,
-      .sesscard {
-        display: flex;
-        flex-direction: column;
+      /* Nothing inside a card may grow without bound: long free text scrolls
+         inside its own box, and a long list collapses behind a Show all. */
+      .entry .detail {
+        max-height: 200px;
+        overflow-y: auto;
       }
-      .entry .cmtbox,
-      .appcard .ac-foot,
-      .appealcard .ap-foot,
-      .report-card .rc-foot,
-      .modcard .mc-actions {
-        margin-top: auto;
+      .qa-a,
+      .ap-box .val {
+        max-height: 220px;
+        overflow-y: auto;
       }
       .grid3 {
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1547,7 +1542,299 @@
         border-top: 1px solid var(--line-soft);
       }
 
-      /* ── Ban list ── */
+      /* ── One moderator's record (modal) ── */
+      .mh-sum {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      .mh-tot {
+        flex: 1 1 120px;
+        background: var(--tile);
+        border-radius: 5px;
+        padding: 10px 12px;
+      }
+      .mh-n {
+        display: block;
+        font-size: 20px;
+        font-weight: bold;
+        color: var(--orange);
+        font-variant-numeric: tabular-nums;
+      }
+      .mh-l {
+        display: block;
+        font-size: 11px;
+        color: var(--dim2);
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+      }
+      .mh-counts {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-bottom: 14px;
+      }
+      .mh-chip {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 6px;
+        background: var(--tile);
+        border-radius: 5px;
+        padding: 5px 10px;
+        font-size: 12.5px;
+      }
+      .mh-chip .n {
+        font-weight: bold;
+        color: var(--txt);
+        font-variant-numeric: tabular-nums;
+      }
+      .mh-chip .a {
+        color: var(--dim);
+      }
+      .mh-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-height: 46vh;
+        overflow-y: auto;
+      }
+      .mh-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        background: var(--card);
+        border-radius: 5px;
+        padding: 9px 11px;
+      }
+      .mh-row .ico {
+        width: 28px;
+        height: 28px;
+        font-size: 13px;
+      }
+      .mh-main {
+        flex: 1;
+        min-width: 0;
+      }
+      .mh-act {
+        font-size: 13.5px;
+        font-weight: bold;
+        color: var(--txt);
+        word-break: break-word;
+      }
+      .mh-meta,
+      .mh-det {
+        display: block;
+        font-size: 12px;
+        color: var(--dim2);
+        word-break: break-word;
+      }
+      .mh-det {
+        color: var(--dim);
+        margin-top: 2px;
+        font-style: italic;
+      }
+      .mh-when {
+        font-size: 11.5px;
+        color: var(--dim2);
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+      .mh-note {
+        display: block;
+        margin-top: 10px;
+        font-size: 12px;
+        color: var(--dim2);
+        text-align: center;
+      }
+
+      /* ── Ban list: a table, not cards ──────────────────────────────────
+         One person is one fixed-height row, so somebody with thirty blocks
+         takes no more room than somebody with one, and 20+ bans stay
+         scannable. Their blocks open in a detail panel underneath. */
+      .bantable {
+        border: 1px solid var(--line-soft);
+        border-radius: 5px;
+        overflow: hidden;
+      }
+      .banhead,
+      .banrow {
+        display: grid;
+        grid-template-columns:
+          26px 40px minmax(0, 1fr) minmax(0, 210px)
+          110px 82px 128px;
+        align-items: center;
+        gap: 10px;
+      }
+      .banhead {
+        padding: 9px 14px;
+        background: var(--tile);
+        font-size: 10.5px;
+        font-weight: bold;
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+        color: var(--dim2);
+      }
+      .banrow {
+        width: 100%;
+        text-align: left;
+        appearance: none;
+        background: var(--card);
+        border: none;
+        border-top: 1px solid var(--line-soft);
+        border-left: 3px solid var(--amber);
+        color: var(--txt);
+        font-family: inherit;
+        padding: 10px 14px 10px 11px;
+        cursor: pointer;
+        transition: background-color 0.12s ease;
+      }
+      .banrow.perm {
+        border-left-color: var(--red);
+      }
+      .banrow:hover {
+        background: var(--tile);
+      }
+      .banrow.open {
+        background: var(--tile);
+      }
+      .br-chev {
+        color: var(--dim2);
+        font-size: 11px;
+        transition: transform 0.15s ease;
+      }
+      .banrow.open .br-chev {
+        transform: rotate(90deg);
+        color: var(--orange);
+      }
+      .br-av {
+        width: 34px;
+        height: 34px;
+        font-size: 14px;
+        border-radius: 5px;
+      }
+      .br-who {
+        min-width: 0;
+      }
+      .br-name {
+        display: block;
+        font-size: 14.5px;
+        font-weight: bold;
+        color: var(--txt);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .br-sub {
+        font-size: 11.5px;
+        color: var(--dim2);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .br-blocks {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        min-width: 0;
+      }
+      .br-count {
+        font-size: 15px;
+        font-weight: bold;
+        color: var(--txt);
+        font-variant-numeric: tabular-nums;
+      }
+      .br-unit {
+        font-size: 11.5px;
+        color: var(--dim2);
+        margin-right: 2px;
+      }
+      .br-by,
+      .br-when {
+        font-size: 12.5px;
+        color: var(--dim);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .br-when {
+        color: var(--dim2);
+        font-variant-numeric: tabular-nums;
+      }
+      .br-ends {
+        justify-self: end;
+      }
+      .bandetail {
+        background: var(--bg);
+        border-top: 1px solid var(--line-soft);
+        padding: 12px 14px 6px 40px;
+      }
+      .bandetail-foot {
+        display: flex;
+        justify-content: flex-end;
+        padding: 0 0 10px;
+      }
+      /* The card-era boxes are reused inside the panel, minus their card gutters */
+      .bandetail .blocks,
+      .bandetail .bc-msg,
+      .bandetail .bc-idline {
+        margin-left: 0;
+        margin-right: 0;
+        padding-left: 0;
+        padding-right: 0;
+      }
+      .bandetail .bc-msg {
+        padding: 9px 12px;
+      }
+      .bandetail .blocks {
+        max-height: 400px;
+        overflow-y: auto;
+        padding-bottom: 0;
+      }
+      .bantotal {
+        padding: 9px 14px;
+        background: var(--tile);
+        border-top: 1px solid var(--line-soft);
+        font-size: 12px;
+        color: var(--dim2);
+        text-align: right;
+      }
+      /* Drop the least useful columns first as space runs out */
+      @media (max-width: 1080px) {
+        .banhead,
+        .banrow {
+          grid-template-columns: 26px 40px minmax(0, 1fr) minmax(0, 190px) 82px 128px;
+        }
+        .banhead > :nth-child(5),
+        .br-by {
+          display: none;
+        }
+      }
+      @media (max-width: 780px) {
+        .banhead {
+          display: none;
+        }
+        .banrow {
+          grid-template-columns: 22px 34px minmax(0, 1fr) auto;
+          gap: 8px;
+        }
+        .br-when {
+          display: none;
+        }
+        .br-blocks {
+          grid-column: 3;
+          grid-row: 2;
+        }
+        .br-ends {
+          grid-row: 1;
+        }
+        .bandetail {
+          padding-left: 14px;
+        }
+      }
+
+      /* ── Ban list (legacy card styles, still used by the detail panel) ── */
       .bancard {
         background: var(--card);
         border: 1px solid var(--line-soft);
@@ -2138,7 +2425,7 @@
         <section id="tab-activity" class="panel active">
           <div class="strip">
             <i class="fas fa-rectangle-list lead"></i> Staff activity
-            <span class="sub">Every action and identity event, live</span>
+            <span class="sub" id="dayLabel">Today, Pacific time</span>
           </div>
           <div class="toolbar">
             <div class="search-wrap">
@@ -2359,7 +2646,7 @@
               <button data-b="id">ID bans</button>
             </div>
           </div>
-          <div id="bansList" class="grid3"></div>
+          <div id="bansList" class="bantable"></div>
 
           <div class="strip mini">
             <i class="fas fa-clock-rotate-left lead ic-orange"></i> Ban &amp;
@@ -2669,7 +2956,7 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="js/staff-ui.js?v=1.6.0"></script>
-    <script src="js/mod.js?v=4.1.0"></script>
+    <script src="js/staff-ui.js?v=1.7.1"></script>
+    <script src="js/mod.js?v=4.3.0"></script>
   </body>
 </html>

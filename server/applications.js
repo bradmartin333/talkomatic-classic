@@ -66,7 +66,7 @@ function recentCountForDevice(deviceId, windowMs) {
   return n;
 }
 
-function submit({ deviceId, ip, username, answers, discordId }, opts = {}) {
+function submit({ deviceId, ip, username, answers, discordId, discord }, opts = {}) {
   if (!deviceId) return { ok: false, error: "This browser can't be identified." };
   if (pendingForDevice(deviceId))
     return { ok: false, error: "You already have an application pending." };
@@ -84,8 +84,9 @@ function submit({ deviceId, ip, username, answers, discordId }, opts = {}) {
     ip: ip || null,
     username: username || null,
     answers: answers || {},
-    // Discord account id, captured when the applicant has their Discord
-    // picture linked. Reviewers use it to find them in the Talkomatic server.
+    // How a reviewer finds them in the Talkomatic Discord: the username they
+    // typed, plus the account id when they have their Discord picture linked.
+    discord: discord || null,
     discordId: discordId || null,
     submittedAt: Date.now(),
     status: "pending",

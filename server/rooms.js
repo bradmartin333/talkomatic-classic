@@ -925,6 +925,7 @@ function sendAppsList(s) {
       // Applicant identity, shown to all staff (same as the reports board); the
       // raw IP stays dev-only, matching how the audit feed is redacted for mods.
       deviceId: a.deviceId || null,
+      discord: a.discord || null,
       discordId: a.discordId || null,
       ip: isDev ? a.ip : undefined,
     })),
@@ -1069,6 +1070,20 @@ const STAFF_KEY_WINDOW = 5 * 60 * 1000;
 function buildBlockList(forDev) {
   const now = Date.now();
   const out = [];
+  // Work out which accounts sit behind each block in ONE pass over the identity
+  // store. Doing it per block re-scanned every device for every block, which is
+  // what made the dashboard take about a second to redraw.
+  const live = [];
+  for (const [ip, b] of state.blockedIPs) {
+    const expiry = b && typeof b === "object" ? b.expiry : b;
+    if (expiry && expiry !== Number.MAX_SAFE_INTEGER && now >= expiry) continue;
+    live.push(ip);
+  }
+  const seenByKey = identity.devicesByKeys(
+    ipban.prepareKeys(live),
+    ipban.keysCovering,
+  );
+
   for (const [ip, b] of state.blockedIPs) {
     const expiry = b && typeof b === "object" ? b.expiry : b;
     if (expiry && expiry !== Number.MAX_SAFE_INTEGER && now >= expiry) continue;
@@ -1089,7 +1104,7 @@ function buildBlockList(forDev) {
         ]
         : [];
     } else {
-      matched = identity.devicesMatching((addr) => ipban.matchesKey(addr, ip));
+      matched = seenByKey.get(ip) || [];
     }
     out.push({
       ip: forDev ? ip : undefined,
@@ -5719,8 +5734,17 @@ function registerSocketHandlers() {
         if (!requireStaff(socket)) return;
         audit.setAuditSub(socket, true);
         const limit = Math.max(1, Math.min(Number(data?.limit) || 800, 20000));
+        // One Pacific day at a time, so the feed reads the same for everyone
+        // and resets at midnight PT.
+        const dayStart = audit.startOfPacificDay();
         socket.emit("audit snapshot", {
-          entries: audit.recent(limit, !!socket.isDev, socket.modLevel || 2),
+          entries: audit.recent(
+            limit,
+            !!socket.isDev,
+            socket.modLevel || 2,
+            dayStart,
+          ),
+          dayStart,
           me: {
             role: socket.isDev ? "dev" : "mod",
             label: socket.staffLabel || null,
@@ -5730,6 +5754,29 @@ function registerSocketHandlers() {
             devs: roles.listDevKeys().map((d) => d.label),
             mods: roles.listModKeys().map((m) => m.label),
           },
+        });
+      }),
+    );
+
+    // Everything one staff member has ever done. Any staff level may look at
+    // any other, so the team can hold each other to account. The raw IP on
+    // each entry stays dev-only, same as the main feed.
+    socket.on(
+      "staff get mod history",
+      safe(async (data) => {
+        if (!requireStaff(socket)) return;
+        const label = typeof data?.label === "string" ? data.label : "";
+        const role = data?.role === "dev" ? "dev" : "mod";
+        const h = audit.historyFor(label, role, 500);
+        socket.emit("staff mod history", {
+          ...h,
+          entries: socket.isDev
+            ? h.entries
+            : h.entries.map((e) => {
+              const c = Object.assign({}, e);
+              delete c.ip;
+              return c;
+            }),
         });
       }),
     );
@@ -6247,10 +6294,25 @@ function registerSocketHandlers() {
             ok: false,
             error: "Please say why you'd like to help moderate.",
           });
+        // Discord handle, so a reviewer can find them in the server. Strip a
+        // leading @ and keep it to the characters Discord actually allows.
+        const discord = sanitizeMessage(
+          typeof data?.discord === "string" ? data.discord : "",
+        )
+          .replace(/^@+/, "")
+          .replace(/[^A-Za-z0-9._-]/g, "")
+          .slice(0, 40);
+        if (!discord)
+          return socket.emit("mod application result", {
+            ok: false,
+            error:
+              "Please enter your Discord username so we can reach you in the Talkomatic server.",
+          });
         const res = applications.submit({
           deviceId: socket.deviceId,
           ip: socket.clientIp,
           username: socket.handshake.session?.username,
+          discord,
           answers: { why, availability },
           // Present only when they have linked their Discord picture, which is
           // what lets a reviewer match them to the Talkomatic server.

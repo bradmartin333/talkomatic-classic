@@ -4992,14 +4992,10 @@ socket.on("maintenance status", (data) => {
 socket.on("staff action result", (data) => {
   if (!data) return;
   if (data.action === "room size" && data.size) currentRoomMaxSize = data.size;
-  let msg = (data.ok ? "Done: " : "Failed: ") + data.action;
-  // Confirm the IP-block scope so staff know whether the /64 range was applied
-  // (only lands for IPv6 targets) without ever revealing the address.
-  if (data.ok && data.action === "ip block")
-    msg = data.rangeApplied
-      ? "Done: IP block (blocked their IPv6 /64 range)"
-      : "Done: IP block (single address)";
-  notify(msg, data.ok ? "success" : "error");
+  // Shared wording, so the same action reads identically here and in the
+  // dashboard, and says who it hit and what it actually did.
+  if (window.StaffUI) StaffUI.actionToast(data);
+  else notify((data.ok ? "Done: " : "Failed: ") + data.action, data.ok ? "success" : "error");
 });
 socket.on("staff revoked", () => {
   localStorage.removeItem("talkomatic_modKey");

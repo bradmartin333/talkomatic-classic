@@ -2248,7 +2248,9 @@ socket.on("dev flags", (flags) => {
 });
 
 socket.on("staff action result", (data) => {
-  if (data)
+  if (!data) return;
+  if (window.StaffUI) StaffUI.actionToast(data);
+  else
     lobbyNotify(
       (data.ok ? "Done: " : "Failed: ") + data.action,
       data.ok ? "success" : "error",
@@ -2555,6 +2557,15 @@ async function openModApply() {
         placeholder: "Tell us a little about yourself…",
       },
       {
+        name: "discord",
+        label: "Your Discord username",
+        type: "text",
+        maxLength: 40,
+        required: true,
+        placeholder: "e.g. zacki",
+        help: "So we can find you in the Talkomatic Discord and give you the mod role if you are accepted. Your @username, not your display name.",
+      },
+      {
         name: "availability",
         label: "When are you usually online? (optional)",
         type: "text",
@@ -2568,6 +2579,7 @@ async function openModApply() {
     socket.emit("mod application submit", {
       why: r.why,
       availability: r.availability,
+      discord: r.discord,
     });
 }
 const modApplyLink = document.getElementById("modApplyLink");
