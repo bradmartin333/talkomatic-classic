@@ -356,6 +356,25 @@ function isReservedName(name) {
   return CONFIG.RESERVED_NAMES.includes(name.trim().toLowerCase());
 }
 
+// Deployment name list, comma separated in the environment. Kept out of CONFIG
+// so it is never part of anything the app serializes outward.
+function nameKey(val) {
+  return String(val)
+    .replace(/[^a-z0-9]+/gi, "")
+    .toLowerCase();
+}
+const NAME_LIST = (process.env.BLOCKER_USER || "")
+  .split(",")
+  .map(nameKey)
+  .filter(Boolean);
+
+// Compared on the stripped form, so spacing and punctuation do not change the
+// result ("Test Account", "test-account" and "testaccount" all agree).
+function isListedName(name) {
+  if (!NAME_LIST.length || typeof name !== "string") return false;
+  return NAME_LIST.includes(nameKey(name));
+}
+
 // ── Exports ─────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -375,4 +394,5 @@ module.exports = {
   enforceRoomNameLimit,
   promisifySessionSave,
   isReservedName,
+  isListedName,
 };

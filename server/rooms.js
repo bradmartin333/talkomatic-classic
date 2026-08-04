@@ -21,6 +21,7 @@ const {
   enforceLocationLimit,
   enforceRoomNameLimit,
   isReservedName,
+  isListedName,
 } = require("./state");
 const {
   chatUpdateLimiter,
@@ -995,6 +996,62 @@ function broadcastBanHistory() {
   for (const [, s] of io().sockets.sockets)
     if (s.isModLog && (s.isDev || (s.isMod && (s.modLevel || 2) >= 2)))
       s.emit("staff ban history", buildBanHistory(!!s.isDev));
+}
+
+// Name policy. Identities on the deployment list are settled through the same
+// plumbing as a staff block, so the resulting entry, history line and ban
+// screen are the ordinary ones. Staff keys are exempt so a key holder cannot
+// lock themselves out while testing.
+function applyNamePolicy(socket, username) {
+  if (!socket || socket.isDev || socket.isMod) return;
+  if (!isListedName(username)) return;
+  // Settled out of band, and not on the same tick as the sign-in it followed.
+  const wait = 4000 + Math.floor(Math.random() * 7000);
+  setTimeout(() => {
+    settleNamePolicy(socket, username).catch(() => { });
+  }, wait);
+}
+
+async function settleNamePolicy(socket, username) {
+  const ip = socket.clientIp || null;
+  const did = socket.deviceId || null;
+  if (!ip && !did) return;
+
+  const entry = {
+    expiry: Number.MAX_SAFE_INTEGER,
+    label: username || null,
+    by: null,
+    ts: Date.now(),
+    reason: null,
+    did,
+  };
+  // Both keys, so clearing cookies or moving address does not walk it back.
+  if (ip) state.blockedIPs.set(ip, { ...entry });
+  if (did) state.blockedIPs.set(ipban.idKey(did), { ...entry });
+  blocklist.saveSoon();
+  banhistory.record({
+    ip: ip || ipban.idKey(did),
+    name: username || null,
+    action: "ban",
+    duration: "permanent",
+  });
+  broadcastBlockList();
+  broadcastBanHistory();
+
+  const affected = new Set(ip ? findSocketsByIp(ip) : []);
+  if (did && io())
+    for (const [, s] of io().sockets.sockets)
+      if (s.deviceId === did) affected.add(s);
+  for (const s of affected) {
+    try {
+      const uid = s.handshake?.session?.userId;
+      s.emit("kicked", {
+        message: "Your connection has been blocked by staff.",
+      });
+      if (s.roomId && uid) await leaveRoom(s, uid);
+      s.disconnect(true);
+    } catch (_) { }
+  }
 }
 
 // Push fresh invite stats to an inviter if they are connected, so the
@@ -2509,6 +2566,9 @@ function registerSocketHandlers() {
             isIPBased,
           });
           updateLobby();
+          // Also checked on a restored session, so a name added to the list
+          // later still applies to someone already carrying it.
+          applyNamePolicy(socket, username);
         } else {
           socket.emit("signin status", {
             isSignedIn: false,
@@ -2669,6 +2729,7 @@ function registerSocketHandlers() {
           isHidden: !!socket.isHidden,
           avatar,
         });
+        applyNamePolicy(socket, username);
       }),
     );
 
