@@ -683,7 +683,7 @@ function resolveOfflineTarget(targetUserId) {
 // For offline users we flag whether the server still has an IP on file, so the
 // board can offer an IP block without ever sending the address to the client.
 function buildReportsList(forDev) {
-  const rows = reports.summary().map((s) => {
+  return reports.summary().map((s) => {
     const targets = findSocketsByUserId(s.targetKey);
     const online = targets.length > 0;
     let name = s.name;
@@ -721,9 +721,6 @@ function buildReportsList(forDev) {
       canBanOffline,
       first: s.first,
       last: s.last,
-      // Set once staff warned / blocked / kicked them, so the board can show
-      // "warned by X" instead of leaving the card looking untouched.
-      resolution: s.resolution || null,
       reasons: reports
         .forTarget(s.targetKey)
         .reverse()
@@ -739,10 +736,6 @@ function buildReportsList(forDev) {
         })),
     };
   });
-  // Handled cards sink below the ones still needing action; the stable sort
-  // keeps most-reported-first order within each group.
-  rows.sort((a, b) => (a.resolution ? 1 : 0) - (b.resolution ? 1 : 0));
-  return rows;
 }
 
 // Build the appeals board payload (shared by the get + resolve handlers): one
@@ -972,6 +965,18 @@ function broadcastReportsList() {
   for (const [, s] of io().sockets.sockets)
     if (s.isModLog && (s.isDev || (s.isMod && (s.modLevel || 2) >= 2)))
       s.emit("staff reports", buildReportsList(!!s.isDev));
+}
+
+// Acting on a reported user (warn / kick / ip block) settles their report, so
+// drop it from the board - the queue should only ever show what still needs
+// attention. Nothing is lost: the action itself is in the audit feed, which is
+// the permanent record.
+function clearReportAfterAction(socket, targetUserId) {
+  if (!targetUserId || !reports.clear(targetUserId)) return;
+  broadcastReportsList();
+  // Junior (L1) mods can warn and kick but sit outside the broadcast gate
+  // above, so tell the acting staffer directly too.
+  socket.emit("staff reports", buildReportsList(!!socket.isDev));
 }
 
 // Push the IP ban list to every open dashboard (full mods + devs). Each socket
@@ -3999,17 +4004,7 @@ function registerSocketHandlers() {
           ban,
           roomId,
         });
-        // Stamp their report card (if any) as handled so the board shows the
-        // kick instead of leaving the card looking untouched.
-        if (
-          reports.resolve(targetUserId, {
-            action: "kicked",
-            by: socket.staffLabel || null,
-          })
-        ) {
-          broadcastReportsList();
-          socket.emit("staff reports", buildReportsList(!!socket.isDev));
-        }
+        clearReportAfterAction(socket, targetUserId);
       }),
     );
 
@@ -4165,7 +4160,10 @@ function registerSocketHandlers() {
         logStaff(
           socket,
           `ip block ${duration}${cidr ? " (range)" : ""}`,
-          targetUser || { id: targetUserId },
+          // blockedName covers the offline case, where there is no live
+          // targetUser to read a username from. Acting clears their report, so
+          // this audit line is the only lasting record of who was blocked.
+          targetUser || { id: targetUserId, name: blockedName },
           room || "-",
           reason || undefined,
         );
@@ -4178,18 +4176,7 @@ function registerSocketHandlers() {
           // range ban only lands for IPv6, so this confirms it for them.
           rangeApplied: !!cidr,
         });
-        // Stamp their report card (if any) as handled so the board shows the
-        // block instead of leaving the card looking untouched.
-        if (
-          reports.resolve(targetUserId, {
-            action: "ip blocked",
-            by: socket.staffLabel || null,
-            duration,
-          })
-        ) {
-          broadcastReportsList();
-          socket.emit("staff reports", buildReportsList(!!socket.isDev));
-        }
+        clearReportAfterAction(socket, targetUserId);
       }),
     );
 
@@ -6662,18 +6649,7 @@ function registerSocketHandlers() {
             ? "warned " + targetName
             : "warning queued for " + targetName,
         });
-        // If they are on the reports board, stamp the card as handled so
-        // every dashboard sees action was taken (direct emit covers junior
-        // mods, who are outside the broadcast gate).
-        if (
-          reports.resolve(targetUserId, {
-            action: "warned",
-            by: socket.staffLabel || null,
-          })
-        ) {
-          broadcastReportsList();
-          socket.emit("staff reports", buildReportsList(!!socket.isDev));
-        }
+        clearReportAfterAction(socket, targetUserId);
       }),
     );
 

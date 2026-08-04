@@ -473,11 +473,13 @@
         color: #000;
       }
 
-      /* ── Column grids: 3 → 2 → 1 ──
-         Cards keep their natural height. Stretching them to match the tallest
-         card in the row turns one big card (a person with 29 blocks) into a
-         row of empty black bars, so instead the content that can run long is
-         capped below and every card stays a comparable size. */
+      /* ── Column grids ──
+         .grid3 (activity feed, roster, sessions) stays multi-column with
+         uniform fixed-height cards: those are skim-and-move-on lists.
+         .grid2 (reports, invites, applications, appeals, suggestions) is ONE
+         column of naturally-sized cards. Staff read these top to bottom and
+         act on them, so nothing inside is clipped or scrolled away - two
+         narrow columns of inner scrollbars made them unreadable. */
       .grid3,
       .grid2 {
         display: grid;
@@ -488,15 +490,12 @@
       .grid2 > * {
         min-width: 0;
       }
-      /* Every card in a grid is the SAME height, whatever it holds, so rows
-         line up instead of ending raggedly. The card is a flex column: header
-         and footer keep their size, the middle scrolls when the content does
-         not fit. Matching the tallest card in each row was tried first and was
+      /* Every .grid3 card is the SAME height, whatever it holds, so rows line
+         up instead of ending raggedly. The card is a flex column: header and
+         footer keep their size, the middle scrolls when the content does not
+         fit. Matching the tallest card in each row was tried first and was
          worse, because one big card inflated everything beside it. */
       .grid3 > .entry,
-      .grid2 > .appcard,
-      .grid2 > .appealcard,
-      .grid2 > .report-card,
       .grid3 > .modcard,
       .grid3 > .sesscard {
         display: flex;
@@ -506,52 +505,28 @@
       .grid3 > .entry {
         height: 236px;
       }
-      .grid2 > .appcard,
-      .grid2 > .appealcard {
-        height: 320px;
-      }
-      .grid2 > .report-card {
-        height: 420px;
-      }
       .grid3 > .modcard {
         height: 232px;
       }
       .grid3 > .sesscard {
         height: 210px;
       }
-      /* The scrolling middle of each card type */
+      /* The scrolling middle of each .grid3 card type */
       .entry .e-body,
-      .appcard .ac-qa,
-      .appealcard .ap-grid,
       .modcard .mc-grid,
       .sesscard .sess-nets {
         flex: 1;
         min-height: 0;
         overflow-y: auto;
       }
-      .report-card .report-log {
-        flex: 1;
-        min-height: 0;
-        max-height: none;
-      }
       /* Footers stay put at the bottom of the card */
       .entry .cmtbox,
-      .appcard .ac-foot,
-      .appealcard .ap-foot,
-      .report-card .rc-foot,
       .modcard .mc-actions {
         flex: none;
         margin-top: auto;
       }
       .entry .e-top,
       .entry .detail,
-      .appcard .ac-head,
-      .appealcard .ap-head,
-      .report-card .rc-head,
-      .report-card .rc-resolved,
-      .report-card .rc-cats,
-      .report-card .rc-typed,
-      .report-card .report-log-head,
       .modcard .mc-top,
       .sesscard .sess-top {
         flex: none;
@@ -560,15 +535,6 @@
          rest of the card out of view. */
       .entry .detail {
         max-height: 96px;
-        overflow-y: auto;
-      }
-      .qa-a,
-      .ap-box .val {
-        max-height: 140px;
-        overflow-y: auto;
-      }
-      .rc-typed .txt {
-        max-height: 72px;
         overflow-y: auto;
       }
       /* Thin scrollbars so the inner scroll areas stay unobtrusive */
@@ -589,7 +555,7 @@
         grid-template-columns: repeat(3, minmax(0, 1fr));
       }
       .grid2 {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: minmax(0, 1fr);
       }
       @media (max-width: 1150px) {
         .grid3 {
@@ -597,8 +563,7 @@
         }
       }
       @media (max-width: 760px) {
-        .grid3,
-        .grid2 {
+        .grid3 {
           grid-template-columns: minmax(0, 1fr);
         }
       }
@@ -952,31 +917,6 @@
       .report-card.hot {
         border-color: var(--red);
       }
-      /* A handled card: dimmed, with a green "warned / blocked by X" strip */
-      .report-card.resolved {
-        opacity: 0.72;
-      }
-      .report-card.resolved:hover {
-        opacity: 1;
-      }
-      .rc-resolved {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 9px 17px;
-        border-top: 1px solid var(--line-soft);
-        background: rgba(87, 217, 163, 0.07);
-        color: var(--green);
-        font-weight: bold;
-        font-size: 13px;
-      }
-      .rc-resolved .when {
-        margin-left: auto;
-        color: var(--dim2);
-        font-weight: normal;
-        font-size: 12px;
-        white-space: nowrap;
-      }
       .rc-head {
         display: flex;
         align-items: center;
@@ -1079,10 +1019,6 @@
         letter-spacing: 0.6px;
         text-transform: uppercase;
         color: var(--dim2);
-      }
-      .report-log {
-        max-height: 360px;
-        overflow-y: auto;
       }
       .rlog {
         display: flex;
