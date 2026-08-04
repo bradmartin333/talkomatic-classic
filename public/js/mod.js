@@ -2185,18 +2185,28 @@
     });
   }
 
+  // How a handled card announces what was done to the reported user.
+  const RESOLVE_META = {
+    warned: { icon: "fa-triangle-exclamation", label: "Warned" },
+    "ip blocked": { icon: "fa-ban", label: "IP blocked" },
+    kicked: { icon: "fa-door-open", label: "Kicked" },
+  };
   function renderReports() {
     const wrap = $("reportsList");
     if (!wrap) return;
     wrap.textContent = "";
+    const open = reportsList.filter((x) => !x.resolution).length;
+    const handled = reportsList.length - open;
     const badge = $("reportsBadge");
-    if (badge) badge.textContent = String(reportsList.length);
+    if (badge) badge.textContent = String(open);
     const sub = $("reportsSub");
     if (sub)
       sub.textContent = reportsList.length
-        ? reportsList.length +
-          " reported user" +
-          (reportsList.length === 1 ? "" : "s")
+        ? open
+          ? open +
+            " needing action" +
+            (handled ? ", " + handled + " handled" : "")
+          : "All " + handled + " handled"
         : "No reports yet";
     if (!reportsList.length) {
       const empty = document.createElement("div");
@@ -2210,7 +2220,10 @@
     reportsList.forEach((r) => {
       const hot = r.distinct >= 3;
       const card = document.createElement("div");
-      card.className = "report-card" + (hot ? " hot" : "");
+      card.className =
+        "report-card" +
+        (hot ? " hot" : "") +
+        (r.resolution ? " resolved" : "");
 
       // Header: avatar, name, reporter count, status, last-report time
       const head = document.createElement("div");
@@ -2269,6 +2282,25 @@
       }
       head.appendChild(idCol);
       card.appendChild(head);
+
+      // Action-taken banner, so nobody re-handles (or misses) a dealt-with
+      // report. Discard still removes the card entirely.
+      if (r.resolution) {
+        const rm = RESOLVE_META[r.resolution.action] || {
+          icon: "fa-check",
+          label: r.resolution.action,
+        };
+        const res = divc("rc-resolved");
+        res.appendChild(icon(rm.icon));
+        let txt = " " + rm.label;
+        if (r.resolution.action === "ip blocked" && r.resolution.duration)
+          txt += " " + durationLabel(r.resolution.duration);
+        txt += " by " + (r.resolution.by || "staff");
+        res.appendChild(document.createTextNode(txt));
+        if (r.resolution.at)
+          res.appendChild(span("when", relTime(r.resolution.at)));
+        card.appendChild(res);
+      }
 
       // Category summary tags, most-used first
       const catEntries = Object.entries(r.categories || {}).sort(

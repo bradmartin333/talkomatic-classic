@@ -548,6 +548,7 @@
       .appcard .ac-head,
       .appealcard .ap-head,
       .report-card .rc-head,
+      .report-card .rc-resolved,
       .report-card .rc-cats,
       .report-card .rc-typed,
       .report-card .report-log-head,
@@ -950,6 +951,31 @@
       }
       .report-card.hot {
         border-color: var(--red);
+      }
+      /* A handled card: dimmed, with a green "warned / blocked by X" strip */
+      .report-card.resolved {
+        opacity: 0.72;
+      }
+      .report-card.resolved:hover {
+        opacity: 1;
+      }
+      .rc-resolved {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 17px;
+        border-top: 1px solid var(--line-soft);
+        background: rgba(87, 217, 163, 0.07);
+        color: var(--green);
+        font-weight: bold;
+        font-size: 13px;
+      }
+      .rc-resolved .when {
+        margin-left: auto;
+        color: var(--dim2);
+        font-weight: normal;
+        font-size: 12px;
+        white-space: nowrap;
       }
       .rc-head {
         display: flex;

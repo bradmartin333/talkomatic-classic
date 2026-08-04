@@ -24,6 +24,7 @@ const MAX_TARGETS = 5000;
 const MAX_PER_TARGET = 100;
 
 let byTarget = new Map(); // targetKey -> [{ byDeviceId, byName, category, reason, at, targetIp, targetDeviceId, targetRole, targetText }]
+let resolutions = new Map(); // targetKey -> { action, by, duration, at } once staff acted
 let saveTimer = null;
 let dirty = false;
 
@@ -32,15 +33,33 @@ function load() {
     const raw = fs.readFileSync(STORE_PATH, "utf8");
     const obj = JSON.parse(raw);
     byTarget = new Map();
+    resolutions = new Map();
     if (obj && typeof obj === "object") {
-      for (const [k, arr] of Object.entries(obj))
+      // v2 wraps everything in { targets, resolutions }; v1 was a bare
+      // targetKey -> array object, so fall back to reading the root.
+      const targets =
+        obj.targets && typeof obj.targets === "object" && !Array.isArray(obj.targets)
+          ? obj.targets
+          : obj;
+      for (const [k, arr] of Object.entries(targets))
         if (Array.isArray(arr)) byTarget.set(k, arr);
+      if (obj.resolutions && typeof obj.resolutions === "object")
+        for (const [k, r] of Object.entries(obj.resolutions))
+          if (r && typeof r === "object" && byTarget.has(k)) resolutions.set(k, r);
     }
     prune(Date.now());
   } catch (err) {
     if (err.code !== "ENOENT") console.error("Error loading reports.json:", err);
     byTarget = new Map();
+    resolutions = new Map();
   }
+}
+
+function serialize() {
+  return JSON.stringify({
+    targets: Object.fromEntries(byTarget),
+    resolutions: Object.fromEntries(resolutions),
+  });
 }
 
 // Atomic write (tmp + rename), debounced, mirrors the other JSON stores.
@@ -53,7 +72,7 @@ function saveSoon() {
     dirty = false;
     try {
       const tmp = STORE_PATH + ".tmp";
-      await fsp.writeFile(tmp, JSON.stringify(Object.fromEntries(byTarget)), "utf8");
+      await fsp.writeFile(tmp, serialize(), "utf8");
       await fsp.rename(tmp, STORE_PATH);
     } catch (e) {
       console.error("reports save failed:", e);
@@ -66,7 +85,7 @@ function saveSoon() {
 function flushSync() {
   try {
     const tmp = STORE_PATH + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(byTarget)), "utf8");
+    fs.writeFileSync(tmp, serialize(), "utf8");
     fs.renameSync(tmp, STORE_PATH);
   } catch (e) {
     console.error("reports flush failed:", e);
@@ -83,6 +102,7 @@ function prune(now) {
     const keys = [...byTarget.keys()];
     for (let i = 0; i < keys.length - MAX_TARGETS; i++) byTarget.delete(keys[i]);
   }
+  for (const k of resolutions.keys()) if (!byTarget.has(k)) resolutions.delete(k);
 }
 
 function distinctReporters(list) {
@@ -130,6 +150,8 @@ function add({
     targetText: targetText || null,
   });
   if (arr.length > MAX_PER_TARGET) arr.splice(0, arr.length - MAX_PER_TARGET);
+  // A fresh report reopens a handled case, so the card shows as active again.
+  resolutions.delete(targetKey);
   prune(now);
   saveSoon();
   const list = byTarget.get(targetKey) || [];
@@ -164,8 +186,23 @@ function lastKnown(targetKey) {
 // Drop every report against one target (staff discarded it as false/handled).
 function clear(targetKey) {
   const had = byTarget.delete(targetKey);
+  resolutions.delete(targetKey);
   if (had) saveSoon();
   return had;
+}
+
+// Stamp a target's reports as handled (warned / ip blocked / kicked), so the
+// board shows who took action instead of leaving the card looking untouched.
+function resolve(targetKey, { action, by, duration } = {}) {
+  if (!targetKey || !action || !byTarget.has(targetKey)) return false;
+  resolutions.set(targetKey, {
+    action,
+    by: by || null,
+    duration: duration || null,
+    at: Date.now(),
+  });
+  saveSoon();
+  return true;
 }
 
 // Compact per-target summary, most-reported first (for a dashboard view).
@@ -182,6 +219,7 @@ function summary() {
       categories: cats,
       first: arr.length ? arr[0].at : 0,
       last: arr.length ? arr[arr.length - 1].at : 0,
+      resolution: resolutions.get(targetKey) || null,
     });
   }
   return out.sort((a, b) => b.distinct - a.distinct || b.total - a.total);
@@ -200,6 +238,7 @@ module.exports = {
   lastKnown,
   summary,
   clear,
+  resolve,
   isTarget,
   flushSync,
 };
