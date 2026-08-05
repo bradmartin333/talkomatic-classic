@@ -577,6 +577,30 @@
 .gm-turn-mine { color: var(--primary, var(--tk-accent)); }
 .gm-gameacts { display: flex; gap: 6px; margin-left: auto; }
 
+/* Folding the chat away is how the board gets room, so the control sits in the
+   bar rather than buried in the panel it hides. */
+
+.gm-chat-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.gm-chat-unread {
+  background: var(--primary, var(--tk-accent));
+  color: #000;
+  font-size: 10px;
+  font-weight: bold;
+  border-radius: 8px;
+  padding: 1px 6px;
+  line-height: 1.5;
+}
+
+.gm-split.gm-nochat .gm-side { display: none; }
+
 /* The result banner. Full width, unmissable, says who won in words. */
 
 .gm-banner {
@@ -835,6 +859,23 @@
   overflow-wrap: anywhere;
   padding-left: 1px;
 }
+
+/* Guesses read at a glance: green for got it, red for a miss. */
+.gm-chat-sys.gm-chat-good {
+  color: var(--tk-success, #4caf50);
+  font-style: normal;
+  font-weight: bold;
+}
+
+.gm-chat-wrong .gm-chat-text {
+  color: var(--tk-error, #ff5252);
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 82, 82, 0.5);
+}
+
+.gm-chat-wrong .gm-chat-who { opacity: 0.8; }
+.gm-nodraw { color: var(--tk-muted); font-size: 10px; }
+.gm-wants { color: var(--primary, var(--tk-accent)); font-size: 10px; }
 
 .gm-chat-typing {
   min-height: 15px;
@@ -1130,14 +1171,24 @@
 
 .gm-main-fit { justify-content: stretch; }
 
+/* No width cap here: the canvas holds its own shape, so letting the column run
+   full width just means the drawing sits in the middle instead of off to one
+   side. */
 .gm-main-fit .gm-board {
   display: flex;
   flex-direction: column;
   min-height: 0;
   max-height: 100%;
-  max-width: 1100px;
+  max-width: none;
   overflow: hidden;
 }
+
+/* While the board cannot run there is nothing to show, so the empty canvas
+   goes away entirely and the waiting card gets the space to itself. This has
+   to sit after the rule above or the flex display wins and you get both. */
+.gm-main-fit.gm-main-waiting { align-items: center; justify-content: center; }
+.gm-main-fit.gm-main-waiting .gm-board { display: none; }
+.gm-main-fit .gm-waitslot { max-width: 470px; }
 
 .gm-dg { gap: 8px; }
 
@@ -1236,12 +1287,22 @@
 }
 
 .gm-dg-choice { font-size: 15px; padding: 12px 22px; }
-.gm-dg-draweracts { display: flex; justify-content: center; flex-shrink: 0; }
+.gm-dg-draweracts {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
 .gm-dg-draweracts:empty { display: none; }
 .gm-dg-pass { font-size: 12px; padding: 6px 13px; color: var(--tk-muted); }
 .gm-dg-pass:hover { color: var(--tk-text); }
 
-/* Stage: toolbar rail on the left, canvas taking everything else. */
+/* Stage: toolbar rail on the left, canvas taking everything else.
+
+   The canvas keeps a fixed 1000x700 shape at every size, set in pixels by the
+   client, so a drawing looks the same on a phone as it does on a desktop. The
+   box around it just centres whatever is left over. */
 
 .gm-dg-stage {
   display: flex;
@@ -1251,36 +1312,42 @@
   min-width: 0;
 }
 
-.gm-dg-canvas-wrap {
+.gm-dg-canvasbox {
   flex: 1 1 0;
   min-height: 0;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gm-dg-canvas-wrap {
   border: 1px solid var(--tk-border);
   border-radius: 6px;
   overflow: hidden;
   background: var(--tk-cream);
+  flex-shrink: 0;
 }
 
 .gm-dg-canvas { display: block; width: 100%; height: 100%; }
 .gm-dg-canvas.gm-dg-live { cursor: crosshair; touch-action: none; }
 .gm-dg-canvas.gm-dg-live.gm-dg-erasing { cursor: cell; }
 
-/* Toolbar: one compact strip, wraps only when it truly has to */
-
-/* Vertical rail. Two columns of ink, then sizes, tools, paper, and the
-   destructive pair pinned to the bottom. */
+/* Toolbar. A titled block per job: colour, brush size, tool, paper, then undo
+   and clear pinned to the bottom. Vertical rail on a desktop, a strip under
+   the canvas on a phone. */
 
 .gm-dg-tools {
   display: flex;
   flex-direction: column;
-  align-items: center;
   gap: 7px;
   padding: 8px 6px;
   background: var(--room-background-color, #000);
   border: 1px solid var(--tk-border);
   border-radius: 6px;
   flex-shrink: 0;
-  width: 62px;
+  box-sizing: border-box;
+  width: 86px;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -1288,90 +1355,100 @@
 .gm-dg-tools::-webkit-scrollbar { width: 5px; }
 .gm-dg-tools::-webkit-scrollbar-thumb { background: var(--tk-border); border-radius: 3px; }
 
+.gm-dg-grp { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+.gm-dg-grp + .gm-dg-grp { padding-top: 6px; border-top: 1px solid var(--tk-border); }
+
+.gm-dg-toollabel {
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--tk-muted);
+  white-space: nowrap;
+}
+
 .gm-dg-swatches {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 3px;
-  flex-shrink: 0;
+  grid-template-columns: repeat(3, 20px);
+  gap: 4px;
+  justify-content: center;
 }
 
 .gm-dg-swatch {
   width: 20px;
   height: 20px;
-  border: 2px solid transparent;
-  border-radius: 3px;
-  cursor: pointer;
-  padding: 0;
-}
-
-.gm-dg-swatch.active { border-color: var(--tk-text); }
-
-.gm-dg-sizes,
-.gm-dg-modes,
-.gm-dg-papers {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 3px;
-  justify-items: center;
-  flex-shrink: 0;
-}
-
-.gm-dg-toolacts { display: flex; flex-direction: column; gap: 3px; flex-shrink: 0; }
-
-.gm-dg-papers,
-.gm-dg-modes {
-  padding-top: 5px;
-  border-top: 1px solid var(--tk-border);
-  width: 100%;
-}
-
-.gm-dg-papers .gm-dg-toollabel { grid-column: 1 / -1; }
-
-.gm-dg-size,
-.gm-dg-tool {
-  width: 24px;
-  height: 24px;
-  background: var(--tk-tile);
-  border: 1px solid transparent;
-  border-radius: 4px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--tk-text);
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
-.gm-dg-size span { background: var(--tk-text); border-radius: 50%; display: block; }
-.gm-dg-size.active,
-.gm-dg-tool.active { border-color: var(--primary, var(--tk-accent)); }
-.gm-dg-tool.active { color: var(--primary, var(--tk-accent)); }
-
-.gm-dg-toollabel {
-  font-size: 8px;
-  text-align: center;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--tk-muted);
-}
-
-.gm-dg-paper {
-  width: 22px;
-  height: 22px;
   border: 2px solid var(--tk-border);
   border-radius: 3px;
   cursor: pointer;
   padding: 0;
-  flex-shrink: 0;
+}
+
+.gm-dg-swatch.active { border-color: var(--tk-text); box-shadow: 0 0 0 1px var(--tk-text); }
+
+.gm-dg-sizes,
+.gm-dg-modes {
+  display: grid;
+  grid-template-columns: repeat(2, 28px);
+  gap: 4px;
+  justify-content: center;
+}
+
+.gm-dg-papers {
+  display: grid;
+  grid-template-columns: repeat(3, 20px);
+  gap: 4px;
+  justify-content: center;
+}
+
+.gm-dg-size,
+.gm-dg-tool {
+  width: 28px;
+  height: 28px;
+  background: var(--tk-tile);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tk-text);
+  font-size: 12px;
+  padding: 0;
+}
+
+/* Round, and it stays round: as a flex child it would otherwise be squeezed
+   into an oval by the button around it. */
+.gm-dg-size span {
+  background: var(--tk-text);
+  border-radius: 50%;
+  display: block;
+  flex: 0 0 auto;
+  aspect-ratio: 1;
+}
+
+.gm-dg-size.active,
+.gm-dg-tool.active { border-color: var(--primary, var(--tk-accent)); }
+.gm-dg-size.active span { background: var(--primary, var(--tk-accent)); }
+.gm-dg-tool.active { color: var(--primary, var(--tk-accent)); }
+
+.gm-dg-paper {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--tk-border);
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
 }
 
 .gm-dg-paper.active { border-color: var(--primary, var(--tk-accent)); }
+
 .gm-dg-toolacts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
   margin-top: auto;
-  padding-top: 4px;
+  padding-top: 7px;
   border-top: 1px solid var(--tk-border);
-  width: 100%;
 }
 
 .gm-dg-toolacts .gm-btn {
@@ -1383,6 +1460,59 @@
   align-items: center;
   gap: 2px;
   white-space: normal;
+}
+
+.gm-dg-shuffle { font-size: 12px; padding: 6px 13px; }
+
+/* Parked. Takes the whole board rather than sitting beside a blank canvas. */
+
+.gm-dg-lobby {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.gm-dg-lobbycard { width: 100%; max-width: 470px; padding: 30px 26px; }
+
+.gm-dg-final { display: flex; flex-direction: column; gap: 4px; width: 100%; max-width: 340px; }
+
+.gm-dg-finalrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--tk-tile);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 7px 11px;
+  font-size: 13px;
+}
+
+.gm-dg-finalme { border-color: var(--primary, var(--tk-accent)); }
+.gm-dg-finalpos { color: var(--tk-muted); font-size: 11px; min-width: 20px; text-align: left; }
+.gm-dg-finalname { flex: 1; min-width: 0; text-align: left; color: var(--tk-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gm-dg-finalpts { font-weight: bold; color: var(--primary, var(--tk-accent)); font-variant-numeric: tabular-nums; }
+.gm-dg-lobbyroom { font-size: 12px; color: var(--tk-detail); max-width: 380px; }
+
+.gm-dg-lobbyhere {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.gm-dg-lobbychip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--tk-tile);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 13px;
+  color: var(--tk-text);
 }
 
 /* Guessing: the loudest thing under the canvas */
@@ -1506,14 +1636,19 @@
 }
 
 @media (max-width: 720px) {
+  /* Every pixel of width is the drawing's, so the frame gets out of the way. */
   .gm-modal { width: 100%; height: 100%; max-height: 100%; border-radius: 0; border: none; }
-  .gm-head { padding: 12px 14px; flex-wrap: wrap; gap: 10px; }
-  .gm-title { font-size: 20px; }
+  .gm-head { padding: 9px 10px; flex-wrap: wrap; gap: 8px; }
+  .gm-title { font-size: 19px; }
+  .gm-title i { margin-right: 7px; }
   .gm-sub { display: none; }
   .gm-stats { order: 3; margin-left: 0; }
-  .gm-chip { padding: 6px 10px; font-size: 12px; }
-  .gm-strip { padding: 8px 14px; }
-  .gm-body { padding: 12px 14px 18px; }
+  .gm-chip { padding: 5px 9px; font-size: 12px; }
+  .gm-strip { padding: 7px 10px; font-size: 15px; }
+  .gm-body { padding: 10px 10px 14px; }
+  .gm-body-game { padding-top: 9px; }
+  .gm-gamebar { gap: 8px; padding-bottom: 9px; }
+  .gm-split { padding-top: 10px; }
   .gm-games { grid-template-columns: 1fr; }
   .gm-card-mid { flex-wrap: wrap; }
   .gm-card-mid > .gm-btn { width: 100%; }
@@ -1528,8 +1663,10 @@
   .gm-main { overflow: visible; flex: none; }
   .gm-side { width: 100%; height: 300px; flex: none; }
   .gm-players { max-height: 96px; }
-  .gm-gameacts { margin-left: 0; width: 100%; }
-  .gm-gameacts .gm-btn { flex: 1; }
+  /* Keep the actions on the bar instead of claiming a whole row of a screen
+     that has none to spare. */
+  .gm-gameacts { margin-left: auto; width: auto; }
+  .gm-gameacts .gm-btn { flex: 0 0 auto; font-size: 12px; padding: 7px 11px; }
   .gm-back { width: auto; }
 
   .gm-banner { padding: 13px 15px; gap: 11px; }
@@ -1543,31 +1680,59 @@
   .gm-wr-tile { font-size: 26px; }
   .gm-dg-hint, .gm-dg-word { font-size: 18px; letter-spacing: 3px; }
   .gm-dg-secs { font-size: 22px; min-width: 38px; }
-  /* Canvas on top, toolbar underneath as a horizontal strip. */
+  .gm-dg-skip { margin-left: 0; }
+  .gm-dg-choice { font-size: 14px; padding: 11px 16px; }
+  .gm-dg-shuffle { font-size: 12px; padding: 8px 12px; }
+
+  /* Draw & Guess keeps the fitted layout on a phone: the board takes what is
+     left over rather than the whole thing turning into one long scroll. */
+  .gm-split-fit { flex-direction: column; overflow: hidden; gap: 10px; }
+  .gm-split-fit .gm-main { overflow: hidden; flex: 1 1 auto; min-height: 0; }
+  .gm-split-fit .gm-main-fit { overflow: hidden; }
+  .gm-split-fit .gm-main-fit .gm-board { height: 100%; max-height: 100%; }
+  .gm-split-fit .gm-side { width: 100%; height: 46%; min-height: 190px; flex: none; }
+  .gm-split-fit .gm-players { max-height: 66px; }
+  .gm-split-fit .gm-side-head { padding: 6px 10px; }
+  .gm-split-fit .gm-player { padding: 5px 10px; }
+  .gm-split-fit .gm-chat-form { padding: 7px 8px; }
+
+  /* Canvas on top, toolbar underneath as a horizontal strip with targets you
+     can actually hit with a thumb. */
   .gm-dg-stage { flex-direction: column-reverse; gap: 8px; }
   .gm-dg-tools {
     flex-direction: row;
+    align-items: flex-start;
     flex-wrap: wrap;
     width: 100%;
-    gap: 8px;
-    padding: 7px;
+    gap: 10px;
+    padding: 8px;
     overflow: visible;
   }
-  .gm-dg-swatches { grid-template-columns: repeat(8, 1fr); }
-  .gm-dg-sizes, .gm-dg-modes, .gm-dg-papers { flex-direction: row; width: auto; border-top: 0; padding-top: 0; }
-  .gm-dg-swatch { width: 22px; height: 22px; }
+  .gm-dg-grp + .gm-dg-grp { padding-top: 0; border-top: 0; }
+  .gm-dg-grp { gap: 4px; }
+  .gm-dg-swatches { grid-template-columns: repeat(8, 26px); }
+  .gm-dg-swatch { width: 26px; height: 26px; }
+  .gm-dg-sizes, .gm-dg-modes { grid-template-columns: repeat(4, 32px); }
+  .gm-dg-size, .gm-dg-tool { width: 32px; height: 32px; font-size: 14px; }
+  .gm-dg-papers { grid-template-columns: repeat(5, 26px); }
+  .gm-dg-paper { width: 26px; height: 26px; }
   .gm-dg-toolacts {
     flex-direction: row;
     margin-top: 0;
     margin-left: auto;
-    width: auto;
+    align-self: flex-end;
     border-top: 0;
     padding-top: 0;
   }
-  .gm-dg-toolacts .gm-btn { flex-direction: row; width: auto; font-size: 12px; padding: 6px 11px; }
-  .gm-dg-canvas-wrap { min-height: 200px; }
-  .gm-main-fit { overflow: visible; }
-  .gm-main-fit .gm-board { height: auto; }
-  .gm-dg-skip { margin-left: 0; }
-  .gm-dg-canvas-wrap { aspect-ratio: 4 / 3; }
+  .gm-dg-toolacts .gm-btn { flex-direction: row; width: auto; font-size: 12px; padding: 8px 12px; }
+}
+
+/* No room for both a label and a button on the smallest screens. */
+@media (max-width: 420px) {
+  .gm-chat-toggle-label { display: none; }
+  .gm-chat-toggle { padding: 7px 10px; }
+  .gm-dg-swatches { grid-template-columns: repeat(8, 22px); }
+  .gm-dg-swatch { width: 22px; height: 22px; }
+  .gm-dg-papers { grid-template-columns: repeat(5, 22px); }
+  .gm-dg-paper { width: 22px; height: 22px; }
 }

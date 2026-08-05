@@ -75,6 +75,9 @@ const TICK_MS = 1000;
 const CHAT_MAX = 80; // messages kept per game
 const CHAT_LEN = 200;
 const CHAT_MIN_GAP_MS = 700;
+const CHAT_BURST = 6; // messages allowed inside the window below
+const CHAT_BURST_MS = 9000;
+const SAY_REPEAT_MS = 8000; // the same announcement will not repeat inside this
 const TYPING_MS = 4000;
 
 const floors = new Map(); // roomId -> floor
@@ -343,6 +346,9 @@ function createTable(f, type, opts) {
     chat: [],
     chatSeq: 0,
     lastChatAt: new Map(),
+    chatBurst: new Map(), // userId -> recent send times, caps a flood
+    lastSaid: new Map(), // userId -> their last line, kills copy-paste repeats
+    saidAt: new Map(), // announcement -> when, stops narration looping
     typing: new Map(), // userId -> expiry, drives "someone is typing"
     votes: new Map(), // targetUserId -> Set of voters
   };
@@ -399,9 +405,48 @@ function pushChat(t, entry) {
   emitRelay(t, { kind: "chat", message: t.chat[t.chat.length - 1] });
 }
 
-// Narration. This is what makes a game feel busy rather than silent.
-function say(t, text) {
-  pushChat(t, { kind: "system", text });
+// Narration. This is what makes a game feel busy rather than silent, right up
+// until somebody works out they can flip a switch on and off and fill the feed
+// with it. The same line does not go out twice in a row inside the window.
+function say(t, text, tone) {
+  const now = Date.now();
+  if (now - (t.saidAt.get(text) || 0) < SAY_REPEAT_MS) return;
+  t.saidAt.set(text, now);
+  if (t.saidAt.size > 80)
+    for (const [k, v] of t.saidAt) if (now - v > SAY_REPEAT_MS) t.saidAt.delete(k);
+  pushChat(t, { kind: "system", text, tone: tone || null });
+}
+
+// One rate limiter for everything a person can put in the feed, so a guess box
+// is not a way around the chat box.
+function canSpeak(t, userId) {
+  const now = Date.now();
+  const hits = (t.chatBurst.get(userId) || []).filter(
+    (at) => now - at < CHAT_BURST_MS,
+  );
+  if (hits.length >= CHAT_BURST) {
+    t.chatBurst.set(userId, hits);
+    return false;
+  }
+  hits.push(now);
+  t.chatBurst.set(userId, hits);
+  return true;
+}
+
+// A wrong guess reads as a message from that person, marked so the client can
+// colour it. Right ones are announced without ever printing the word.
+function pushGuess(t, userId, text) {
+  if (!canSpeak(t, userId)) return;
+  const who = deps.userInfo(t.roomId, userId) || {};
+  const seat = t.seats.find((s) => s.userId === userId);
+  pushChat(t, {
+    kind: "guess",
+    userId,
+    username: (seat && seat.username) || who.username || "Someone",
+    role: who.role || null,
+    avatar: who.avatar || null,
+    text: deps.filterText ? deps.filterText(text) : text,
+  });
 }
 
 function audienceOf(t) {
@@ -742,7 +787,14 @@ function chat(roomId, user, tableId, text) {
   if (!body) return { ok: true };
   const last = t.lastChatAt.get(user.userId) || 0;
   if (Date.now() - last < CHAT_MIN_GAP_MS) return { err: "Slow down a moment." };
+  // Saying "a" thirty times is under any per-message gap, so the same line
+  // twice running is refused and a burst is capped on top of that.
+  if (t.lastSaid.get(user.userId) === body.toLowerCase())
+    return { err: "You just said that." };
+  if (!canSpeak(t, user.userId))
+    return { err: "That is a lot of messages. Give it a few seconds." };
   t.lastChatAt.set(user.userId, Date.now());
+  t.lastSaid.set(user.userId, body.toLowerCase());
   if (deps.filterText) body = deps.filterText(body);
 
   const playing = t.seats.some((s) => s.userId === user.userId);
@@ -934,8 +986,10 @@ function makeMove(roomId, userId, tableId, mv) {
   t.misses.delete(userId); // they are still here
 
   // "Sarah guessed it" and friends land in the game feed, so everybody can see
-  // that people are getting somewhere.
-  if (out.announce) say(t, out.announce);
+  // that people are getting somewhere. A near miss goes in as the person said
+  // it, which is half the fun of watching.
+  if (out.announce) say(t, out.announce, out.tone);
+  if (out.chat) pushGuess(t, userId, out.chat);
 
   if (rules.isOver(t.game)) {
     finishMatch(t);
@@ -990,7 +1044,30 @@ function rematch(roomId, userId, tableId) {
     return { err: "You are not in this game." };
   if (poolFor(f, t.type).length)
     return { err: "People are waiting, so the seat rotates." };
+
+  const seat = t.seats.find((s) => s.userId === userId);
+  // Clicking again takes it back, the same as every other vote here.
+  if (t.rematch.has(userId)) {
+    t.rematch.delete(userId);
+    emitTable(t);
+    return { ok: true };
+  }
   t.rematch.add(userId);
+
+  // Once everybody has asked, go now. Making them sit out the rest of the
+  // countdown made the button look broken.
+  const need = t.seats.length;
+  if (t.rematch.size >= need && need >= rulesFor(t.type).minPlayers) {
+    say(t, "Everyone wants another go. Here we go.");
+    startMatch(t);
+    emitFloor(roomId);
+    return { ok: true };
+  }
+  // Said out loud, so the other side knows somebody is waiting on them.
+  say(
+    t,
+    `${(seat && seat.username) || "Someone"} wants a rematch (${t.rematch.size}/${need})`,
+  );
   emitTable(t);
   return { ok: true };
 }

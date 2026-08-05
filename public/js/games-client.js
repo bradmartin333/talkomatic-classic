@@ -135,6 +135,52 @@
   let cleanupSolo = null; // timers for a solo game's loading state
   let earlyRelays = []; // relays that landed before the board was ready
 
+  // The chat can be folded away to give the board the room, which is the
+  // difference between playable and cramped on a phone. Remembered per device,
+  // and starts folded on a small screen.
+  let chatOpen = readChatPref();
+  let unread = 0;
+
+  function readChatPref() {
+    let saved = null;
+    try {
+      saved = localStorage.getItem("tk-games-chat");
+    } catch (e) {
+      saved = null;
+    }
+    if (saved === "0") return false;
+    if (saved === "1") return true;
+    return window.innerWidth > 720;
+  }
+  function setChatOpen(on) {
+    chatOpen = !!on;
+    if (chatOpen) unread = 0;
+    try {
+      localStorage.setItem("tk-games-chat", chatOpen ? "1" : "0");
+    } catch (e) {
+      /* private mode, the toggle just will not stick */
+    }
+    applyChat();
+  }
+  function applyChat() {
+    if (!overlay) return;
+    const split = overlay.querySelector(".gm-split");
+    if (split) split.classList.toggle("gm-nochat", !chatOpen);
+    const btn = overlay.querySelector("#gmChatToggle");
+    if (!btn) return;
+    btn.classList.toggle("gm-btn-primary", !chatOpen && unread > 0);
+    btn.title = chatOpen ? "Hide the chat" : "Show the chat";
+    btn.textContent = "";
+    btn.appendChild(el("i", { class: "fas fa-comments" }));
+    btn.appendChild(
+      el("span", { class: "gm-chat-toggle-label", text: chatOpen ? "Hide chat" : "Chat" }),
+    );
+    if (!chatOpen && unread)
+      btn.appendChild(
+        el("span", { class: "gm-chat-unread", text: unread > 9 ? "9+" : String(unread) }),
+      );
+  }
+
   function myId() {
     return typeof currentUserId !== "undefined" ? currentUserId : "";
   }
@@ -803,6 +849,14 @@
             onclick: () => showHowTo(help),
           }, el("i", { class: "fas fa-circle-question" })),
         );
+      bar.appendChild(
+        el("button", {
+          class: "gm-btn gm-btn-ghost gm-chat-toggle",
+          id: "gmChatToggle",
+          "aria-label": "Show or hide the game chat",
+          onclick: () => setChatOpen(!chatOpen),
+        }),
+      );
       bar.appendChild(el("div", { class: "gm-gameacts", id: "gmActs" }));
       bodyEl.appendChild(bar);
 
@@ -816,8 +870,10 @@
       split.appendChild(sideEl);
       bodyEl.appendChild(split);
 
-      // Draw & Guess sizes itself to the space rather than scrolling.
+      // Draw & Guess sizes itself to the space rather than scrolling, on a
+      // phone as well as a desktop.
       main.classList.toggle("gm-main-fit", t.type === "drawguess");
+      split.classList.toggle("gm-split-fit", t.type === "drawguess");
       board = BOARDS[t.type] ? BOARDS[t.type]() : null;
       if (board) board.mount(main);
       side = makeSide();
@@ -833,6 +889,7 @@
       }
     }
 
+    applyChat();
     paintBanner(t);
     paintWaiting(t);
     paintTurn(t);
@@ -955,15 +1012,21 @@
     host.textContent = "";
 
     if (t.seated && t.state === "finished") {
-      const wants = t.rematch.indexOf(myId()) >= 0;
+      // The count shows as soon as anybody asks, not only once you have. Not
+      // seeing that the other person was already waiting on you was the whole
+      // reason this button felt dead.
+      const asked = (t.rematch || []).length;
+      const wants = (t.rematch || []).indexOf(myId()) >= 0;
+      const tally = asked ? " " + asked + "/" + t.seats.length : "";
       host.appendChild(
         el("button", {
           class: wants ? "gm-btn gm-btn-primary" : "gm-btn",
-          text: wants
-            ? "Rematch asked " + t.rematch.length + "/" + t.seats.length
-            : "Play again",
+          title: wants ? "Click again to take it back" : "Ask for another game",
           onclick: () => S.emit("games rematch", { tableId: t.id }),
-        }),
+        }, [
+          el("i", { class: "fas fa-rotate-right" }),
+          (wants ? " Waiting on the rest" : " Play again") + tally,
+        ]),
       );
     }
     if (t.seated) {
@@ -1056,13 +1119,19 @@
       const stick = atBottom();
       let node;
       if (m.kind === "system") {
-        node = el("div", { class: "gm-chat-sys", text: m.text });
+        node = el("div", {
+          class: "gm-chat-sys" + (m.tone ? " gm-chat-" + m.tone : ""),
+          text: m.text,
+        });
       } else {
         node = el("div", {
           class:
             "gm-chat-line" +
             (m.userId === myId() ? " gm-chat-mine" : "") +
-            (m.watching ? " gm-chat-watch" : ""),
+            (m.watching ? " gm-chat-watch" : "") +
+            // A guess that missed. Same shape as a message, coloured so the
+            // feed reads at a glance: red tried, green got it.
+            (m.kind === "guess" ? " gm-chat-wrong" : ""),
         });
         // Avatar, badge and name live in one cell so the grid stays two
         // columns and a long message wraps under itself, not around the name.
@@ -1161,6 +1230,11 @@
           if (payload.message.id <= lastChatId) return;
           lastChatId = payload.message.id;
           addLine(payload.message);
+          // Folded away, so say how much is piling up behind the button.
+          if (!chatOpen && payload.message.userId !== myId()) {
+            unread++;
+            applyChat();
+          }
         } else if (payload.kind === "typing") {
           paintTyping(payload.users || []);
         }
@@ -1201,6 +1275,24 @@
           if (badge) row.appendChild(badge);
           const trophy = trophyNode(seat && seat.inviteRank);
           if (trophy) row.appendChild(trophy);
+          // Who has already asked for another game, so nobody is left guessing
+          // whether the other side is still there.
+          if (t.state === "finished" && (t.rematch || []).indexOf(p.userId) >= 0)
+            row.appendChild(
+              el("i", {
+                class: "fas fa-rotate-right gm-wants",
+                title: p.username + " wants a rematch",
+              }),
+            );
+          // Sitting out the drawing shows here rather than in the chat, which
+          // is where it used to be until people found the switch.
+          if (p.noDraw && !p.drawing)
+            row.appendChild(
+              el("i", {
+                class: "fas fa-pen-slash gm-nodraw",
+                title: p.username + " would rather not draw",
+              }),
+            );
           if (p.got) row.appendChild(el("i", { class: "fas fa-check gm-got" }));
           if (typeof p.score === "number")
             row.appendChild(el("span", { class: "gm-player-score", text: String(p.score) }));
@@ -1574,7 +1666,8 @@
   BOARDS.drawguess = function () {
     let root, timerRow, timerNum, timerFill, progEl, promptEl, choiceEl;
     let canvas, ctx, tools, guessWrap, guessForm, guessInput, guessHint;
-    let statusEl, drawerActions;
+    let statusEl, drawerActions, canvasBox, canvasWrap, sizesEl;
+    let stageEl, lobbyEl;
     let drawing = false;
     let last = null;
     let pending = [];
@@ -1594,8 +1687,14 @@
     let papers = null;
     let bg = 0;
     let focusedGuess = false;
+    let ro = null;
 
-    const BRUSH_SIZES = [3, 8, 18, 34];
+    // The drawing is a fixed 16:9 board, not whatever shape the window happens
+    // to be. Everyone gets the same picture at a different scale, and a brush
+    // is the same fraction of it on a phone and a desktop.
+    const ART_W = 1280;
+    const ART_H = 720;
+    const BRUSH_SIZES = [5, 12, 26, 50];
 
     function paper() {
       return (papers && papers[bg]) || "#fdf5e6";
@@ -1610,7 +1709,7 @@
     }
     function drawSeg(sSeg) {
       ctx.strokeStyle = inkOf(sSeg);
-      ctx.lineWidth = Math.max(1, (sSeg.w || 4) * (canvas.width / 700));
+      ctx.lineWidth = Math.max(1, (sSeg.w || 6) * (canvas.width / ART_W));
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
       ctx.beginPath();
@@ -1623,8 +1722,22 @@
       strokes.forEach(drawSeg);
       painted = strokes.length;
     }
+    // Largest 1000x700 box that fits the space we were given. Keeping the shape
+    // fixed is the whole point: a circle drawn on a desktop is still a circle
+    // on a phone, and the hit test below stays a plain proportion.
+    function fit() {
+      if (!canvasBox || !canvasWrap) return;
+      const box = canvasBox.getBoundingClientRect();
+      if (!box.width) return;
+      // A column layout leaves the height open, so size from the width there.
+      const room = box.height > 60 ? box.height : Infinity;
+      const scale = Math.min(box.width / ART_W, room / ART_H);
+      canvasWrap.style.width = Math.max(160, Math.floor(ART_W * scale)) + "px";
+      canvasWrap.style.height = Math.max(112, Math.floor(ART_H * scale)) + "px";
+    }
     function resize() {
       if (!canvas) return;
+      fit();
       const rect = canvas.getBoundingClientRect();
       if (!rect.width) return;
       const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -1697,6 +1810,21 @@
       last = null;
     }
 
+    // A titled block in the rail. Same shape for ink, brush, tool and paper.
+    function toolGroup(label, body, cls) {
+      return el("div", { class: "gm-dg-grp " + cls }, [
+        el("span", { class: "gm-dg-toollabel", text: label }),
+        body,
+      ]);
+    }
+
+    function setBrush(i) {
+      brush = i;
+      sizesEl.querySelectorAll(".gm-dg-size").forEach((n, j) =>
+        n.classList.toggle("active", j === i),
+      );
+    }
+
     function setTool(which) {
       erasing = which === "erase";
       root.querySelectorAll(".gm-dg-tool").forEach((n) =>
@@ -1728,7 +1856,8 @@
         root.appendChild(drawerActions);
 
         canvas = el("canvas", { class: "gm-dg-canvas" });
-        const canvasWrap = el("div", { class: "gm-dg-canvas-wrap" }, canvas);
+        canvasWrap = el("div", { class: "gm-dg-canvas-wrap" }, canvas);
+        canvasBox = el("div", { class: "gm-dg-canvasbox" }, canvasWrap);
         ctx = canvas.getContext("2d");
         clearCanvas();
 
@@ -1739,29 +1868,30 @@
         canvas.addEventListener("touchmove", move, { passive: false });
         window.addEventListener("touchend", up);
 
-        // Toolbar: ink, paper, brush, pen/eraser, undo, clear.
+        // Toolbar: every group titled, so nobody has to guess what a row of
+        // small squares is for.
         tools = el("div", { class: "gm-dg-tools" });
-        const swatches = el("div", { class: "gm-dg-swatches" });
-        tools.appendChild(swatches);
-        tools._swatches = swatches;
 
-        const sizes = el("div", { class: "gm-dg-sizes" });
+        const swatches = el("div", { class: "gm-dg-swatches" });
+        tools._swatches = swatches;
+        tools.appendChild(toolGroup("Colour", swatches, "gm-dg-grp-ink"));
+
+        sizesEl = el("div", { class: "gm-dg-sizes" });
         BRUSH_SIZES.forEach((w, i) => {
           const b = el("button", {
             class: "gm-dg-size" + (i === brush ? " active" : ""),
+            title: ["Fine", "Normal", "Thick", "Fat"][i] + " brush",
             "aria-label": "Brush size " + (i + 1),
-            onclick: () => {
-              brush = i;
-              sizes.querySelectorAll(".gm-dg-size").forEach((n, j) =>
-                n.classList.toggle("active", j === i),
-              );
-            },
+            onclick: () => setBrush(i),
           });
+          // Sized off the real brush width so the buttons read as a scale.
           const dot = el("span");
-          dot.style.width = dot.style.height = Math.min(20, w / 1.7 + 5) + "px";
+          const px = Math.round(4 + (w / BRUSH_SIZES[BRUSH_SIZES.length - 1]) * 16);
+          dot.style.width = dot.style.height = px + "px";
           b.appendChild(dot);
-          sizes.appendChild(b);
+          sizesEl.appendChild(b);
         });
+        tools.appendChild(toolGroup("Brush size", sizesEl, "gm-dg-grp-size"));
 
         const modes = el("div", { class: "gm-dg-modes" });
         modes.appendChild(
@@ -1776,32 +1906,36 @@
             onclick: () => setTool("erase"),
           }, el("i", { class: "fas fa-eraser" })),
         );
+        tools.appendChild(toolGroup("Tool", modes, "gm-dg-grp-mode"));
 
         const papersEl = el("div", { class: "gm-dg-papers" });
         tools._papers = papersEl;
+        tools.appendChild(toolGroup("Paper", papersEl, "gm-dg-grp-paper"));
 
         const acts = el("div", { class: "gm-dg-toolacts" });
         acts.appendChild(
           el("button", {
             class: "gm-btn gm-btn-ghost", title: "Undo the last stroke",
             onclick: () => S.emit("games draw", { tableId: detail.id, kind: "undo" }),
-          }, [el("i", { class: "fas fa-rotate-left" }), " Undo"]),
+          }, [el("i", { class: "fas fa-rotate-left" }), el("span", { text: "Undo" })]),
         );
         acts.appendChild(
           el("button", {
             class: "gm-btn gm-btn-ghost", title: "Clear the canvas",
             onclick: () => S.emit("games draw", { tableId: detail.id, kind: "clear" }),
-          }, [el("i", { class: "fas fa-trash" }), " Clear"]),
+          }, [el("i", { class: "fas fa-trash" }), el("span", { text: "Clear" })]),
         );
-
-        tools.appendChild(sizes);
-        tools.appendChild(modes);
-        tools.appendChild(papersEl);
         tools.appendChild(acts);
 
         // Toolbar sits beside the canvas on a wide screen and drops underneath
         // on a narrow one, so the drawing gets as much room as possible.
-        root.appendChild(el("div", { class: "gm-dg-stage" }, [tools, canvasWrap]));
+        stageEl = el("div", { class: "gm-dg-stage" }, [tools, canvasBox]);
+        root.appendChild(stageEl);
+
+        // Shown instead of the stage while the game is parked. An empty canvas
+        // next to "waiting for someone" told nobody anything.
+        lobbyEl = el("div", { class: "gm-dg-lobby" });
+        root.appendChild(lobbyEl);
 
         // Guessing. Deliberately loud, it is the thing most people are here for.
         guessHint = el("div", { class: "gm-dg-guesslabel" });
@@ -1836,6 +1970,12 @@
         stage.appendChild(root);
         setTimeout(resize, 0);
         window.addEventListener("resize", resize);
+        // Hiding the chat or the toolbar changes the space without the window
+        // moving, so watch the box itself rather than only the window.
+        if (window.ResizeObserver) {
+          ro = new ResizeObserver(() => resize());
+          ro.observe(canvasBox);
+        }
         requestSync();
       },
 
@@ -1843,6 +1983,8 @@
         window.removeEventListener("resize", resize);
         window.removeEventListener("mouseup", up);
         window.removeEventListener("touchend", up);
+        if (ro) ro.disconnect();
+        ro = null;
         if (flushTimer) clearTimeout(flushTimer);
       },
 
@@ -1961,14 +2103,24 @@
         choiceEl.textContent = "";
         drawerActions.textContent = "";
 
-        if (g.phase === "waiting") {
-          promptEl.appendChild(
-            el("span", { class: "gm-dg-waiting" }, [
-              el("i", { class: "fas fa-user-plus" }),
-              " Waiting for one more person. Anyone in the room can join.",
-            ]),
-          );
-        } else if (g.phase === "choosing") {
+        // Nothing to draw on: waiting for company, or the game is done and the
+        // canvas has already been wiped. Either way an empty board taking half
+        // the screen tells nobody anything, so it goes.
+        const done = g.over || g.phase === "done";
+        const parked = g.phase === "waiting" || done;
+        stageEl.style.display = parked ? "none" : "";
+        lobbyEl.style.display = parked ? "" : "none";
+        promptEl.style.display = parked ? "none" : "";
+        timerRow.style.display = parked ? "none" : "";
+        if (parked) {
+          if (done) paintFinal(t, g);
+          else paintLobby(t, g);
+          guessWrap.style.display = "none";
+          statusEl.textContent = "";
+          return;
+        }
+
+        if (g.phase === "choosing") {
           if (g.amDrawer && g.choices) {
             promptEl.appendChild(
               el("span", { class: "gm-dg-yourturn", text: "Your turn, pick a word" }),
@@ -1985,6 +2137,18 @@
                 }),
               );
             });
+            if (g.shufflesLeft > 0)
+              drawerActions.appendChild(
+                el("button", {
+                  class: "gm-btn gm-btn-ghost gm-dg-shuffle",
+                  title: "Swap all three for a different set",
+                  onclick: () =>
+                    S.emit("games move", { tableId: detail.id, move: { kind: "shuffle" } }),
+                }, [
+                  el("i", { class: "fas fa-shuffle" }),
+                  " Different words (" + g.shufflesLeft + " left)",
+                ]),
+              );
             drawerActions.appendChild(
               el("button", {
                 class: "gm-btn gm-dg-pass",
@@ -2108,6 +2272,104 @@
       },
     };
 
+    // The end of a game. The canvas is already wiped by this point, so the
+    // board shows the table instead of a blank sheet of paper.
+    function paintFinal(t, g) {
+      lobbyEl.textContent = "";
+      const card = el("div", { class: "gm-waiting gm-dg-lobbycard" });
+      const ranked = (g.players || []).slice().sort((a, b) => b.score - a.score);
+      const top = ranked[0];
+      card.appendChild(
+        el("div", {
+          class: "gm-waiting-head",
+          text: top && top.score ? top.username + " takes it" : "That is the lot",
+        }),
+      );
+      const table = el("div", { class: "gm-dg-final" });
+      ranked.forEach((p, i) => {
+        table.appendChild(
+          el("div", {
+            class: "gm-dg-finalrow" + (p.userId === myId() ? " gm-dg-finalme" : ""),
+          }, [
+            el("span", { class: "gm-dg-finalpos", text: "#" + (i + 1) }),
+            el("span", { class: "gm-dg-finalname", text: p.username }),
+            el("span", { class: "gm-dg-finalpts", text: String(p.score) }),
+          ]),
+        );
+      });
+      card.appendChild(table);
+      card.appendChild(
+        el("div", {
+          class: "gm-waiting-sub",
+          text: "Ask for another game up in the bar, or head back for something else.",
+        }),
+      );
+      lobbyEl.appendChild(card);
+    }
+
+    // The parked state, given the whole board. One headline, who is already
+    // here, and the two things you can actually do about it.
+    function paintLobby(t, g) {
+      lobbyEl.textContent = "";
+      // Same card as the pre-start one, so the two waits do not look like two
+      // different screens bolted together.
+      const card = el("div", { class: "gm-waiting gm-dg-lobbycard" });
+      card.appendChild(el("div", { class: "gm-waiting-pulse" }));
+      card.appendChild(
+        el("div", { class: "gm-waiting-head", text: "One more person and we start" }),
+      );
+      card.appendChild(
+        el("div", {
+          class: "gm-waiting-sub",
+          text:
+            "Draw & Guess needs two. Anyone in the room can join at any point, " +
+            "even mid-round, so this is usually a short wait.",
+        }),
+      );
+
+      const here = el("div", { class: "gm-dg-lobbyhere" });
+      here.appendChild(el("span", { class: "gm-dg-linelabel", text: "Here" }));
+      (t.seats || []).forEach((s) => {
+        const chip = el("div", { class: "gm-dg-lobbychip" });
+        const pfp = avatarNode(s.avatar, true);
+        if (pfp) chip.appendChild(pfp);
+        chip.appendChild(el("span", { text: s.username }));
+        const badge = badgeFor(s.role);
+        if (badge) chip.appendChild(badge);
+        here.appendChild(chip);
+      });
+      card.appendChild(here);
+
+      const others = roomUsers.filter(
+        (u) => !(t.seats || []).some((s) => s.userId === u.id),
+      ).length;
+      card.appendChild(
+        el("div", {
+          class: "gm-dg-lobbyroom",
+          text: others
+            ? others === 1
+              ? "1 other person is in the room. Your name shows as playing, so they can see where you went."
+              : others +
+                " other people are in the room. Your name shows as playing, so they can see where you went."
+            : "Nobody else is in the room yet.",
+        }),
+      );
+
+      const acts = el("div", { class: "gm-waiting-acts" });
+      acts.appendChild(
+        el("button", {
+          class: "gm-btn",
+          text: "Back to games",
+          onclick: () => {
+            S.emit("games leave", { tableId: t.id });
+            backToFloor();
+          },
+        }),
+      );
+      card.appendChild(acts);
+      lobbyEl.appendChild(card);
+    }
+
     function paintSwatches() {
       if (!palette || !tools._swatches) return;
       const host = tools._swatches;
@@ -2134,7 +2396,6 @@
       if (!papers || !tools._papers) return;
       const host = tools._papers;
       host.textContent = "";
-      host.appendChild(el("span", { class: "gm-dg-toollabel", text: "Paper" }));
       papers.forEach((c, i) => {
         const b = el("button", {
           class: "gm-dg-paper" + (i === bg ? " active" : ""),

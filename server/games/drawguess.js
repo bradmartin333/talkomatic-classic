@@ -17,8 +17,10 @@ const CHOOSE_MS = 15000;
 const DRAW_MS = 80000;
 const REVEAL_MS = 7000;
 const ROUNDS = 2; // each player draws this many times
+const SHUFFLES = 2; // fresh sets of words a drawer can ask for per turn
 const MAX_STROKES = 8000;
 const IDLE_SKIP_MS = 25000; // blank canvas this long and the turn is skipped
+const OPTOUT_GAP_MS = 4000; // between flips of "I'd rather not draw"
 
 // Ink. Sixteen is expressive without turning the toolbar into a paint program.
 // Index 1 is white so it still reads on the dark paper.
@@ -74,6 +76,8 @@ function create(players) {
     rev: 0, // bumped on every canvas change, so a client can spot a gap
     skipVotes: [], // userIds asking to move the round along
     used: [],
+    shuffles: SHUFFLES, // fresh word sets left this turn
+    rejected: [], // words waved away this turn, so a reshuffle never repeats
     over: false,
   };
   for (const p of state.players) state.drawn[p.userId] = 0;
@@ -108,6 +112,8 @@ function advance(state) {
   state.word = null;
   state.choices = [];
   state.skipped = false;
+  state.shuffles = SHUFFLES;
+  state.rejected = [];
 
   if (state.players.length < 2) {
     state.phase = "waiting";
@@ -278,6 +284,19 @@ function move(state, userId, mv) {
     return { ok: true };
   }
 
+  // Three words you cannot draw is a bad turn for everybody. Ask for another
+  // set instead, twice, and never see the ones you already waved away.
+  if (kind === "shuffle") {
+    if (!isDrawer) return { ok: false, err: "You are not drawing." };
+    if (state.phase !== "choosing") return { ok: false, err: "Too late." };
+    if (state.shuffles <= 0)
+      return { ok: false, err: "No more word swaps this turn." };
+    state.shuffles--;
+    state.rejected = state.rejected.concat(state.choices);
+    state.choices = offerWords(state.used.concat(state.rejected));
+    return { ok: true, quiet: true, selfPush: true };
+  }
+
   // "Not this one" during the pick, without burning the clock.
   if (kind === "passTurn") {
     if (!isDrawer) return { ok: false, err: "It is not your turn to draw." };
@@ -289,22 +308,20 @@ function move(state, userId, mv) {
     return { ok: true, announce: `${me.username} passed on drawing` };
   }
 
-  // A standing "leave me out of the drawing".
+  // A standing "leave me out of the drawing". Deliberately silent: it shows in
+  // the player list, and announcing it turned a checkbox into a chat flooder.
+  // The cooldown stops the same flood arriving as table pushes instead.
   if (kind === "noDraw") {
     const on = !!mv.on;
     if (me.noDraw === on) return { ok: true, quiet: true, selfPush: true };
+    if (Date.now() - (me.noDrawAt || 0) < OPTOUT_GAP_MS)
+      return { ok: false, err: "Give that a moment." };
+    me.noDrawAt = Date.now();
     me.noDraw = on;
     // Opting out while holding the pen hands it straight over.
-    if (on && isDrawer && state.phase === "choosing" && state.players.length > 1) {
+    if (on && isDrawer && state.phase === "choosing" && state.players.length > 1)
       passTurn(state);
-      return { ok: true, announce: `${me.username} would rather not draw` };
-    }
-    return {
-      ok: true,
-      announce: on
-        ? `${me.username} would rather not draw`
-        : `${me.username} is happy to draw again`,
-    };
+    return { ok: true };
   }
 
   if (kind === "bg") {
@@ -382,16 +399,20 @@ function move(state, userId, mv) {
     if (state.guessed.some((g) => g.userId === userId))
       return { ok: false, err: "You already got it." };
 
-    const guess = normalize(mv.text);
+    const said = String(mv.text || "").replace(/\s+/g, " ").trim().slice(0, 40);
+    const guess = normalize(said);
     if (!guess) return { ok: false, err: "Type a guess." };
     const target = normalize(state.word);
 
     if (guess !== target) {
+      // Wrong guesses go in the feed as the person typed them. Everybody can
+      // see what has been tried, which is most of the fun of watching.
       return {
         ok: true,
         quiet: true,
         correct: false,
         close: nearMiss(guess, target),
+        chat: said,
       };
     }
 
@@ -415,6 +436,7 @@ function move(state, userId, mv) {
       pts,
       place: state.guessed.length,
       announce: `${me.username} guessed it`,
+      tone: "good",
     };
   }
 
@@ -437,7 +459,8 @@ function sanitizeStroke(s) {
   const out = {
     x0, y0, x1, y1,
     c: Number.isInteger(c) && c >= 0 && c < COLORS.length ? c : 0,
-    w: Number.isFinite(w) ? Math.max(1, Math.min(40, w)) : 4,
+    // Widths are in canvas units, a thousand across, not screen pixels.
+    w: Number.isFinite(w) ? Math.max(1, Math.min(60, w)) : 6,
   };
   if (s.start) out.start = 1; // first segment of a brush stroke, for undo
   if (s.e) out.e = 1; // eraser: painted in the current background
@@ -591,6 +614,7 @@ function view(state, userId) {
       amDrawer && state.phase === "choosing"
         ? state.choices.map(prettyPrompt)
         : null,
+    shufflesLeft: amDrawer ? state.shuffles : 0,
     // No stroke array here: sent once on join, then kept current by deltas.
     rev: state.rev,
     bg: state.bg,
@@ -639,7 +663,7 @@ module.exports = {
     "The drawer picks a word and has eighty seconds to draw it.",
     "Everyone else types guesses. The faster you get it, the more you score.",
     "The drawer scores from how many people work it out.",
-    "Not feeling it? Pass the turn, or opt out of drawing for the whole game.",
+    "Cannot draw any of the three? Swap them for a new set, or pass the turn.",
     "Once half the room has guessed, anyone can vote to move on.",
   ],
   // One person can open it and hold it while others turn up.
