@@ -480,7 +480,7 @@ function pushGuess(t, userId, text) {
     username: (seat && seat.username) || who.username || "Someone",
     role: who.role || null,
     avatar: who.avatar || null,
-    text: deps.filterText ? deps.filterText(text) : text,
+    text, // masked per viewer in the browser, not here
   });
 }
 
@@ -906,7 +906,9 @@ function chat(roomId, user, tableId, text) {
     return { err: "That is a lot of messages. Give it a few seconds." };
   t.lastChatAt.set(user.userId, Date.now());
   t.lastSaid.set(user.userId, body.toLowerCase());
-  if (deps.filterText) body = deps.filterText(body);
+  // Sent as typed, the same as the room's own chat. Masking happens per viewer
+  // in the browser, so somebody who turned the word filter off actually gets
+  // what they asked for instead of pre-censored text.
 
   const playing = t.seats.some((s) => s.userId === user.userId);
   t.typing.delete(user.userId);
@@ -1155,6 +1157,10 @@ function rematch(roomId, userId, tableId) {
     return { err: "You are not in this game." };
   if (poolFor(f, t.type).length)
     return { err: "People are waiting, so the seat rotates." };
+  // Somebody sat through the round to get a turn. Two players rematching each
+  // other forever would step straight over them.
+  if (t.nextUp.some((uid) => deps.userInfo(t.roomId, uid)))
+    return { err: "Somebody is up next, so the seat rotates." };
 
   const seat = t.seats.find((s) => s.userId === userId);
   // Clicking again takes it back, the same as every other vote here.

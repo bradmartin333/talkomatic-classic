@@ -35,6 +35,14 @@
     return e;
   }
 
+  // Other people's words are masked here, per viewer, using the room's own
+  // filter and its on/off switch. The server sends what was actually typed.
+  function masked(text) {
+    const f = window.TalkomaticFilter;
+    if (!f || !f.apply) return String(text == null ? "" : text);
+    return f.apply(text);
+  }
+
   function toast(msg, type) {
     if (window.StaffUI) window.StaffUI.toast(msg, { type: type || "info" });
     else if (window.toastr)
@@ -263,6 +271,7 @@
     if (board && board.destroy) board.destroy();
     board = null;
     boardKey = "";
+    if (side && side.destroy) side.destroy();
     side = null;
   }
 
@@ -951,11 +960,57 @@
     }
   }
 
+  // Where you stand, in words, before anything else on the bar. "Waiting" and
+  // "watching" on their own left people unsure whether they were in the game
+  // at all, so this always says which one you are and what you can do next.
+  function statusPill(t) {
+    const playing = t.state === "playing";
+    if (t.seated) {
+      if (playing)
+        return { cls: "gm-you-playing", icon: "fa-gamepad", text: "You are playing" };
+      if (t.state === "finished")
+        return { cls: "gm-you-playing", icon: "fa-gamepad", text: "You are in this game" };
+      return {
+        cls: "gm-you-playing",
+        icon: "fa-gamepad",
+        text: "You are in - the game has not started yet",
+      };
+    }
+    if (t.iAmNext)
+      return {
+        cls: "gm-you-next",
+        icon: "fa-hand",
+        text: "Watching - you have the next round",
+      };
+    if (t.canJoin)
+      return {
+        cls: "gm-you-join",
+        icon: "fa-eye",
+        text: "Watching - you can join in now",
+      };
+    if (t.canPlayNext)
+      return {
+        cls: "gm-you-watch",
+        icon: "fa-eye",
+        text: "Watching - chat, or take the next round",
+      };
+    return { cls: "gm-you-watch", icon: "fa-eye", text: "Watching - you can chat" };
+  }
+
   function paintTurn(t) {
     const host = overlay.querySelector("#gmTurn");
     if (!host) return;
     host.textContent = "";
-    if (t.state === "finished") return; // the banner is saying it instead
+
+    const you = statusPill(t);
+    host.appendChild(
+      el("span", { class: "gm-youpill " + you.cls }, [
+        el("i", { class: "fas " + you.icon }),
+        " " + you.text,
+      ]),
+    );
+
+    if (t.state === "finished") return; // the banner is saying the rest
     const g = t.game || {};
 
     if (t.state === "open") {
@@ -982,7 +1037,7 @@
       host.appendChild(
         el("span", { class: "gm-watchpill" }, [
           el("i", { class: "fas fa-eye" }),
-          " " + t.spectators + (t.spectators === 1 ? " watching" : " watching"),
+          " " + t.spectators + " watching",
         ]),
       );
 
@@ -1069,7 +1124,10 @@
         );
       }
       host.appendChild(
-        el("button", { class: "gm-btn", text: "Stop watching", onclick: backToFloor }),
+        el("button", { class: "gm-btn", onclick: backToFloor }, [
+          el("i", { class: "fas fa-chevron-left" }),
+          " Back to games",
+        ]),
       );
     }
   }
@@ -1080,16 +1138,21 @@
     const g = gameById(t.type);
     const box = el("div", { class: "gm-waiting" });
     box.appendChild(el("div", { class: "gm-waiting-pulse" }));
+    // Says plainly that they are already in it. "Waiting" on its own read as
+    // if they were queuing for a seat rather than sitting in one.
     box.appendChild(
-      el("div", { class: "gm-waiting-head", text: "Waiting for someone to join" }),
+      el("div", {
+        class: "gm-waiting-head",
+        text: "You are in. Waiting for an opponent.",
+      }),
     );
     const need = g && g.maxPlayers === 2 ? "one more player" : "another player";
     box.appendChild(
       el("div", {
         class: "gm-waiting-sub",
         text:
-          "Your board is set up and needs " + need +
-          ". Anyone in the room can jump in, or you can ask somebody by name.",
+          "Your seat at " + (g ? g.name : "this game") + " is held. It starts as soon as " +
+          need + " sits down. Anyone in the room can jump in, or you can ask somebody by name.",
       }),
     );
     const acts = el("div", { class: "gm-waiting-acts" });
@@ -1130,6 +1193,7 @@
     let nextHead, nextCount, nextEl;
     let lastChatId = 0;
     let typingSentAt = 0;
+    let stopWatching = null;
 
     function atBottom() {
       return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
@@ -1165,7 +1229,11 @@
           who.appendChild(el("i", { class: "fas fa-eye", title: "Watching" }));
         head.appendChild(who);
         node.appendChild(head);
-        node.appendChild(el("span", { class: "gm-chat-text", text: m.text }));
+        const body = el("span", { class: "gm-chat-text", text: masked(m.text) });
+        // Keep what was actually said so flipping the filter can re-render it
+        // without asking the server again.
+        body.dataset.raw = m.text == null ? "" : String(m.text);
+        node.appendChild(body);
       }
       logEl.appendChild(node);
       while (logEl.childNodes.length > 120) logEl.removeChild(logEl.firstChild);
@@ -1252,6 +1320,13 @@
         });
         root.appendChild(form);
         host.appendChild(root);
+        if (window.TalkomaticFilter && window.TalkomaticFilter.onChange)
+          stopWatching = window.TalkomaticFilter.onChange(refilter);
+      },
+
+      destroy() {
+        if (stopWatching) stopWatching();
+        stopWatching = null;
       },
 
       // Appended live so the log never jumps while you are reading it.
@@ -1406,6 +1481,16 @@
         paintTyping(t.typing || []);
       },
     };
+
+    // The filter toggle flipped while this panel was open: repaint what is
+    // already on screen from the raw text we kept.
+    function refilter() {
+      if (!logEl) return;
+      logEl.querySelectorAll(".gm-chat-text").forEach((n) => {
+        if (n.dataset.raw === undefined) return;
+        n.textContent = masked(n.dataset.raw);
+      });
+    }
 
     function paintTyping(users) {
       if (!typingEl) return;

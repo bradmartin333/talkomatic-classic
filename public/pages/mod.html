@@ -827,6 +827,18 @@
       .kv .v.dimv {
         color: var(--dim);
       }
+      /* A name with its authoritative staff badge beside it */
+      .whorole {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.375rem;
+        flex-wrap: wrap;
+        min-width: 0;
+      }
+      .whorole .chip {
+        font-size: 0.5625rem;
+        padding: 0.0625rem 0.375rem;
+      }
       .uref {
         color: var(--txt);
         border-bottom: 1px dotted var(--dim2);
@@ -3503,6 +3515,6 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="js/staff-ui.js?v=1.8.1"></script>
-    <script src="js/mod.js?v=4.8.3"></script>
+    <script src="js/mod.js?v=4.9.0"></script>
   </body>
 </html>

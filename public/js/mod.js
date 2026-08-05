@@ -287,6 +287,29 @@
     const row = kvRow(k, v, vClass, uid);
     if (row) parent.appendChild(row);
   }
+
+  // A name plus what the server says they actually are. Anyone can call
+  // themselves "MOD katie"; only the badge here is authoritative, and the
+  // plain "Mod: no" beside it is there so the absence of a badge cannot be
+  // mistaken for the board simply not knowing.
+  const ROLE_CHIP = { dev: ["dev", "DEV"], mod: ["l2", "MOD"], jr: ["l1", "JR MOD"] };
+  function whoWithRole(name, role, uid) {
+    const wrap = span("whorole");
+    wrap.appendChild(uid ? uref(String(name), uid) : span(null, String(name)));
+    const chip = ROLE_CHIP[role];
+    if (chip) {
+      wrap.appendChild(document.createTextNode(" "));
+      wrap.appendChild(span("chip " + chip[0], chip[1]));
+    }
+    return wrap;
+  }
+  function staffLine(role) {
+    if (role === "dev") return "yes - developer";
+    if (role === "mod") return "yes - full moderator";
+    if (role === "jr") return "yes - junior moderator";
+    if (role) return "yes - " + role; // an unfamiliar tag is still staff
+    return "no - ordinary user";
+  }
   function searchable(e) {
     const base = [
       e.role,
@@ -436,17 +459,33 @@
       addKv(body, "Staff IP", e.ip, "ip");
       addKv(body, "When", fmtTime(e.ts), "dimv");
     } else if (e.type === "notification") {
+      // Both sides of a report, each with what the server says they are. A
+      // username that looks like staff proves nothing; the badge and the
+      // "Staff" line come off the socket that raised it.
       const tn = parseTarget(e.target);
       if (tn) {
-        addKv(body, "About", uref(tn.name, tn.uid));
+        addKv(body, "About", whoWithRole(tn.name, e.targetRole, tn.uid));
         addKv(body, "Their id", tn.uid, "dimv", tn.uid);
-      } else {
+      } else if (e.target) {
         addKv(body, "About", e.target);
       }
-      // Both sides of a report, which is the whole reason to look at one.
+      if (e.target) addKv(body, "Staff", staffLine(e.targetRole), "dimv");
       addKv(body, "Their IP", e.targetIp, "ip");
-      addKv(body, "Raised by", e.by || e.label, "dimv", e.byUserId || null);
-      addKv(body, "Raiser IP", e.ip, "ip");
+
+      // A report carries the reporter in `by`; an abuse flag names the mod it
+      // is about in `label` with their role in `role`.
+      const raiser = e.by || e.label;
+      const raiserRole = e.by ? e.byRole : e.role || e.byRole;
+      if (raiser) {
+        addKv(
+          body,
+          "Raised by",
+          whoWithRole(raiser, raiserRole, e.byUserId || null),
+        );
+        addKv(body, "Raiser id", e.byUserId, "dimv", e.byUserId || null);
+        addKv(body, "Raiser staff", staffLine(raiserRole), "dimv");
+        addKv(body, "Raiser IP", e.ip, "ip");
+      }
       addKv(body, "Room", e.room, "dimv");
       addKv(
         body,

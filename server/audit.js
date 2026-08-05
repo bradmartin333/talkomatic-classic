@@ -177,7 +177,7 @@ function recordKeyAlert({ role, label, ip, kind, detail }) {
 // dev reading a report in the feed does not have to go and look them up.
 function recordNotification({
   kind, label, role, text, target, room, by, minLevel,
-  ip, targetIp, targetUserId, byUserId, reports,
+  ip, targetIp, targetUserId, byUserId, reports, byRole, targetRole,
 }) {
   const lvl = minLevel === 1 ? 1 : 2;
   const entry = push({
@@ -193,6 +193,10 @@ function recordNotification({
     by: by || null,
     byUserId: byUserId || null,
     targetUserId: targetUserId || null,
+    // Staff status as the server knows it, so the board never has to guess
+    // from a username. Explicitly null when they are an ordinary user.
+    byRole: byRole || null,
+    targetRole: targetRole || null,
     ip: ip || null,
     targetIp: targetIp || null,
     reports: reports || null,

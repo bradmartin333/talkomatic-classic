@@ -139,6 +139,28 @@ function applyWordFilter(text) {
   return filterTextPreservingEmotes(text);
 }
 
+// Anything else on the page that renders somebody else's words (the mini games
+// panel, for one) goes through here, so one toggle covers the whole site
+// instead of each panel deciding on its own.
+const filterWatchers = new Set();
+window.TalkomaticFilter = {
+  enabled: () => wordFilterEnabled,
+  apply: (text) => applyWordFilter(String(text == null ? "" : text)),
+  onChange(fn) {
+    if (typeof fn === "function") filterWatchers.add(fn);
+    return () => filterWatchers.delete(fn);
+  },
+};
+function notifyFilterWatchers() {
+  for (const fn of filterWatchers) {
+    try {
+      fn(wordFilterEnabled);
+    } catch (_) {
+      /* one bad listener must not stop the rest */
+    }
+  }
+}
+
 function toggleWordFilter() {
   wordFilterEnabled = !wordFilterEnabled;
   localStorage.setItem("wordFilterEnabled", JSON.stringify(wordFilterEnabled));
@@ -166,6 +188,7 @@ function toggleWordFilter() {
     if (!chatDiv || chatDiv.dataset.rawText === undefined) return;
     renderOtherUserMessage(chatDiv, chatDiv.dataset.rawText);
   });
+  notifyFilterWatchers();
 }
 
 function updateFilterToggleUI() {

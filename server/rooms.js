@@ -6476,11 +6476,13 @@ function registerSocketHandlers() {
         ).slice(0, 300);
         const reporter = socket.handshake.session?.username || "A user";
         const catLabel = REPORT_CATEGORIES[category];
-        const targetRole = targetSocket?.isDev
-          ? "dev"
-          : targetSocket?.isMod
-            ? "mod"
-            : null;
+        // Roles read off the socket, never off a name. Somebody calling
+        // themselves "MOD katie" is not staff, and the feed has to be able to
+        // say so plainly.
+        const roleOf = (s) =>
+          s?.isDev ? "dev" : s?.isMod ? ((s.modLevel || 2) >= 2 ? "mod" : "jr") : null;
+        const targetRole = roleOf(targetSocket);
+        const byRole = roleOf(socket);
         const tally = reports.add({
           targetKey: targetUserId,
           targetName,
@@ -6513,6 +6515,8 @@ function registerSocketHandlers() {
           targetIp: targetSocket?.clientIp || null,
           targetUserId,
           byUserId: socket.handshake.session?.userId || null,
+          byRole,
+          targetRole,
           reports: tally.distinct || null,
           minLevel: 2,
         });
