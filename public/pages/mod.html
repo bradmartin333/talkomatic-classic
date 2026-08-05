@@ -843,16 +843,13 @@
         word-break: break-word;
       }
       /* ── Compact mode ──
-         Same information, less of everything around it: tighter padding, a
-         smaller icon tile, and a fourth column on a wide screen. Nothing is
-         hidden, so a compact card is still a complete record. */
+         One full-width column of tight cards: reading straight down beats
+         scanning across three, and with the row no longer set by the tallest
+         card in it, nothing is padded out to match a neighbour. Same fields
+         either way, so a compact card is still a complete record. */
       body.compact .grid3 {
         gap: 0.5rem;
-      }
-      @media (min-width: 100rem) {
-        body.compact .grid3 {
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-        }
+        grid-template-columns: minmax(0, 1fr);
       }
       body.compact .e-top {
         gap: 0.5rem;
@@ -3477,6 +3474,6 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="js/staff-ui.js?v=1.8.1"></script>
-    <script src="js/mod.js?v=4.8.0"></script>
+    <script src="js/mod.js?v=4.8.1"></script>
   </body>
 </html>
