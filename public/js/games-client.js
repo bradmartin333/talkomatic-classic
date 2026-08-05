@@ -254,6 +254,8 @@
       n.style.width = pct + "%";
       n.classList.toggle("gm-bar-low", pct < 20);
     });
+    // Boards with their own clock paint it themselves, four times a second.
+    if (board && board.clock) board.clock();
   }
 
   function render() {
@@ -814,6 +816,8 @@
       split.appendChild(sideEl);
       bodyEl.appendChild(split);
 
+      // Draw & Guess sizes itself to the space rather than scrolling.
+      main.classList.toggle("gm-main-fit", t.type === "drawguess");
       board = BOARDS[t.type] ? BOARDS[t.type]() : null;
       if (board) board.mount(main);
       side = makeSide();
@@ -1060,14 +1064,18 @@
             (m.userId === myId() ? " gm-chat-mine" : "") +
             (m.watching ? " gm-chat-watch" : ""),
         });
+        // Avatar, badge and name live in one cell so the grid stays two
+        // columns and a long message wraps under itself, not around the name.
+        const head = el("div", { class: "gm-chat-head" });
         const pfp = avatarNode(m.avatar, true);
-        if (pfp) node.appendChild(pfp);
+        if (pfp) head.appendChild(pfp);
         const badge = badgeFor(m.role);
-        if (badge) node.appendChild(badge);
+        if (badge) head.appendChild(badge);
         const who = el("span", { class: "gm-chat-who", text: m.username });
         if (m.watching)
           who.appendChild(el("i", { class: "fas fa-eye", title: "Watching" }));
-        node.appendChild(who);
+        head.appendChild(who);
+        node.appendChild(head);
         node.appendChild(el("span", { class: "gm-chat-text", text: m.text }));
       }
       logEl.appendChild(node);
@@ -1564,13 +1572,16 @@
 
   // Draw & Guess ------------------------------------------------------------
   BOARDS.drawguess = function () {
-    let promptEl, choiceEl, canvas, ctx, tools, guessForm, guessInput, gotEl, progEl;
+    let root, timerRow, timerNum, timerFill, progEl, promptEl, choiceEl;
+    let canvas, ctx, tools, guessWrap, guessForm, guessInput, guessHint;
+    let statusEl, drawerActions;
     let drawing = false;
     let last = null;
     let pending = [];
     let flushTimer = null;
     let color = 0;
     let brush = 1;
+    let erasing = false;
     let strokes = [];
     let painted = 0;
     let startNext = true;
@@ -1579,19 +1590,32 @@
     // batch is still in flight cannot roll the canvas back.
     let rev = -1;
     let syncing = false;
+    let palette = null;
+    let papers = null;
+    let bg = 0;
+    let focusedGuess = false;
 
+    const BRUSH_SIZES = [3, 8, 18, 34];
+
+    function paper() {
+      return (papers && papers[bg]) || "#fdf5e6";
+    }
+    function inkOf(sSeg) {
+      if (sSeg.e) return paper();
+      return (palette && palette[sSeg.c]) || "#1b1b1b";
+    }
     function clearCanvas() {
-      ctx.fillStyle = "#fdf5e6";
+      ctx.fillStyle = paper();
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
-    function drawSeg(s) {
-      ctx.strokeStyle = DRAW_COLORS[s.c] || DRAW_COLORS[0];
-      ctx.lineWidth = Math.max(1, (s.w || 3) * (canvas.width / 700));
+    function drawSeg(sSeg) {
+      ctx.strokeStyle = inkOf(sSeg);
+      ctx.lineWidth = Math.max(1, (sSeg.w || 4) * (canvas.width / 700));
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
       ctx.beginPath();
-      ctx.moveTo(s.x0 * canvas.width, s.y0 * canvas.height);
-      ctx.lineTo(s.x1 * canvas.width, s.y1 * canvas.height);
+      ctx.moveTo(sSeg.x0 * canvas.width, sSeg.y0 * canvas.height);
+      ctx.lineTo(sSeg.x1 * canvas.width, sSeg.y1 * canvas.height);
       ctx.stroke();
     }
     function repaint() {
@@ -1613,27 +1637,36 @@
     }
     function pos(e) {
       const r = canvas.getBoundingClientRect();
-      const p = e.touches ? e.touches[0] : e;
+      const pt = e.touches ? e.touches[0] : e;
       return {
-        x: Math.max(0, Math.min(1, (p.clientX - r.left) / r.width)),
-        y: Math.max(0, Math.min(1, (p.clientY - r.top) / r.height)),
+        x: Math.max(0, Math.min(1, (pt.clientX - r.left) / r.width)),
+        y: Math.max(0, Math.min(1, (pt.clientY - r.top) / r.height)),
       };
     }
     function canDraw() {
-      return !!(detail && detail.game && detail.game.amDrawer && detail.game.phase === "drawing");
+      return !!(
+        detail && detail.game && detail.game.amDrawer &&
+        detail.game.phase === "drawing"
+      );
+    }
+    function requestSync() {
+      if (syncing || !detail) return;
+      syncing = true;
+      S.emit("games draw", { tableId: detail.id, kind: "sync" });
+      setTimeout(() => { syncing = false; }, 1200);
     }
     function flush() {
       flushTimer = null;
       if (!pending.length) return;
       S.emit("games draw", { tableId: detail.id, segments: pending.splice(0, 40) });
-      if (pending.length) flushTimer = setTimeout(flush, 50);
+      if (pending.length) flushTimer = setTimeout(flush, 45);
     }
     function push(seg) {
       strokes.push(seg);
       drawSeg(seg);
       painted = strokes.length;
       pending.push(seg);
-      if (!flushTimer) flushTimer = setTimeout(flush, 50);
+      if (!flushTimer) flushTimer = setTimeout(flush, 45);
     }
     function down(e) {
       if (!canDraw()) return;
@@ -1646,9 +1679,12 @@
       if (!drawing || !canDraw()) return;
       e.preventDefault();
       const p = pos(e);
-      // Skip micro jitter; fewer segments means a smaller replay for joiners.
       if (Math.abs(p.x - last.x) < 0.002 && Math.abs(p.y - last.y) < 0.002) return;
-      const seg = { x0: last.x, y0: last.y, x1: p.x, y1: p.y, c: color, w: BRUSHES[brush] };
+      const seg = {
+        x0: last.x, y0: last.y, x1: p.x, y1: p.y,
+        c: color, w: BRUSH_SIZES[brush],
+      };
+      if (erasing) seg.e = 1;
       if (startNext) {
         seg.start = 1;
         startNext = false;
@@ -1661,20 +1697,38 @@
       last = null;
     }
 
+    function setTool(which) {
+      erasing = which === "erase";
+      root.querySelectorAll(".gm-dg-tool").forEach((n) =>
+        n.classList.toggle("active", n.dataset.tool === which),
+      );
+      canvas.classList.toggle("gm-dg-erasing", erasing);
+    }
+
     return {
       mount(stage) {
-        const root = el("div", { class: "gm-board gm-dg" });
+        root = el("div", { class: "gm-board gm-dg" });
 
-        progEl = el("div", { class: "gm-dg-progress" });
-        root.appendChild(progEl);
+        // One header row: seconds, bar, turn counter.
+        timerNum = el("div", { class: "gm-dg-secs" });
+        timerFill = el("div", { class: "gm-dg-timefill" });
+        progEl = el("div", { class: "gm-dg-turn" });
+        timerRow = el("div", { class: "gm-dg-timer" }, [
+          timerNum,
+          el("div", { class: "gm-dg-timebar" }, timerFill),
+          progEl,
+        ]);
+        root.appendChild(timerRow);
 
         promptEl = el("div", { class: "gm-dg-prompt" });
         root.appendChild(promptEl);
         choiceEl = el("div", { class: "gm-dg-choices" });
         root.appendChild(choiceEl);
+        drawerActions = el("div", { class: "gm-dg-draweracts" });
+        root.appendChild(drawerActions);
 
         canvas = el("canvas", { class: "gm-dg-canvas" });
-        root.appendChild(el("div", { class: "gm-dg-canvas-wrap" }, canvas));
+        const canvasWrap = el("div", { class: "gm-dg-canvas-wrap" }, canvas);
         ctx = canvas.getContext("2d");
         clearCanvas();
 
@@ -1685,27 +1739,17 @@
         canvas.addEventListener("touchmove", move, { passive: false });
         window.addEventListener("touchend", up);
 
+        // Toolbar: ink, paper, brush, pen/eraser, undo, clear.
         tools = el("div", { class: "gm-dg-tools" });
         const swatches = el("div", { class: "gm-dg-swatches" });
-        DRAW_COLORS.forEach((c, i) => {
-          const b = el("button", {
-            class: "gm-dg-swatch" + (i === 0 ? " active" : ""),
-            "aria-label": "Colour " + (i + 1),
-            onclick: () => {
-              color = i;
-              swatches.querySelectorAll(".gm-dg-swatch").forEach((n, j) =>
-                n.classList.toggle("active", j === i),
-              );
-            },
-          });
-          b.style.background = c;
-          swatches.appendChild(b);
-        });
+        tools.appendChild(swatches);
+        tools._swatches = swatches;
+
         const sizes = el("div", { class: "gm-dg-sizes" });
-        BRUSHES.forEach((w, i) => {
+        BRUSH_SIZES.forEach((w, i) => {
           const b = el("button", {
             class: "gm-dg-size" + (i === brush ? " active" : ""),
-            "aria-label": "Brush " + (i + 1),
+            "aria-label": "Brush size " + (i + 1),
             onclick: () => {
               brush = i;
               sizes.querySelectorAll(".gm-dg-size").forEach((n, j) =>
@@ -1714,34 +1758,63 @@
             },
           });
           const dot = el("span");
-          dot.style.width = dot.style.height = Math.min(18, w + 4) + "px";
+          dot.style.width = dot.style.height = Math.min(20, w / 1.7 + 5) + "px";
           b.appendChild(dot);
           sizes.appendChild(b);
         });
-        tools.appendChild(swatches);
-        tools.appendChild(sizes);
-        tools.appendChild(
+
+        const modes = el("div", { class: "gm-dg-modes" });
+        modes.appendChild(
           el("button", {
-            class: "gm-btn gm-btn-ghost",
+            class: "gm-dg-tool active", "data-tool": "pen", title: "Pen",
+            onclick: () => setTool("pen"),
+          }, el("i", { class: "fas fa-pen" })),
+        );
+        modes.appendChild(
+          el("button", {
+            class: "gm-dg-tool", "data-tool": "erase", title: "Eraser",
+            onclick: () => setTool("erase"),
+          }, el("i", { class: "fas fa-eraser" })),
+        );
+
+        const papersEl = el("div", { class: "gm-dg-papers" });
+        tools._papers = papersEl;
+
+        const acts = el("div", { class: "gm-dg-toolacts" });
+        acts.appendChild(
+          el("button", {
+            class: "gm-btn gm-btn-ghost", title: "Undo the last stroke",
             onclick: () => S.emit("games draw", { tableId: detail.id, kind: "undo" }),
           }, [el("i", { class: "fas fa-rotate-left" }), " Undo"]),
         );
-        tools.appendChild(
+        acts.appendChild(
           el("button", {
-            class: "gm-btn gm-btn-ghost",
+            class: "gm-btn gm-btn-ghost", title: "Clear the canvas",
             onclick: () => S.emit("games draw", { tableId: detail.id, kind: "clear" }),
-          }, [el("i", { class: "fas fa-eraser" }), " Clear"]),
+          }, [el("i", { class: "fas fa-trash" }), " Clear"]),
         );
-        root.appendChild(tools);
 
+        tools.appendChild(sizes);
+        tools.appendChild(modes);
+        tools.appendChild(papersEl);
+        tools.appendChild(acts);
+
+        // Toolbar sits beside the canvas on a wide screen and drops underneath
+        // on a narrow one, so the drawing gets as much room as possible.
+        root.appendChild(el("div", { class: "gm-dg-stage" }, [tools, canvasWrap]));
+
+        // Guessing. Deliberately loud, it is the thing most people are here for.
+        guessHint = el("div", { class: "gm-dg-guesslabel" });
         guessInput = el("input", {
           class: "gm-dg-input",
           type: "text",
           maxlength: "40",
-          placeholder: "what is it?",
+          placeholder: "Type your guess and press enter",
           autocomplete: "off",
+          autocapitalize: "off",
+          spellcheck: "false",
         });
-        guessForm = el("form", { class: "gm-dg-guess" }, [
+        guessForm = el("form", { class: "gm-dg-guessform" }, [
           guessInput,
           el("button", { class: "gm-btn gm-btn-primary", type: "submit", text: "Guess" }),
         ]);
@@ -1750,40 +1823,42 @@
           const v = guessInput.value.trim();
           if (!v) return;
           S.emit("games move", {
-            tableId: detail.id,
-            move: { kind: "guess", text: v },
+            tableId: detail.id, move: { kind: "guess", text: v },
           });
           guessInput.value = "";
         });
-        root.appendChild(guessForm);
+        guessWrap = el("div", { class: "gm-dg-guesswrap" }, [guessHint, guessForm]);
+        root.appendChild(guessWrap);
 
-        gotEl = el("div", { class: "gm-dg-got" });
-        root.appendChild(gotEl);
+        statusEl = el("div", { class: "gm-dg-status" });
+        root.appendChild(statusEl);
 
         stage.appendChild(root);
         setTimeout(resize, 0);
         window.addEventListener("resize", resize);
-        // Ask for whatever is already on the canvas, straight away.
-        if (detail) {
-          syncing = true;
-          S.emit("games draw", { tableId: detail.id, kind: "sync" });
-          setTimeout(() => { syncing = false; }, 1500);
-        }
+        requestSync();
       },
+
       destroy() {
         window.removeEventListener("resize", resize);
         window.removeEventListener("mouseup", up);
         window.removeEventListener("touchend", up);
         if (flushTimer) clearTimeout(flushTimer);
       },
+
       relay(payload) {
         if (payload.kind === "strokeBatch") {
-          // Our own segments are already on screen; just move the revision on.
+          const segs = payload.strokes || [];
           if (detail && detail.game && detail.game.amDrawer) {
             rev = payload.rev;
             return;
           }
-          const segs = payload.strokes || [];
+          // A gap means we missed something, so take a fresh copy rather than
+          // letting the canvases drift apart.
+          if (rev >= 0 && payload.rev - segs.length !== rev) {
+            rev = payload.rev;
+            return requestSync();
+          }
           for (const seg of segs) {
             strokes.push(seg);
             drawSeg(seg);
@@ -1795,6 +1870,10 @@
             rev = payload.rev;
             return;
           }
+          if (rev >= 0 && payload.rev - 1 !== rev) {
+            rev = payload.rev;
+            return requestSync();
+          }
           strokes.push(payload.stroke);
           drawSeg(payload.stroke);
           painted = strokes.length;
@@ -1803,63 +1882,76 @@
           strokes = [];
           rev = payload.rev;
           repaint();
+        } else if (payload.kind === "bg") {
+          bg = payload.bg;
+          rev = payload.rev;
+          repaint();
+          paintPapers();
         } else if (payload.kind === "strokes") {
-          // A full canvas: the answer to a sync, or an undo.
           strokes = payload.strokes || [];
+          if (typeof payload.bg === "number") bg = payload.bg;
           rev = payload.rev;
           syncing = false;
           repaint();
+          paintPapers();
         }
       },
+
       say(msg, good) {
         const line = el("div", {
           class: "gm-dg-flash " + (good ? "gm-good" : "gm-bad"),
           text: msg,
         });
-        gotEl.insertBefore(line, gotEl.firstChild);
+        statusEl.insertBefore(line, statusEl.firstChild);
         setTimeout(() => line.remove(), 2600);
       },
+
+      clock() {
+        const g = detail && detail.game;
+        if (!g || !g.endsAt || g.phase === "waiting") {
+          timerRow.style.display = "none";
+          return;
+        }
+        timerRow.style.display = "";
+        const left = Math.max(0, Math.ceil((g.endsAt - Date.now()) / 1000));
+        timerNum.textContent = left;
+        const pct = Math.max(0, Math.min(100, ((g.endsAt - Date.now()) / g.phaseMs) * 100));
+        timerFill.style.width = pct + "%";
+        const low = left <= 10;
+        timerRow.classList.toggle("gm-dg-low", low);
+      },
+
       update(t) {
         const g = t.game;
         if (!g) {
           promptEl.textContent = "Getting things ready...";
           choiceEl.textContent = "";
           tools.style.display = "none";
-          guessForm.style.display = "none";
+          guessWrap.style.display = "none";
+          timerRow.style.display = "none";
+          drawerActions.textContent = "";
           return;
         }
+        palette = g.colors || palette;
+        papers = g.backgrounds || papers;
+        if (typeof g.bg === "number" && g.bg !== bg && rev <= g.rev) {
+          bg = g.bg;
+          repaint();
+        }
         resize();
+        if (rev === -1 || (g.rev > rev && !pending.length && !drawing)) requestSync();
 
-        // Never rebuild the canvas from a state push. Ask for a fresh copy
-        // only when the revision says we actually missed something and we have
-        // nothing of our own still in flight.
-        if (rev === -1 || (g.rev > rev && !pending.length && !drawing)) {
-          if (!syncing) {
-            syncing = true;
-            S.emit("games draw", { tableId: detail.id, kind: "sync" });
-            setTimeout(() => { syncing = false; }, 1500);
-          }
-        }
+        paintSwatches();
+        paintPapers();
 
-        progEl.textContent = "";
-        // No turn count while it is still one person waiting for company.
-        if (g.totalTurns && g.phase !== "waiting") {
-          progEl.appendChild(
-            el("span", { text: "Turn " + Math.min(g.turn + 1, g.totalTurns) + " of " + g.totalTurns }),
-          );
-          const bar = el("div", { class: "gm-dg-progbar" });
-          const fill = el("div", { class: "gm-dg-progfill" });
-          fill.style.width = Math.round((g.turn / g.totalTurns) * 100) + "%";
-          bar.appendChild(fill);
-          progEl.appendChild(bar);
-        }
+        progEl.textContent =
+          g.totalTurns && g.phase !== "waiting"
+            ? "Turn " + Math.min(g.turn + 1, g.totalTurns) + "/" + g.totalTurns
+            : "";
 
-        // A new turn wipes the canvas straight away rather than leaving the
-        // last drawing up until the sync comes back.
         if (
           (g.phase === "choosing" || g.phase === "waiting") &&
-          strokes.length &&
-          !g.strokeCount
+          strokes.length && !g.strokeCount
         ) {
           strokes = [];
           repaint();
@@ -1867,6 +1959,7 @@
 
         promptEl.textContent = "";
         choiceEl.textContent = "";
+        drawerActions.textContent = "";
 
         if (g.phase === "waiting") {
           promptEl.appendChild(
@@ -1877,7 +1970,9 @@
           );
         } else if (g.phase === "choosing") {
           if (g.amDrawer && g.choices) {
-            promptEl.appendChild(el("span", { class: "gm-dg-yourturn", text: "Your turn to draw, pick a word" }));
+            promptEl.appendChild(
+              el("span", { class: "gm-dg-yourturn", text: "Your turn, pick a word" }),
+            );
             g.choices.forEach((w, i) => {
               choiceEl.appendChild(
                 el("button", {
@@ -1885,21 +1980,23 @@
                   text: w,
                   onclick: () =>
                     S.emit("games move", {
-                      tableId: detail.id,
-                      move: { kind: "pick", index: i },
+                      tableId: detail.id, move: { kind: "pick", index: i },
                     }),
                 }),
               );
             });
+            drawerActions.appendChild(
+              el("button", {
+                class: "gm-btn gm-dg-pass",
+                onclick: () =>
+                  S.emit("games move", { tableId: detail.id, move: { kind: "passTurn" } }),
+              }, [el("i", { class: "fas fa-forward" }), " I'd rather not draw this"]),
+            );
           } else {
             promptEl.appendChild(
               el("span", { text: (g.drawerName || "Someone") + " is picking a word" }),
             );
           }
-          if (g.endsAt)
-            promptEl.appendChild(
-              el("span", { class: "gm-count gm-count-pill", "data-deadline": String(g.endsAt) }),
-            );
         } else if (g.phase === "drawing") {
           if (g.amDrawer) {
             promptEl.appendChild(el("span", { class: "gm-dg-label", text: "You are drawing" }));
@@ -1910,10 +2007,6 @@
             );
             promptEl.appendChild(el("span", { class: "gm-dg-hint", text: g.hint || "" }));
           }
-          if (g.endsAt)
-            promptEl.appendChild(
-              el("span", { class: "gm-count gm-count-pill", "data-deadline": String(g.endsAt) }),
-            );
         } else if (g.phase === "reveal") {
           promptEl.appendChild(el("span", { class: "gm-dg-label", text: "It was" }));
           promptEl.appendChild(el("span", { class: "gm-dg-word", text: g.reveal || "" }));
@@ -1929,26 +2022,130 @@
         const iDraw = g.amDrawer && g.phase === "drawing";
         tools.style.display = iDraw ? "" : "none";
         canvas.classList.toggle("gm-dg-live", iDraw);
-        guessForm.style.display = t.seated && g.canGuess ? "" : "none";
 
-        // Who has already got it, in order, so the room can see people landing it.
-        gotEl.textContent = "";
-        if (g.phase === "drawing" && g.guessed.length) {
-          g.guessed.forEach((x) => {
-            gotEl.appendChild(
-              el("span", { class: "gm-dg-gotchip" }, [
-                el("i", { class: "fas fa-check" }),
-                x.username,
-              ]),
+        // The guess box, and why it is or is not there.
+        const showGuess = t.seated && g.phase === "drawing" && !g.amDrawer;
+        guessWrap.style.display = showGuess ? "" : "none";
+        if (showGuess) {
+          guessHint.textContent = "";
+          if (g.canGuess) {
+            guessWrap.classList.remove("gm-dg-got");
+            guessHint.appendChild(el("i", { class: "fas fa-lightbulb" }));
+            guessHint.appendChild(el("span", { text: " What is it?" }));
+            guessInput.disabled = false;
+            if (!focusedGuess) {
+              focusedGuess = true;
+              setTimeout(() => guessInput.focus(), 40);
+            }
+          } else {
+            guessWrap.classList.add("gm-dg-got");
+            guessHint.appendChild(el("i", { class: "fas fa-circle-check" }));
+            guessHint.appendChild(
+              el("span", { text: " You got it. Chat while the rest catch up." }),
             );
-          });
+            guessInput.disabled = true;
+          }
         }
-        if (g.iGuessed && g.phase === "drawing")
-          gotEl.appendChild(
-            el("span", { class: "gm-dg-waitline", text: "You got it. Sit tight while the others try." }),
+        if (g.phase !== "drawing") focusedGuess = false;
+
+        // Who has it, who we are still waiting on, and the nudge button.
+        statusEl.textContent = "";
+        if (g.phase === "drawing") {
+          if (g.guessed.length) {
+            const got = el("div", { class: "gm-dg-line" });
+            got.appendChild(el("span", { class: "gm-dg-linelabel", text: "Got it" }));
+            g.guessed.forEach((x) =>
+              got.appendChild(
+                el("span", { class: "gm-dg-gotchip" }, [
+                  el("b", { text: "#" + x.place }),
+                  x.username,
+                ]),
+              ),
+            );
+            statusEl.appendChild(got);
+          }
+          if (g.waitingOn && g.waitingOn.length) {
+            const wait = el("div", { class: "gm-dg-line" });
+            wait.appendChild(el("span", { class: "gm-dg-linelabel", text: "Waiting on" }));
+            g.waitingOn.forEach((x) =>
+              wait.appendChild(el("span", { class: "gm-dg-waitchip", text: x.username })),
+            );
+            if (g.canSkip && t.seated)
+              wait.appendChild(
+                el("button", {
+                  class: "gm-btn gm-dg-skip" + (g.iSkipped ? " gm-dg-skipped" : ""),
+                  title: "Move on without waiting",
+                  onclick: () =>
+                    S.emit("games move", { tableId: detail.id, move: { kind: "skip" } }),
+                }, [
+                  el("i", { class: "fas fa-forward" }),
+                  g.iSkipped
+                    ? " Waiting " + g.skipVotes + "/" + g.skipNeeded
+                    : " Move on " + g.skipVotes + "/" + g.skipNeeded,
+                ]),
+              );
+            statusEl.appendChild(wait);
+          }
+        }
+
+        // A standing opt-out, always available to a seated player.
+        if (t.seated && !g.over) {
+          const opt = el("div", { class: "gm-dg-optout" });
+          opt.appendChild(
+            el("button", {
+              class: "gm-dg-optbtn" + (g.iNoDraw ? " active" : ""),
+              onclick: () =>
+                S.emit("games move", {
+                  tableId: detail.id, move: { kind: "noDraw", on: !g.iNoDraw },
+                }),
+            }, [
+              el("i", { class: g.iNoDraw ? "fas fa-check-square" : "far fa-square" }),
+              g.iNoDraw ? " Sitting out the drawing" : " I'd rather not draw",
+            ]),
           );
+          statusEl.appendChild(opt);
+        }
       },
     };
+
+    function paintSwatches() {
+      if (!palette || !tools._swatches) return;
+      const host = tools._swatches;
+      if (host.childNodes.length === palette.length) return;
+      host.textContent = "";
+      palette.forEach((c, i) => {
+        const b = el("button", {
+          class: "gm-dg-swatch" + (i === color ? " active" : ""),
+          "aria-label": "Colour " + (i + 1),
+          onclick: () => {
+            color = i;
+            setTool("pen");
+            host.querySelectorAll(".gm-dg-swatch").forEach((n, j) =>
+              n.classList.toggle("active", j === i),
+            );
+          },
+        });
+        b.style.background = c;
+        host.appendChild(b);
+      });
+    }
+
+    function paintPapers() {
+      if (!papers || !tools._papers) return;
+      const host = tools._papers;
+      host.textContent = "";
+      host.appendChild(el("span", { class: "gm-dg-toollabel", text: "Paper" }));
+      papers.forEach((c, i) => {
+        const b = el("button", {
+          class: "gm-dg-paper" + (i === bg ? " active" : ""),
+          "aria-label": "Background " + (i + 1),
+          onclick: () =>
+            S.emit("games move", { tableId: detail.id, move: { kind: "bg", index: i } }),
+        });
+        b.style.background = c;
+        host.appendChild(b);
+      });
+    }
   };
 
   // ── Socket wiring ─────────────────────────────────────────────────────────

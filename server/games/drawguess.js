@@ -5,8 +5,11 @@
 //
 // The rotation picks whoever has drawn least rather than walking an index, so
 // people joining and leaving mid-game cannot skew whose turn it is or strand
-// the turn on an empty seat. One player on their own sits in "waiting" until
-// somebody else turns up, which is why this game accepts a single player.
+// the turn on an empty seat. Players can pass a turn or opt out of drawing
+// entirely, and are then only picked if nobody else is willing.
+//
+// The canvas is versioned (state.rev). Strokes go out as deltas and the whole
+// thing is only sent on request, which keeps this cheap with a crowd watching.
 
 const { DRAW, prettyPrompt } = require("./words");
 
@@ -14,9 +17,21 @@ const CHOOSE_MS = 15000;
 const DRAW_MS = 80000;
 const REVEAL_MS = 7000;
 const ROUNDS = 2; // each player draws this many times
-const MAX_STROKES = 6000;
+const MAX_STROKES = 8000;
 const IDLE_SKIP_MS = 25000; // blank canvas this long and the turn is skipped
-const COLORS = 8;
+
+// Ink. Sixteen is expressive without turning the toolbar into a paint program.
+// Index 1 is white so it still reads on the dark paper.
+const COLORS = [
+  "#1b1b1b", "#ffffff", "#9e9e9e", "#6d4c41",
+  "#e53935", "#ff7043", "#fb8c00", "#fdd835",
+  "#c0ca33", "#43a047", "#00897b", "#00acc1",
+  "#1e88e5", "#3949ab", "#8e24aa", "#d81b60",
+];
+
+// Paper. The drawer picks it, it lives on the canvas, so everybody sees the
+// same thing and a late joiner gets it with their sync.
+const BACKGROUNDS = ["#fdf5e6", "#ffffff", "#e8f2f7", "#eef3e2", "#232323"];
 
 function pickWord(list, avoid) {
   for (let i = 0; i < 40; i++) {
@@ -42,6 +57,7 @@ function create(players) {
       username: p.username,
       score: 0,
       joinedAt: Date.now(),
+      noDraw: false, // opted out of taking a turn
     })),
     drawn: {}, // userId -> turns taken, drives the rotation
     turn: 0,
@@ -52,9 +68,11 @@ function create(players) {
     lastWord: null,
     skipped: false,
     endsAt: 0,
-    guessed: [], // { userId, username, pts, at }
+    guessed: [], // { userId, username, pts, place, at }
     strokes: [],
+    bg: 0,
     rev: 0, // bumped on every canvas change, so a client can spot a gap
+    skipVotes: [], // userIds asking to move the round along
     used: [],
     over: false,
   };
@@ -63,31 +81,33 @@ function create(players) {
   return state;
 }
 
-function rounds(state) {
-  return ROUNDS;
-}
-
-// Whoever has drawn fewest, oldest player first on a tie. Stable under joins
-// and leaves, which an index into a rotation array is not.
-function pickDrawer(state, exclude) {
-  let best = null;
-  for (const p of state.players) {
-    if (exclude && p.userId === exclude) continue;
-    const n = state.drawn[p.userId] || 0;
-    if (n >= ROUNDS) continue;
-    if (!best || n < best.n || (n === best.n && p.joinedAt < best.p.joinedAt))
-      best = { p, n };
-  }
-  return best ? best.p : null;
+// Whoever has drawn fewest, oldest player first on a tie. People who opted out
+// are only considered when nobody else is willing, so a table of opt-outs still
+// plays rather than deadlocking.
+function pickDrawer(state) {
+  const best = (skipOptOut) => {
+    let found = null;
+    for (const p of state.players) {
+      if (skipOptOut && p.noDraw) continue;
+      const n = state.drawn[p.userId] || 0;
+      if (n >= ROUNDS) continue;
+      if (!found || n < found.n || (n === found.n && p.joinedAt < found.p.joinedAt))
+        found = { p, n };
+    }
+    return found ? found.p : null;
+  };
+  return best(true) || best(false);
 }
 
 // Decide what happens next: wait for company, hand out a word, or finish.
 function advance(state) {
   state.guessed = [];
   state.strokes = [];
+  state.skipVotes = [];
   state.rev++;
   state.word = null;
   state.choices = [];
+  state.skipped = false;
 
   if (state.players.length < 2) {
     state.phase = "waiting";
@@ -124,6 +144,7 @@ function toReveal(state) {
   state.endsAt = Date.now() + REVEAL_MS;
   state.drawn[state.drawerId] = (state.drawn[state.drawerId] || 0) + 1;
   state.turn++;
+  state.skipVotes = [];
 
   // The drawer earns from how many people got there. A word nobody can guess
   // is worth nothing, and one everybody gets instantly is not worth much.
@@ -135,6 +156,16 @@ function toReveal(state) {
       Math.round(40 + 60 * (state.guessed.length / guessers)),
     );
   }
+}
+
+// Hand the pen on without costing them a go, so "not this one" is cheap and
+// people actually use it instead of sitting on the clock.
+function passTurn(state) {
+  const current = state.drawerId;
+  const p = state.players.find((x) => x.userId === current);
+  if (p) p.joinedAt = Date.now(); // back of the tie-break queue
+  state.drawn[current] = (state.drawn[current] || 0) + 1;
+  advance(state);
 }
 
 function addScore(state, userId, n) {
@@ -206,12 +237,36 @@ function maskFor(state, now) {
   return out;
 }
 
+// Who still has not got it. Drives the "waiting on" line.
+function pending(state) {
+  return state.players
+    .filter(
+      (p) =>
+        p.userId !== state.drawerId &&
+        !state.guessed.some((g) => g.userId === p.userId),
+    )
+    .map((p) => ({ userId: p.userId, username: p.username }));
+}
+
+// Once most people have it, the rest can be moved along rather than everybody
+// sitting out the clock for one person who has wandered off.
+function skipThreshold(state) {
+  const guessers = Math.max(1, state.players.length - 1);
+  return Math.ceil(guessers / 2);
+}
+
+function canSkip(state) {
+  return (
+    state.phase === "drawing" && state.guessed.length >= skipThreshold(state)
+  );
+}
+
 function move(state, userId, mv) {
   if (state.over) return { ok: false, err: "This game is over." };
   const kind = mv && mv.kind;
   const isDrawer = userId === state.drawerId;
-  const inGame = state.players.some((p) => p.userId === userId);
-  if (!inGame) return { ok: false, err: "You are not in this game." };
+  const me = state.players.find((p) => p.userId === userId);
+  if (!me) return { ok: false, err: "You are not in this game." };
 
   if (kind === "pick") {
     if (!isDrawer) return { ok: false, err: "You are not drawing." };
@@ -221,6 +276,46 @@ function move(state, userId, mv) {
       return { ok: false, err: "Pick one of the words." };
     startDrawing(state, state.choices[i]);
     return { ok: true };
+  }
+
+  // "Not this one" during the pick, without burning the clock.
+  if (kind === "passTurn") {
+    if (!isDrawer) return { ok: false, err: "It is not your turn to draw." };
+    if (state.phase !== "choosing")
+      return { ok: false, err: "Too late to pass this one." };
+    if (state.players.length < 2)
+      return { ok: false, err: "Nobody else to hand it to." };
+    passTurn(state);
+    return { ok: true, announce: `${me.username} passed on drawing` };
+  }
+
+  // A standing "leave me out of the drawing".
+  if (kind === "noDraw") {
+    const on = !!mv.on;
+    if (me.noDraw === on) return { ok: true, quiet: true, selfPush: true };
+    me.noDraw = on;
+    // Opting out while holding the pen hands it straight over.
+    if (on && isDrawer && state.phase === "choosing" && state.players.length > 1) {
+      passTurn(state);
+      return { ok: true, announce: `${me.username} would rather not draw` };
+    }
+    return {
+      ok: true,
+      announce: on
+        ? `${me.username} would rather not draw`
+        : `${me.username} is happy to draw again`,
+    };
+  }
+
+  if (kind === "bg") {
+    if (!isDrawer) return { ok: false, err: "Only the drawer can change that." };
+    const i = Number(mv.index);
+    if (!Number.isInteger(i) || i < 0 || i >= BACKGROUNDS.length)
+      return { ok: false, err: "Unknown background." };
+    if (state.bg === i) return { ok: true, quiet: true };
+    state.bg = i;
+    state.rev++;
+    return { ok: true, quiet: true, relay: { kind: "bg", bg: i, rev: state.rev } };
   }
 
   if (kind === "stroke") {
@@ -250,8 +345,7 @@ function move(state, userId, mv) {
     if (!isDrawer) return { ok: false, err: "You are not drawing." };
     // Lines arrive as many short segments, so undo drops the last brush stroke
     // rather than the last segment, which would barely change the picture.
-    const end = state.strokes.length;
-    let i = end - 1;
+    let i = state.strokes.length - 1;
     while (i > 0 && !state.strokes[i].start) i--;
     state.strokes = state.strokes.slice(0, i);
     state.rev++;
@@ -259,6 +353,25 @@ function move(state, userId, mv) {
       ok: true,
       quiet: true,
       relay: { kind: "strokes", strokes: state.strokes, rev: state.rev },
+    };
+  }
+
+  // Move the round along when most people already have it.
+  if (kind === "skip") {
+    if (state.phase !== "drawing") return { ok: false, err: "Nothing to skip." };
+    if (!canSkip(state))
+      return { ok: false, err: "Give people a bit longer first." };
+    if (state.skipVotes.includes(userId))
+      return { ok: false, err: "You already voted to move on." };
+    state.skipVotes.push(userId);
+    const need = Math.ceil(state.players.length / 2);
+    if (state.skipVotes.length >= need) {
+      toReveal(state);
+      return { ok: true, announce: "Moving on to the next turn" };
+    }
+    return {
+      ok: true,
+      announce: `${me.username} wants to move on (${state.skipVotes.length}/${need})`,
     };
   }
 
@@ -285,10 +398,9 @@ function move(state, userId, mv) {
     const now = Date.now();
     const frac = Math.max(0, Math.min(1, (state.endsAt - now) / DRAW_MS));
     const pts = 50 + Math.round(150 * frac);
-    const p = state.players.find((x) => x.userId === userId);
     state.guessed.push({
       userId,
-      username: p ? p.username : "Someone",
+      username: me.username,
       pts,
       at: now,
       place: state.guessed.length + 1,
@@ -302,7 +414,7 @@ function move(state, userId, mv) {
       correct: true,
       pts,
       place: state.guessed.length,
-      announce: `${p ? p.username : "Someone"} guessed it`,
+      announce: `${me.username} guessed it`,
     };
   }
 
@@ -324,10 +436,11 @@ function sanitizeStroke(s) {
   const w = Number(s.w);
   const out = {
     x0, y0, x1, y1,
-    c: Number.isInteger(c) && c >= 0 && c < COLORS ? c : 0,
-    w: Number.isFinite(w) ? Math.max(1, Math.min(28, w)) : 3,
+    c: Number.isInteger(c) && c >= 0 && c < COLORS.length ? c : 0,
+    w: Number.isFinite(w) ? Math.max(1, Math.min(40, w)) : 4,
   };
   if (s.start) out.start = 1; // first segment of a brush stroke, for undo
+  if (s.e) out.e = 1; // eraser: painted in the current background
   return out;
 }
 
@@ -374,6 +487,7 @@ function addPlayer(state, p) {
     username: p.username,
     score: 0,
     joinedAt: Date.now(),
+    noDraw: false,
   });
   state.drawn[p.userId] = 0;
   if (state.phase === "waiting") {
@@ -387,6 +501,7 @@ function removePlayer(state, userId) {
   const was = state.drawerId === userId;
   state.players = state.players.filter((p) => p.userId !== userId);
   state.guessed = state.guessed.filter((g) => g.userId !== userId);
+  state.skipVotes = state.skipVotes.filter((v) => v !== userId);
   delete state.drawn[userId];
 
   if (state.players.length < 2) {
@@ -439,11 +554,16 @@ function result(state) {
   };
 }
 
+function snapshotStrokes(state) {
+  return { strokes: state.strokes, rev: state.rev, bg: state.bg };
+}
+
 function view(state, userId) {
   const now = Date.now();
   const amDrawer = userId === state.drawerId;
   const revealing = state.phase === "reveal" || state.phase === "done";
   const drawer = state.players.find((p) => p.userId === state.drawerId);
+  const me = state.players.find((p) => p.userId === userId);
   const done = state.players.reduce(
     (n, p) => n + Math.min(ROUNDS, state.drawn[p.userId] || 0),
     0,
@@ -466,17 +586,16 @@ function view(state, userId) {
     // The word goes to the drawer only, and to everyone once it is revealed.
     word: amDrawer ? prettyPrompt(state.word) : null,
     reveal: revealing ? prettyPrompt(state.lastWord || state.word) : null,
-    skipped: !!state.skipped,
     hint: !amDrawer && state.phase === "drawing" ? maskFor(state, now) : null,
-    // Choices are the drawer's alone; others just see that a pick is pending.
     choices:
       amDrawer && state.phase === "choosing"
         ? state.choices.map(prettyPrompt)
         : null,
-    // Deliberately no stroke array here: it is sent once on join and then
-    // kept up to date by deltas. Shipping it on every push meant serialising
-    // thousands of segments per viewer per change.
+    // No stroke array here: sent once on join, then kept current by deltas.
     rev: state.rev,
+    bg: state.bg,
+    backgrounds: BACKGROUNDS,
+    colors: COLORS,
     strokeCount: state.strokes.length,
     guessed: state.guessed.map((g) => ({
       userId: g.userId,
@@ -484,11 +603,17 @@ function view(state, userId) {
       pts: g.pts,
       place: g.place,
     })),
+    waitingOn: state.phase === "drawing" ? pending(state) : [],
     iGuessed: state.guessed.some((g) => g.userId === userId),
     canGuess:
       !amDrawer &&
       state.phase === "drawing" &&
       !state.guessed.some((g) => g.userId === userId),
+    iNoDraw: !!(me && me.noDraw),
+    canSkip: canSkip(state),
+    skipVotes: state.skipVotes.length,
+    skipNeeded: Math.ceil(state.players.length / 2),
+    iSkipped: state.skipVotes.includes(userId),
     players: state.players
       .slice()
       .sort((a, b) => b.score - a.score)
@@ -498,14 +623,11 @@ function view(state, userId) {
         score: p.score,
         drawing: p.userId === state.drawerId,
         got: state.guessed.some((g) => g.userId === p.userId),
+        noDraw: !!p.noDraw,
         drawn: state.drawn[p.userId] || 0,
       })),
     over: state.over,
   };
-}
-
-function snapshotStrokes(state) {
-  return { strokes: state.strokes, rev: state.rev };
 }
 
 module.exports = {
@@ -517,7 +639,8 @@ module.exports = {
     "The drawer picks a word and has eighty seconds to draw it.",
     "Everyone else types guesses. The faster you get it, the more you score.",
     "The drawer scores from how many people work it out.",
-    "Anyone can join partway through and draws on their turn.",
+    "Not feeling it? Pass the turn, or opt out of drawing for the whole game.",
+    "Once half the room has guessed, anyone can vote to move on.",
   ],
   // One person can open it and hold it while others turn up.
   minPlayers: 1,
@@ -526,6 +649,7 @@ module.exports = {
   joinInProgress: true,
   openMs: 8000,
   colors: COLORS,
+  backgrounds: BACKGROUNDS,
   create,
   move,
   turnOf,
@@ -536,5 +660,4 @@ module.exports = {
   addPlayer,
   removePlayer,
   snapshotStrokes,
-  rounds,
 };

@@ -802,7 +802,14 @@ function voteRemove(roomId, userId, tableId, targetUserId) {
     set = new Set();
     t.votes.set(targetUserId, set);
   }
-  if (set.has(userId)) return { err: "You already voted." };
+  // Clicking again takes the vote back, so a misclick is not permanent.
+  if (set.has(userId)) {
+    set.delete(userId);
+    if (!set.size) t.votes.delete(targetUserId);
+    say(t, `${deps.userInfo(roomId, userId)?.username || "Someone"} took back their vote`);
+    emitTable(t);
+    return { ok: true, removed: false };
+  }
   set.add(userId);
 
   const needed = Math.ceil((t.seats.length - 1) / 2);
