@@ -567,6 +567,76 @@ app.use(
 
 const PAGES_DIR = path.join(__dirname, "public", "pages");
 const PAGE_HEADERS = { "Cache-Control": "no-cache, must-revalidate" };
+
+// ── Asset fingerprints ──
+// Scripts and stylesheets are cached hard and immutable, which is only safe
+// while a changed file gets a changed URL. Hand-written ?v= numbers made that
+// somebody's job to remember, and forgetting left every browser holding a year
+// old stylesheet that no ordinary refresh would replace. The tag is derived
+// from the file itself instead, so the URL changes exactly when the bytes do.
+const statSync = require("fs").statSync;
+const readFileSync = require("fs").readFileSync;
+const assetTags = new Map(); // relative path -> { at, mtimeMs, size, tag }
+const ASSET_RECHECK_MS = 4000; // how often to bother stat-ing in a long run
+
+function assetTag(rel) {
+  const clean = String(rel).replace(/^\/+/, "").split("?")[0];
+  if (clean.includes("..")) return null;
+  const now = Date.now();
+  const hit = assetTags.get(clean);
+  if (hit && now - hit.at < ASSET_RECHECK_MS) return hit.tag;
+  try {
+    const st = statSync(path.join(__dirname, "public", clean));
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+      hit.at = now;
+      return hit.tag;
+    }
+    const tag = crypto
+      .createHash("sha1")
+      .update(readFileSync(path.join(__dirname, "public", clean)))
+      .digest("hex")
+      .slice(0, 10);
+    assetTags.set(clean, { at: now, mtimeMs: st.mtimeMs, size: st.size, tag });
+    return tag;
+  } catch (_) {
+    return null; // not ours to stamp (a CDN url, or simply missing)
+  }
+}
+
+const ASSET_REF = /\b(src|href)="([^"]+?\.(?:js|css))(?:\?[^"]*)?"/g;
+function stampAssets(html) {
+  return html.replace(ASSET_REF, (whole, attr, file) => {
+    if (/^(?:https?:)?\/\//.test(file) || file.startsWith("data:")) return whole;
+    const tag = assetTag(file);
+    return tag ? `${attr}="${file}?v=${tag}"` : whole;
+  });
+}
+
+// One id for "the client code the browser is running". Built from the asset
+// tags, so a server-only change does not needlessly bounce everyone out of a
+// game, but a change to any script or stylesheet does.
+function buildId() {
+  const dirs = ["js", "stylesheets"];
+  const h = crypto.createHash("sha1");
+  for (const d of dirs) {
+    let names = [];
+    try {
+      names = require("fs").readdirSync(path.join(__dirname, "public", d)).sort();
+    } catch (_) {
+      names = [];
+    }
+    for (const n of names) {
+      if (!/\.(js|css)$/.test(n)) continue;
+      h.update(n + ":" + (assetTag(d + "/" + n) || "") + ";");
+    }
+  }
+  return h.digest("hex").slice(0, 12);
+}
+let BUILD_ID = buildId();
+setInterval(() => {
+  BUILD_ID = buildId();
+}, 30000).unref();
+app.locals.buildId = () => BUILD_ID;
 const PAGES = [
   "about",
   "app-directory",
@@ -591,9 +661,15 @@ function sendPage(req, res, file) {
     .readFile(file, "utf8")
     .then((html) => {
       res.set(PAGE_HEADERS);
-      res.type("html").send(
-        html.replace(/<%=\s*nonce\s*%>/g, res.locals.nonce || ""),
+      let out = html.replace(/<%=\s*nonce\s*%>/g, res.locals.nonce || "");
+      out = stampAssets(out);
+      // The page records the build it was served with, so the client can spot
+      // that it is running old code after an update and reload itself.
+      out = out.replace(
+        /<head(\s[^>]*)?>/i,
+        (m) => m + `\n    <meta name="tk-build" content="${BUILD_ID}" />`,
       );
+      res.type("html").send(out);
     })
     .catch(() => res.status(404).end());
 }
@@ -1159,7 +1235,7 @@ app.post(`${API}/rooms/:id/join`, apiAuth, async (req, res) => {
 async function start() {
   await rooms.loadRooms();
   rooms.loadBoard(); // restore saved Talkoboard strokes for the loaded rooms
-  rooms.registerSocketHandlers();
+  rooms.registerSocketHandlers({ buildId: () => BUILD_ID });
   rooms.startCleanupIntervals();
   nsfw.warmup(); // preload the puzzle image classifier
 

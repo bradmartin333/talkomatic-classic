@@ -2371,7 +2371,12 @@ function handleTyping(socket, userId, username, isTyping) {
 
 // ── Socket Event Registration ───────────────────────────────────────────────
 
-function registerSocketHandlers() {
+// Set by the entry point: returns the id of the client code being served, so a
+// page that reconnects after a deploy can tell it is running something old.
+let getBuildId = null;
+
+function registerSocketHandlers(opts) {
+  if (opts && typeof opts.buildId === "function") getBuildId = opts.buildId;
   // The game floor resolves players through the room roster, so a spectator or
   // a stale socket can never hold a seat.
   gamesFloor.init({
@@ -2471,6 +2476,12 @@ function registerSocketHandlers() {
       else state.ipConnections.delete(socket.clientIp);
     };
     socket.on("disconnect", releaseSlot);
+
+    // Which build of the client code this server is serving. A page that
+    // reconnects after a deploy compares it with the one it loaded and reloads
+    // itself if it is behind, which is the only way a room page picks up new
+    // scripts and styles: it rejoins in place rather than reloading.
+    if (getBuildId) socket.emit("server build", { id: getBuildId() });
 
     socket.deviceType = deviceTypeFromUA(socket.handshake.headers["user-agent"]);
 

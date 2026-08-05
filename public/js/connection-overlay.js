@@ -83,6 +83,33 @@
     return b;
   }
 
+  // A reload was supposed to pick up the new build and did not. Rather than
+  // bouncing the page forever, say what is wrong and offer the one thing that
+  // always works.
+  function showOutdated() {
+    styles();
+    var o = overlay();
+    o.innerHTML =
+      '<div class="tk-conn-box">' +
+      '<div class="tk-conn-title">Talkomatic has been updated</div>' +
+      '<div class="tk-conn-msg">This tab is still running the old version and ' +
+      "a refresh did not replace it. Hold Shift and press refresh, or clear " +
+      "this site's cache.</div>" +
+      '<div class="tk-conn-actions"></div></div>';
+    var actions = o.querySelector(".tk-conn-actions");
+    actions.appendChild(
+      actionButton("Try again", false, function () {
+        try {
+          sessionStorage.removeItem("tk-build-reload");
+        } catch (e) {
+          /* nothing to clear */
+        }
+        window.location.reload();
+      }),
+    );
+    o.style.display = "flex";
+  }
+
   function showReconnecting() {
     if (restarting) return;
     styles();
@@ -160,6 +187,34 @@
     attach: function (socket, opts) {
       if (!socket) return;
       rejoinInPlace = !!(opts && opts.rejoinInPlace);
+      // A room page rejoins in place across a restart, so it keeps running the
+      // scripts and stylesheets it started with however many times the server
+      // is redeployed. The server names its build on every connect; if ours is
+      // older we reload once, now that the server is provably back up. Asset
+      // urls are content-stamped, so an ordinary reload is enough to pull the
+      // new files - no hard refresh needed.
+      socket.on("server build", function (d) {
+        var theirs = d && d.id;
+        if (!theirs) return;
+        var tag = document.querySelector('meta[name="tk-build"]');
+        var ours = tag && tag.getAttribute("content");
+        if (!ours || ours === theirs) return;
+        // If a reload did not fix it (a proxy serving stale html, say), do not
+        // sit in a loop: say so once and let the person decide.
+        var tried = null;
+        try {
+          tried = sessionStorage.getItem("tk-build-reload");
+        } catch (e) {
+          tried = null;
+        }
+        if (tried === theirs) return showOutdated();
+        try {
+          sessionStorage.setItem("tk-build-reload", theirs);
+        } catch (e) {
+          /* private mode: we simply lose the loop guard */
+        }
+        window.location.reload();
+      });
       socket.on("server restarting", function (d) {
         if (rejoinInPlace) showUpdating();
         else showRestart((d && d.seconds) || 5);
