@@ -26,9 +26,11 @@
   background: var(--background-color, var(--tk-bg));
   border: 2px solid var(--primary, var(--tk-accent));
   border-radius: 8px;
-  width: 96%;
-  max-width: 1440px;
-  height: 94vh;
+  /* Takes the screen it is given. The old 1440px cap left a wide monitor
+     with bars either side while the drawing canvas went short of room. */
+  width: 97%;
+  max-width: 2100px;
+  height: 95vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;

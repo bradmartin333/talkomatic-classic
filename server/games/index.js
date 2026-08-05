@@ -30,7 +30,8 @@ const connect4 = require("./connect4");
 const wordrace = require("./wordrace");
 const drawguess = require("./drawguess");
 
-const GAMES = { tictactoe, connect4, wordrace, drawguess };
+// Order matters: this is the order the picker lists them in, most-played first.
+const GAMES = { drawguess, tictactoe, connect4, wordrace };
 
 // Games that live on their own page under public/games. No sockets, no seats,
 // no server state; the panel just frames them.
@@ -268,8 +269,12 @@ function floorFor_view(f, userId) {
   const counts = {};
   for (const type of Object.keys(GAMES))
     counts[type] = { playing: 0, waiting: 0, games: 0, live: 0, names: [] };
+  // Tables where this person has claimed the next round, so the panel can give
+  // those claims back when it closes without having each board open.
+  const myNext = [];
   for (const t of f.tables.values()) {
     if (t.seats.some((s) => s.userId === userId)) mine[t.type] = t.id;
+    if (t.nextUp.includes(userId)) myNext.push(t.id);
     const c = counts[t.type];
     if (!c) continue;
     c.games++;
@@ -289,6 +294,7 @@ function floorFor_view(f, userId) {
     pools,
     myQueue,
     myTables: mine,
+    myNext,
   };
 }
 
@@ -715,8 +721,46 @@ function rotate(f, t) {
   t.nextUp = [];
 
   if (!WINNER_STAYS[t.type]) {
-    // This board is going away, so their claim moves to the front of the line
-    // for the next one rather than evaporating with the table.
+    // Whoever asked for another round gets one, even if the rest of the table
+    // did not. Requiring everybody meant one person wandering off ended the
+    // game for the five who wanted to keep playing. The board stays up, so
+    // anyone else can walk back in.
+    const keen = t.seats.filter((s) => t.rematch.has(s.userId));
+    if (keen.length) {
+      for (const s of t.seats.slice())
+        if (!t.rematch.has(s.userId)) unseatPlayer(f, t, s.userId);
+      t.state = "open";
+      t.game = null;
+      t.result = null;
+      t.turnDeadline = null;
+      t.rotateAt = null;
+      t.rematch = new Set();
+      t.votes = new Map();
+      // The watchers who put their hand up join this round too.
+      for (const uid of waiting) {
+        if (t.seats.length >= rules.maxPlayers) {
+          if (!pool.includes(uid)) pool.push(uid);
+          continue;
+        }
+        const u = deps.userInfo(t.roomId, uid);
+        if (!u) continue;
+        t.spectators.delete(uid);
+        seatPlayer(f, t, u);
+      }
+      say(
+        t,
+        keen.length === 1
+          ? `${keen[0].username} is going again. Anyone can join.`
+          : `${keen.length} players are going again. Anyone can join.`,
+      );
+      pump(f, t.type); // fills the rest from the room queue
+      maybeStart(f, t);
+      if (t.state === "open") emitTable(t);
+      emitFloor(f.roomId);
+      return;
+    }
+    // Nobody wanted another. This board is going away, so a watcher's claim
+    // moves to the front of the line for the next one rather than evaporating.
     for (const uid of waiting) if (!pool.includes(uid)) pool.unshift(uid);
     dissolve(f, t, "over");
     pump(f, t.type);
@@ -1155,12 +1199,17 @@ function rematch(roomId, userId, tableId) {
   if (t.state !== "finished") return { err: "Nothing to rematch yet." };
   if (!t.seats.some((s) => s.userId === userId))
     return { err: "You are not in this game." };
-  if (poolFor(f, t.type).length)
-    return { err: "People are waiting, so the seat rotates." };
-  // Somebody sat through the round to get a turn. Two players rematching each
-  // other forever would step straight over them.
-  if (t.nextUp.some((uid) => deps.userInfo(t.roomId, uid)))
-    return { err: "Somebody is up next, so the seat rotates." };
+  // These two only apply where a seat is scarce. In the timed games the board
+  // stays up and anyone can walk into it, so asking for another round never
+  // costs anybody else theirs.
+  if (WINNER_STAYS[t.type]) {
+    if (poolFor(f, t.type).length)
+      return { err: "People are waiting, so the seat rotates." };
+    // Somebody sat through the round to get a turn. Two players rematching
+    // each other forever would step straight over them.
+    if (t.nextUp.some((uid) => deps.userInfo(t.roomId, uid)))
+      return { err: "Somebody is up next, so the seat rotates." };
+  }
 
   const seat = t.seats.find((s) => s.userId === userId);
   // Clicking again takes it back, the same as every other vote here.
@@ -1174,7 +1223,8 @@ function rematch(roomId, userId, tableId) {
   // Once everybody has asked, go now. Making them sit out the rest of the
   // countdown made the button look broken.
   const need = t.seats.length;
-  if (t.rematch.size >= need && need >= rulesFor(t.type).minPlayers) {
+  const anyWaiting = t.nextUp.some((uid) => deps.userInfo(t.roomId, uid));
+  if (t.rematch.size >= need && need >= rulesFor(t.type).minPlayers && !anyWaiting) {
     say(t, "Everyone wants another go. Here we go.");
     startMatch(t);
     emitFloor(roomId);

@@ -132,7 +132,9 @@
   let isOpen = false;
 
   let catalog = [];
-  let floor = { tables: [], counts: {}, pools: {}, myQueue: {}, myTables: {} };
+  let floor = {
+    tables: [], counts: {}, pools: {}, myQueue: {}, myTables: {}, myNext: [],
+  };
   let view = { name: "floor", tableId: null };
   let detail = null;
   let roomUsers = [];
@@ -142,6 +144,7 @@
   let clockTimer = null;
   let cleanupSolo = null; // timers for a solo game's loading state
   let earlyRelays = []; // relays that landed before the board was ready
+  let pendingJoin = null; // a game we just pressed play on, awaiting a board
 
   // The chat can be folded away to give the board the room, which is the
   // difference between playable and cramped on a phone. Remembered per device,
@@ -250,11 +253,24 @@
     render();
   }
 
+  // Closing the panel gives up everything you were holding. Keeping the seat
+  // meant somebody could shut the panel, walk off, and go on blocking the
+  // rotation with a name nobody could reach and a room textbox still saying
+  // they were playing. Escape steps back to the floor instead of closing, so
+  // there is still a way out of a board that does not cost you the game.
   function closePanel() {
+    for (const tableId of Object.values(floor.myTables || {}))
+      S.emit("games leave", { tableId });
+    for (const type of Object.keys(floor.myQueue || {}))
+      S.emit("games queue leave", { type });
+    // Any claim on a next round goes back too, whichever board it was on.
+    for (const tableId of floor.myNext || [])
+      S.emit("games play next", { tableId, on: false });
     // Give the watch slot back, otherwise the count keeps counting you.
     if (detail && detail.spectating)
       S.emit("games spectate", { tableId: detail.id, on: false });
     isOpen = false;
+    pendingJoin = null;
     if (overlay) overlay.classList.remove("show");
     stopClock();
     view = { name: "floor", tableId: null };
@@ -373,30 +389,26 @@
       bodyEl.appendChild(sgrid);
     }
 
-    const live = floor.tables.filter((t) => t.state === "playing");
-    const waiting = floor.tables.filter((t) => t.state !== "playing");
+    // One list, not two. Splitting boards into "happening now" and "waiting to
+    // start" made people read the same game twice and work out which half they
+    // wanted; the row itself already says which it is. Boards you are sitting
+    // at come first, since that is what you are most likely looking for.
+    const boards = floor.tables.slice().sort((a, b) => {
+      const mineA = a.seats.some((s) => s.userId === myId()) ? 0 : 1;
+      const mineB = b.seats.some((s) => s.userId === myId()) ? 0 : 1;
+      if (mineA !== mineB) return mineA - mineB;
+      if ((a.state === "playing") !== (b.state === "playing"))
+        return a.state === "playing" ? -1 : 1;
+      return 0;
+    });
 
-    if (live.length) {
+    if (boards.length) {
       bodyEl.appendChild(
-        section("fa-circle-play", "Happening now", live.length + ""),
+        section("fa-circle-play", "Games in this room", boards.length + ""),
       );
       const list = el("div", { class: "gm-rows" });
-      live.forEach((t) => list.appendChild(gameRow(t)));
+      boards.forEach((t) => list.appendChild(gameRow(t)));
       bodyEl.appendChild(list);
-    }
-    if (waiting.length) {
-      bodyEl.appendChild(section("fa-hourglass-half", "Waiting to start"));
-      const list = el("div", { class: "gm-rows" });
-      waiting.forEach((t) => list.appendChild(gameRow(t)));
-      bodyEl.appendChild(list);
-    }
-    if (!live.length && !waiting.length) {
-      bodyEl.appendChild(
-        el("div", { class: "gm-empty" }, [
-          el("i", { class: "fas fa-dice" }),
-          el("p", { text: "Nothing running yet. Start one above and the room can join you." }),
-        ]),
-      );
     }
   }
 
@@ -614,7 +626,13 @@
         el("button", {
           class: "gm-btn gm-btn-primary",
           text: c.playing ? "Join in" : "Start a game",
-          onclick: () => S.emit("games queue join", { type: g.id }),
+          // Remembered so the floor can walk us into the board as soon as one
+          // exists. Pressing play and being left on the list wondering whether
+          // anything happened was the confusing part.
+          onclick: () => {
+            pendingJoin = g.id;
+            S.emit("games queue join", { type: g.id });
+          },
         }),
       );
     }
@@ -824,6 +842,7 @@
   function backToFloor() {
     if (detail && detail.spectating)
       S.emit("games spectate", { tableId: detail.id, on: false });
+    pendingJoin = null; // they changed their mind, do not drag them back in
     view = { name: "floor", tableId: null };
     detail = null;
     render();
@@ -1072,15 +1091,27 @@
       // reason this button felt dead.
       const asked = (t.rematch || []).length;
       const wants = (t.rematch || []).indexOf(myId()) >= 0;
+      const gm = gameById(t.type);
+      // In the timed games everyone who asks plays on and the board stays open
+      // for anybody else, so this is not a vote and must not read like one.
+      const unanimous = !!(gm && gm.winnerStays);
       const tally = asked ? " " + asked + "/" + t.seats.length : "";
       host.appendChild(
         el("button", {
           class: wants ? "gm-btn gm-btn-primary" : "gm-btn",
-          title: wants ? "Click again to take it back" : "Ask for another game",
+          title: wants
+            ? "Click again to drop out of the next round"
+            : unanimous
+              ? "Ask for another game"
+              : "You will be in the next round. Others can still join.",
           onclick: () => S.emit("games rematch", { tableId: t.id }),
         }, [
           el("i", { class: "fas fa-rotate-right" }),
-          (wants ? " Waiting on the rest" : " Play again") + tally,
+          wants
+            ? unanimous
+              ? " Waiting on the rest" + tally
+              : " You are in for the next one" + tally
+            : " Play again" + tally,
         ]),
       );
     }
@@ -2553,6 +2584,7 @@
       pools: d.pools || {},
       myQueue: d.myQueue || {},
       myTables: d.myTables || {},
+      myNext: d.myNext || [],
     };
   }
 
@@ -2617,6 +2649,25 @@
     if (view.name === "game" && !floor.tables.some((t) => t.id === view.tableId)) {
       view = { name: "floor", tableId: null };
       detail = null;
+    }
+    // Just pressed play: go to the board rather than leaving them reading the
+    // list. A seat is best, but a place in the line still means watching the
+    // game they asked to play, which is where they wanted to be.
+    if (pendingJoin && view.name === "floor") {
+      const seat = (floor.myTables || {})[pendingJoin];
+      if (seat) {
+        pendingJoin = null;
+        return openGame(seat);
+      }
+      if ((floor.myQueue || {})[pendingJoin]) {
+        const live = floor.tables.filter((t) => t.type === pendingJoin);
+        const t = live.find((x) => x.state === "playing") || live[live.length - 1];
+        if (t) {
+          pendingJoin = null;
+          S.emit("games spectate", { tableId: t.id, on: true });
+          return openGame(t.id);
+        }
+      }
     }
     render();
   });
