@@ -59,6 +59,12 @@ const EXTERNAL = [
   },
 ];
 
+// Games worth telling the room about when one starts. The turn-based pair are
+// deliberately not here: two people playing tic tac toe is not news, and it
+// would fire every rotation.
+const SHOUT_TYPES = { wordrace: true, drawguess: true };
+const SHOUT_GAP_MS = 4 * 60 * 1000; // per room, per game type
+
 // Winner keeps the seat in these; the timed group dissolves its table instead.
 const WINNER_STAYS = { tictactoe: true, connect4: true };
 
@@ -237,6 +243,10 @@ function tableDetail(t, userId) {
     votes,
     voteNeeded: Math.ceil((t.seats.length - 1) / 2),
     canVote: seated && t.seats.length >= 3,
+    // Watchers waiting on a seat here, and whether you are one of them.
+    nextUp: nextUpList(t),
+    iAmNext: t.nextUp.includes(userId),
+    canPlayNext: !seated && !!rules && WINNER_STAYS[t.type] !== undefined,
     game: t.game && rules ? rules.view(t.game, userId) : null,
   };
 }
@@ -321,6 +331,30 @@ function toUser(roomId, userId, event, payload) {
   }
 }
 
+// "Somebody started Word Race" to the whole room, so the games nobody stumbles
+// into get an audience. Skips whoever is already at the table, and one type can
+// only shout once every SHOUT_GAP_MS however many boards open in between.
+const lastShout = new Map(); // roomId:type -> when
+function shoutRoom(t, text) {
+  if (!deps) return;
+  const key = t.roomId + ":" + t.type;
+  const now = Date.now();
+  if (now - (lastShout.get(key) || 0) < SHOUT_GAP_MS) return;
+  lastShout.set(key, now);
+  const g = rulesFor(t.type);
+  for (const s of deps.socketsInRoom(t.roomId)) {
+    const uid = deps.userIdOf(s);
+    if (!uid) continue;
+    if (t.seats.some((x) => x.userId === uid)) continue;
+    s.emit("games shout", {
+      tableId: t.id,
+      type: t.type,
+      name: g ? g.name : t.type,
+      text,
+    });
+  }
+}
+
 // ── Tables ──────────────────────────────────────────────────────────────────
 
 function createTable(f, type, opts) {
@@ -346,6 +380,7 @@ function createTable(f, type, opts) {
     chat: [],
     chatSeq: 0,
     lastChatAt: new Map(),
+    nextUp: [], // watchers who asked for a seat when this round ends
     chatBurst: new Map(), // userId -> recent send times, caps a flood
     lastSaid: new Map(), // userId -> their last line, kills copy-paste repeats
     saidAt: new Map(), // announcement -> when, stops narration looping
@@ -481,6 +516,18 @@ function startMatch(t) {
   t.matchNumber++;
   armTurn(t);
   emitTable(t);
+
+  // Tell the room, but only for the games that want a crowd, and only on the
+  // first match at that board: a rematch is not news.
+  if (SHOUT_TYPES[t.type] && t.matchNumber === 1) {
+    const who = t.seats.length === 1 ? t.seats[0].username : null;
+    shoutRoom(
+      t,
+      who
+        ? `${who} started ${rules.name}. There is room to join.`
+        : `${rules.name} just started with ${t.seats.length} players. You can still join.`,
+    );
+  }
 }
 
 function armTurn(t) {
@@ -662,7 +709,15 @@ function rotate(f, t) {
   const rules = rulesFor(t.type);
   const pool = poolFor(f, t.type);
 
+  // Watchers who asked for a seat go first, ahead of the room-wide queue: they
+  // sat through the round, and they are already looking at this board.
+  const waiting = t.nextUp.filter((uid) => deps.userInfo(t.roomId, uid));
+  t.nextUp = [];
+
   if (!WINNER_STAYS[t.type]) {
+    // This board is going away, so their claim moves to the front of the line
+    // for the next one rather than evaporating with the table.
+    for (const uid of waiting) if (!pool.includes(uid)) pool.unshift(uid);
     dissolve(f, t, "over");
     pump(f, t.type);
     emitFloor(f.roomId);
@@ -670,18 +725,20 @@ function rotate(f, t) {
   }
 
   // Both sides asked for another and nobody is waiting, so let them have it.
+  // Somebody who sat through the round waiting to play counts as waiting.
   const everyone = t.seats.every((s) => t.rematch.has(s.userId));
-  if (everyone && t.seats.length >= rules.minPlayers && !pool.length) {
+  if (everyone && t.seats.length >= rules.minPlayers && !pool.length && !waiting.length) {
     startMatch(t);
     emitFloor(f.roomId);
     return;
   }
 
   const res = t.result || {};
+  const queueWaiting = pool.length + waiting.length;
   let keep = [];
   if (res.winnerId && t.streak && t.streak.n < STREAK_CAP) {
     keep = t.seats.filter((s) => s.userId === res.winnerId);
-  } else if (res.draw && !pool.length) {
+  } else if (res.draw && !queueWaiting) {
     keep = t.seats.slice(); // nobody waiting, a draw just plays on
   }
   if (!res.winnerId && !res.draw) keep = [];
@@ -704,6 +761,19 @@ function rotate(f, t) {
       type: t.type,
       winnerName: res.winnerName || null,
     });
+
+  // Seat the watchers who put their hand up, then let the room queue fill
+  // whatever is left.
+  for (const uid of waiting) {
+    if (t.seats.length >= rules.maxPlayers) {
+      if (!pool.includes(uid)) pool.push(uid); // no room, back of the line
+      continue;
+    }
+    const u = deps.userInfo(t.roomId, uid);
+    if (!u) continue;
+    t.spectators.delete(uid);
+    seatPlayer(f, t, u);
+  }
 
   if (!t.seats.length && !pool.length) {
     dissolve(f, t);
@@ -729,6 +799,47 @@ function queueJoin(roomId, user, type) {
   pump(f, type);
   emitFloor(roomId);
   return { ok: true };
+}
+
+// A watcher asking for a seat at THIS board when the round ends. Without it a
+// spectator had to leave the game, find the floor, and queue, by which time the
+// winner had already been paired with somebody else.
+function playNext(roomId, user, tableId, on) {
+  const f = floorFor(roomId);
+  const t = f.tables.get(tableId);
+  if (!t) return { err: "That game has finished." };
+  if (!deps.userInfo(roomId, user.userId))
+    return { err: "You are not in this room." };
+  const at = t.nextUp.indexOf(user.userId);
+  if (!on) {
+    if (at >= 0) t.nextUp.splice(at, 1);
+    emitTable(t);
+    emitFloor(roomId);
+    return { ok: true };
+  }
+  if (t.seats.some((s) => s.userId === user.userId))
+    return { err: "You are already playing this one." };
+  if (at >= 0) return { ok: true };
+  const rules = rulesFor(t.type);
+  if (tableOf(f, user.userId, t.type))
+    return { err: `You are already in a game of ${rules.name}.` };
+  t.nextUp.push(user.userId);
+  // Watching implies wanting to see it, so put them on the spectator list too.
+  if (!t.spectators.has(user.userId)) t.spectators.add(user.userId);
+  say(t, `${user.username} is up for the next round`);
+  emitTable(t);
+  emitFloor(roomId);
+  return { ok: true };
+}
+
+// Everyone still in the room who asked for the next round here, in order.
+function nextUpList(t) {
+  const out = [];
+  for (const uid of t.nextUp) {
+    const u = deps.userInfo(t.roomId, uid);
+    if (u) out.push({ userId: uid, username: u.username, avatar: u.avatar || null, role: u.role || null });
+  }
+  return out;
 }
 
 function queueLeave(roomId, userId, type) {
@@ -1208,6 +1319,11 @@ function userLeftRoom(roomId, userId) {
   }
   for (const t of [...f.tables.values()]) {
     if (t.spectators.delete(userId)) touched = true;
+    const up = t.nextUp.indexOf(userId);
+    if (up >= 0) {
+      t.nextUp.splice(up, 1);
+      touched = true;
+    }
     if (t.seats.some((s) => s.userId === userId)) {
       forfeit(f, t, userId);
       touched = true;
@@ -1378,6 +1494,7 @@ module.exports = {
   snapshot,
   queueJoin,
   queueLeave,
+  playNext,
   joinTable,
   leaveTable,
   makeMove,

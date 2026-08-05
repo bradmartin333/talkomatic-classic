@@ -1049,6 +1049,25 @@
             onclick: () => S.emit("games join table", { tableId: t.id }),
           }),
         );
+      // Watching a round you cannot join yet: claim a seat for the next one
+      // rather than having to spot the moment it ends and race for it.
+      if (t.canPlayNext && !t.canJoin) {
+        const n = (t.nextUp || []).length;
+        host.appendChild(
+          el("button", {
+            class: t.iAmNext ? "gm-btn gm-btn-primary" : "gm-btn",
+            title: t.iAmNext
+              ? "Click again to give up your place"
+              : "Take a seat as soon as this round ends",
+            onclick: () =>
+              S.emit("games play next", { tableId: t.id, on: !t.iAmNext }),
+          }, [
+            el("i", { class: "fas fa-hand" }),
+            (t.iAmNext ? " You are next" : " Play next round") +
+              (n ? " (" + n + ")" : ""),
+          ]),
+        );
+      }
       host.appendChild(
         el("button", { class: "gm-btn", text: "Stop watching", onclick: backToFloor }),
       );
@@ -1108,6 +1127,7 @@
   function makeSide() {
     let root, playersEl, logEl, form, input, typingEl, countEl;
     let watchHead, watchCount, watchersEl;
+    let nextHead, nextCount, nextEl;
     let lastChatId = 0;
     let typingSentAt = 0;
 
@@ -1166,6 +1186,16 @@
 
         playersEl = el("div", { class: "gm-players" });
         root.appendChild(playersEl);
+
+        nextHead = el("div", { class: "gm-side-head gm-next-head" }, [
+          el("i", { class: "fas fa-hand" }),
+          el("span", { text: "Up next" }),
+        ]);
+        nextCount = el("span", { class: "gm-side-count" });
+        nextHead.appendChild(nextCount);
+        root.appendChild(nextHead);
+        nextEl = el("div", { class: "gm-watchers gm-nextup" });
+        root.appendChild(nextEl);
 
         watchHead = el("div", { class: "gm-side-head gm-watch-head" }, [
           el("i", { class: "fas fa-eye" }),
@@ -1320,6 +1350,26 @@
             row.appendChild(btn);
           }
           playersEl.appendChild(row);
+        });
+
+        // Who has claimed a seat for the next round. Shown to the people
+        // playing too, so a winner knows somebody is waiting on them.
+        const upNext = t.nextUp || [];
+        nextHead.style.display = upNext.length ? "" : "none";
+        nextEl.style.display = upNext.length ? "" : "none";
+        nextCount.textContent = upNext.length ? String(upNext.length) : "";
+        nextEl.textContent = "";
+        upNext.forEach((w, i) => {
+          const chip = el("div", {
+            class: "gm-watcher" + (w.userId === myId() ? " gm-next-me" : ""),
+          });
+          chip.appendChild(el("span", { class: "gm-next-pos", text: "#" + (i + 1) }));
+          const pfp = avatarNode(w.avatar, true);
+          if (pfp) chip.appendChild(pfp);
+          chip.appendChild(el("span", { class: "gm-watcher-name", text: w.username }));
+          const badge = badgeFor(w.role);
+          if (badge) chip.appendChild(badge);
+          nextEl.appendChild(chip);
         });
 
         // Who is watching. Names, not just a number, so the room can see who
@@ -2432,6 +2482,37 @@
       detail = null;
     }
     render();
+  });
+
+  // "Word Race just started" to the whole room. The server already rations
+  // these to one per game type every few minutes; this side only makes sure it
+  // is a click-to-join and never lands on top of the panel you are already in.
+  S.on("games shout", (d) => {
+    if (!d || !d.tableId) return;
+    if (isOpen && view.name === "game" && view.tableId === d.tableId) return;
+    const jump = () => {
+      openPanel();
+      openGame(d.tableId);
+    };
+    if (window.StaffUI && window.StaffUI.toast) {
+      // The helper has no click handler of its own, so wire the returned node.
+      const node = window.StaffUI.toast(d.text, {
+        type: "info",
+        title: d.name,
+        timeout: 10000,
+      });
+      if (node) {
+        node.style.cursor = "pointer";
+        node.title = "Open " + d.name;
+        node.addEventListener("click", (ev) => {
+          if (ev.target.closest(".tk-tx")) return; // the dismiss button
+          jump();
+        });
+      }
+      return;
+    }
+    if (window.toastr)
+      window.toastr.info(d.text, d.name, { timeOut: 10000, onclick: jump });
   });
 
   // A dropped connection leaves the panel showing a board the server no longer

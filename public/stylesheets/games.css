@@ -875,6 +875,17 @@
 
 .gm-chat-wrong .gm-chat-who { opacity: 0.8; }
 .gm-nodraw { color: var(--tk-muted); font-size: 10px; }
+
+/* Watchers holding a place for the next round */
+.gm-next-head i { color: var(--primary, var(--tk-accent)); }
+.gm-nextup .gm-watcher { border-style: solid; }
+.gm-next-pos {
+  font-size: 9px;
+  font-weight: bold;
+  color: var(--primary, var(--tk-accent));
+  font-variant-numeric: tabular-nums;
+}
+.gm-next-me { border-color: var(--primary, var(--tk-accent)); }
 .gm-wants { color: var(--primary, var(--tk-accent)); font-size: 10px; }
 
 .gm-chat-typing {

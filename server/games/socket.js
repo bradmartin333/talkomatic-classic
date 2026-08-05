@@ -58,6 +58,14 @@ function register(socket, safe) {
     act((u, d) => floor.queueLeave(socket.roomId, u.userId, String(d.type || ""))),
   );
 
+  // A watcher putting their hand up for a seat when this round ends.
+  socket.on(
+    "games play next",
+    act((u, d) =>
+      floor.playNext(socket.roomId, u, String(d.tableId || ""), d.on !== false),
+    ),
+  );
+
   socket.on(
     "games join table",
     act((u, d) => floor.joinTable(socket.roomId, u, String(d.tableId || ""))),
