@@ -410,6 +410,9 @@ function updateConnectionStatus() {
 
 // Socket.io initialization with robust connection settings
 const socket = io({
+  // WebSocket only, matching the server. No long-poll handshake first.
+  transports: ["websocket"],
+  upgrade: false,
   reconnectionAttempts: 5,
   reconnectionDelay: 1000,
   timeout: 20000,

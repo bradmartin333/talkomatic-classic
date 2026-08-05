@@ -29,11 +29,12 @@ function io() {
   return state.io;
 }
 
-// IP addresses are dev-only. Mods get every field except the raw IP.
+// IP addresses are dev-only. Mods get every field except the raw addresses.
 function redactForMod(entry) {
-  if (entry.ip == null) return entry;
+  if (entry.ip == null && entry.targetIp == null) return entry;
   const copy = Object.assign({}, entry);
   delete copy.ip;
+  delete copy.targetIp;
   return copy;
 }
 
@@ -171,7 +172,13 @@ function recordKeyAlert({ role, label, ip, kind, detail }) {
 // A staff notification: a user report, or a possible mod-abuse flag. Shown in
 // the dashboard feed AND pushed as a live toast to qualifying staff so it isn't
 // missed. Default visibility is full (level 2) mods + devs; never junior mods.
-function recordNotification({ kind, label, role, text, target, room, by, minLevel }) {
+// `ip` is whoever raised it, `targetIp` whoever it is about. Both are stripped
+// for mods by redactForMod, same as anywhere else, but recording them means a
+// dev reading a report in the feed does not have to go and look them up.
+function recordNotification({
+  kind, label, role, text, target, room, by, minLevel,
+  ip, targetIp, targetUserId, byUserId, reports,
+}) {
   const lvl = minLevel === 1 ? 1 : 2;
   const entry = push({
     ts: Date.now(),
@@ -184,6 +191,11 @@ function recordNotification({ kind, label, role, text, target, room, by, minLeve
     target: target || null,
     room: room || null,
     by: by || null,
+    byUserId: byUserId || null,
+    targetUserId: targetUserId || null,
+    ip: ip || null,
+    targetIp: targetIp || null,
+    reports: reports || null,
   });
   notifyStaffToast(text || "New staff notification", lvl);
   return entry;
@@ -272,6 +284,19 @@ function startOfPacificDay(now = Date.now()) {
   } catch (_) {
     return 0;
   }
+}
+
+// The last `n` Pacific midnights, oldest first, ending with today's. Each one
+// is resolved on its own rather than by subtracting 24h repeatedly, so the two
+// daylight-saving switchover days do not drag the whole week an hour out.
+const DAY_MS = 24 * 60 * 60 * 1000;
+function pacificDayStarts(n = 7, now = Date.now()) {
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const start = startOfPacificDay(now - i * DAY_MS);
+    if (!out.length || start !== out[out.length - 1]) out.push(start);
+  }
+  return out;
 }
 
 function recent(limit = 500, includeIp = true, modLevel = 2, since = 0) {
@@ -505,6 +530,7 @@ module.exports = {
   leaderboard,
   isUsefulAction,
   startOfPacificDay,
+  pacificDayStarts,
   setAuditSub,
   load,
 };

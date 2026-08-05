@@ -53,7 +53,7 @@ function evictOldest() {
 }
 
 // Record one privileged action by a mod key and flag if the pattern trips.
-function record({ hash, label, role, action, target, room }) {
+function record({ hash, label, role, action, target, room, ip }) {
   if (!hash) return;
   const now = Date.now();
   let arr = log.get(hash) || [];
@@ -110,6 +110,7 @@ function record({ hash, label, role, action, target, room }) {
     label: who,
     text: `Possible mod abuse by ${who}: ${reasons.join("; ")}. Recent actions: ${recentList}.`,
     room: room || null,
+    ip: ip || null, // the mod's own address, dev-only
     minLevel: 2,
   });
 }

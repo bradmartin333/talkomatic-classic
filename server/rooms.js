@@ -654,6 +654,8 @@ function logStaff(socket, action, target, room, details) {
       action,
       target: targetStr,
       room: roomTag,
+      // The mod's own address, so an abuse flag names where it came from.
+      ip: socket.clientIp || null,
     });
 }
 
@@ -5958,18 +5960,21 @@ function registerSocketHandlers() {
       safe(async (data) => {
         if (!requireStaff(socket)) return;
         audit.setAuditSub(socket, true);
-        const limit = Math.max(1, Math.min(Number(data?.limit) || 800, 20000));
-        // One Pacific day at a time, so the feed reads the same for everyone
-        // and resets at midnight PT.
-        const dayStart = audit.startOfPacificDay();
+        const limit = Math.max(1, Math.min(Number(data?.limit) || 6000, 40000));
+        // A whole week of Pacific days. The dashboard picks one at a time, but
+        // it holds all seven so switching between them is instant and a mod can
+        // look back over a week without a round trip.
+        const days = audit.pacificDayStarts(7);
+        const weekStart = days[0];
         socket.emit("audit snapshot", {
           entries: audit.recent(
             limit,
             !!socket.isDev,
             socket.modLevel || 2,
-            dayStart,
+            weekStart,
           ),
-          dayStart,
+          dayStart: days[days.length - 1],
+          days,
           me: {
             role: socket.isDev ? "dev" : "mod",
             label: socket.staffLabel || null,
@@ -6502,6 +6507,13 @@ function registerSocketHandlers() {
           target: `user:${targetName}(${targetUserId})`,
           room: room ? `room:${room.name || "?"}(${room.id || "?"})` : null,
           by: reporter,
+          // Both addresses on the entry, so a dev reading the feed can act on
+          // it without going and looking them up. Stripped for mods.
+          ip: socket.clientIp || null,
+          targetIp: targetSocket?.clientIp || null,
+          targetUserId,
+          byUserId: socket.handshake.session?.userId || null,
+          reports: tally.distinct || null,
           minLevel: 2,
         });
         socket.emit("report received", {});

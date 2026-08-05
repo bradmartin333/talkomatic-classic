@@ -346,7 +346,11 @@ const io = socketIo(server, {
   pingInterval: 25000,
   connectTimeout: 45000,
   maxHttpBufferSize: 2e6,
-  transports: ["websocket", "polling"],
+  // WebSocket only. The polling fallback doubled the handshake and made every
+  // client start on long-poll before upgrading; anything that cannot open a
+  // WebSocket to us is not going to work well anyway.
+  transports: ["websocket"],
+  allowUpgrades: false,
   perMessageDeflate: { threshold: 1024 },
   httpCompression: true,
 });

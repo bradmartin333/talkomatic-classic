@@ -6,6 +6,9 @@
 
 // Staff mode: pass dev/mod keys from localStorage in socket auth
 const socket = io({
+  // WebSocket only, matching the server. No long-poll handshake first.
+  transports: ["websocket"],
+  upgrade: false,
   auth: {
     devKey: localStorage.getItem("talkomatic_devKey") || undefined,
     modKey: localStorage.getItem("talkomatic_modKey") || undefined,

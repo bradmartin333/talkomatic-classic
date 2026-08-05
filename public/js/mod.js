@@ -10,6 +10,9 @@
 
 (function () {
   const socket = io({
+    // WebSocket only, matching the server. No long-poll handshake first.
+    transports: ["websocket"],
+    upgrade: false,
     auth: {
       devKey: localStorage.getItem("talkomatic_devKey") || undefined,
       modKey: localStorage.getItem("talkomatic_modKey") || undefined,
@@ -99,19 +102,41 @@
       return 0;
     }
   }
-  let dayStart = startOfPacificDay();
-  const pacificDayLabel = () => {
-    try {
-      return new Intl.DateTimeFormat("en-US", {
-        timeZone: "America/Los_Angeles",
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      }).format(new Date());
-    } catch (_) {
-      return "today";
+  // The board holds a week: seven Pacific midnights, oldest first, today last.
+  // Each is resolved separately rather than by subtracting 24h, so the two
+  // daylight-saving switchover days do not drag the week an hour out.
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  function weekDayStarts(now = Date.now()) {
+    const out = [];
+    for (let i = 6; i >= 0; i--) {
+      const s = startOfPacificDay(now - i * DAY_MS);
+      if (!out.length || s !== out[out.length - 1]) out.push(s);
     }
-  };
+    return out;
+  }
+  let weekDays = weekDayStarts();
+  let dayIndex = weekDays.length - 1; // today
+  let dayStart = weekDays[dayIndex];
+  // The end of the day on screen. Today has no end, so live entries keep
+  // arriving; any earlier day stops at the next midnight.
+  function dayEnd() {
+    return dayIndex < weekDays.length - 1 ? weekDays[dayIndex + 1] : Infinity;
+  }
+  const isToday = () => dayIndex === weekDays.length - 1;
+
+  function pacificParts(ts, opts) {
+    try {
+      return new Intl.DateTimeFormat(
+        "en-US",
+        Object.assign({ timeZone: "America/Los_Angeles" }, opts),
+      ).format(new Date(ts));
+    } catch (_) {
+      return "";
+    }
+  }
+  const pacificDayLabel = (ts = Date.now()) =>
+    pacificParts(ts, { weekday: "long", month: "long", day: "numeric" }) ||
+    "today";
 
   const DOM_CAP = 250; // max activity cards kept in the DOM at once
   let pendingNew = []; // live entries waiting for the next batched flush
@@ -295,7 +320,9 @@
     return false;
   }
   function passes(e) {
-    if (dayStart && (e.ts || 0) < dayStart) return false;
+    const ts = e.ts || 0;
+    if (dayStart && ts < dayStart) return false;
+    if (ts >= dayEnd()) return false;
     if (feedFilter !== "all" && e.type !== feedFilter) return false;
     if (focusUid && !matchesFocus(e, focusUid)) return false;
     if (query && !searchable(e).includes(query)) return false;
@@ -386,22 +413,48 @@
     top.appendChild(head);
     card.appendChild(top);
 
+    // Every field the entry carries goes on the card. Cards are no longer a
+    // fixed height with an inner scrollbar, so there is nowhere for a field to
+    // hide, and a half-shown record is no use for real work.
     const body = divc("e-body");
     if (e.type === "security") {
       addKv(body, "Key", e.label);
       addKv(body, "Role", e.role);
+      addKv(body, "Kind", e.kind === "concurrent" ? "same key, several IPs" : "new IP");
       addKv(body, "IP", e.ip, "ip");
+      addKv(body, "When", fmtTime(e.ts), "dimv");
     } else if (e.type === "action") {
       const t = parseTarget(e.target);
-      if (t) addKv(body, "Target", uref(t.name, t.uid));
-      else addKv(body, "Target", e.target);
+      if (t) {
+        addKv(body, "Target", uref(t.name, t.uid));
+        addKv(body, "Target id", t.uid, "dimv", t.uid);
+      } else {
+        addKv(body, "Target", e.target);
+      }
       addKv(body, "Room", e.room, "dimv");
+      addKv(body, "Staff", e.label, "dimv");
       addKv(body, "Staff IP", e.ip, "ip");
+      addKv(body, "When", fmtTime(e.ts), "dimv");
     } else if (e.type === "notification") {
       const tn = parseTarget(e.target);
-      if (tn) addKv(body, "Target", uref(tn.name, tn.uid));
-      else addKv(body, "Target", e.target);
+      if (tn) {
+        addKv(body, "About", uref(tn.name, tn.uid));
+        addKv(body, "Their id", tn.uid, "dimv", tn.uid);
+      } else {
+        addKv(body, "About", e.target);
+      }
+      // Both sides of a report, which is the whole reason to look at one.
+      addKv(body, "Their IP", e.targetIp, "ip");
+      addKv(body, "Raised by", e.by || e.label, "dimv", e.byUserId || null);
+      addKv(body, "Raiser IP", e.ip, "ip");
       addKv(body, "Room", e.room, "dimv");
+      addKv(
+        body,
+        "Reports",
+        e.reports ? e.reports + " recently" : null,
+        "dimv",
+      );
+      addKv(body, "When", fmtTime(e.ts), "dimv");
     } else {
       addKv(body, "Was", e.prevUsername, "dimv");
       addKv(body, "Location", e.location, "dimv");
@@ -415,7 +468,9 @@
       );
       addKv(body, "Their IP", e.ip, "ip");
       addKv(body, "User id", e.userId, "dimv", e.userId);
+      addKv(body, "Room", e.room, "dimv");
       addKv(body, "By", e.by, "dimv");
+      addKv(body, "When", fmtTime(e.ts), "dimv");
     }
     if (body.childNodes.length) card.appendChild(body);
 
@@ -482,6 +537,9 @@
   function renderActivity() {
     pendingNew = [];
     listEl.textContent = "";
+    // The per-day counts follow the search and filter, so redraw them here
+    // rather than only when the day changes.
+    renderDayPicker();
     const token = ++activityToken;
     const matches = entries.filter((e) => e.type !== "comment" && passes(e));
     if (matches.length === 0) {
@@ -524,16 +582,111 @@
     const el = $("dayLabel");
     if (!el) return;
     el.textContent =
-      pacificDayLabel() + ", 12:00am to 11:59pm Pacific";
+      pacificDayLabel(dayStart) +
+      (isToday() ? " (today)" : "") +
+      ", 12:00am to 11:59pm Pacific";
   }
 
-  // Roll the feed over at midnight Pacific: drop yesterday and redraw, so a
-  // dashboard left open overnight starts the new day empty on its own.
+  // How many entries the feed would show on a given day, ignoring the day
+  // filter itself. Drives the count under each day button, so a mod can see
+  // where the week was busy before clicking into it.
+  function countForDay(i) {
+    const from = weekDays[i];
+    const to = i < weekDays.length - 1 ? weekDays[i + 1] : Infinity;
+    let n = 0;
+    for (const e of entries) {
+      if (e.type === "comment") continue;
+      const ts = e.ts || 0;
+      if (ts < from || ts >= to) continue;
+      if (feedFilter !== "all" && e.type !== feedFilter) continue;
+      if (focusUid && !matchesFocus(e, focusUid)) continue;
+      if (query && !searchable(e).includes(query)) continue;
+      n++;
+    }
+    return n;
+  }
+
+  // A week of days, oldest on the left, today on the right.
+  function renderDayPicker() {
+    const host = $("dayPicker");
+    if (!host) return;
+    host.textContent = "";
+    weekDays.forEach((start, i) => {
+      const b = document.createElement("button");
+      b.className = "daybtn" + (i === dayIndex ? " active" : "");
+      b.type = "button";
+      const top = span("dayname", pacificParts(start, { weekday: "short" }));
+      const mid = span("daynum", pacificParts(start, { month: "numeric", day: "numeric" }));
+      const n = countForDay(i);
+      const bot = span("daycount" + (n ? "" : " zero"), n ? String(n) : "-");
+      b.appendChild(top);
+      b.appendChild(mid);
+      b.appendChild(bot);
+      b.title =
+        pacificDayLabel(start) +
+        " - " +
+        (n === 1 ? "1 entry" : n + " entries") +
+        (i === weekDays.length - 1 ? " (today, still live)" : "");
+      b.addEventListener("click", () => selectDay(i));
+      host.appendChild(b);
+    });
+  }
+
+  // Compact mode. Remembered per browser, because whoever wants it wants it
+  // every time they open the board.
+  function setCompact(on) {
+    document.body.classList.toggle("compact", !!on);
+    try {
+      localStorage.setItem("talkomatic_modCompact", on ? "1" : "0");
+    } catch (_) {
+      /* private mode: the toggle just will not stick */
+    }
+    const b = $("compactToggle");
+    if (b) {
+      b.textContent = "";
+      b.appendChild(icon(on ? "fa-expand" : "fa-compress"));
+      b.appendChild(document.createTextNode(on ? " Roomy" : " Compact"));
+      b.title = on
+        ? "Back to full-size cards"
+        : "Compact mode: tighter cards, more on screen";
+    }
+  }
+  (function initCompact() {
+    let saved = "0";
+    try {
+      saved = localStorage.getItem("talkomatic_modCompact") || "0";
+    } catch (_) {
+      saved = "0";
+    }
+    setCompact(saved === "1");
+    const b = $("compactToggle");
+    if (b)
+      b.addEventListener("click", () =>
+        setCompact(!document.body.classList.contains("compact")),
+      );
+  })();
+
+  function selectDay(i) {
+    const next = Math.max(0, Math.min(weekDays.length - 1, i));
+    if (next === dayIndex) return;
+    dayIndex = next;
+    dayStart = weekDays[dayIndex];
+    updateDayLabel();
+    renderActivity(); // redraws the picker too
+  }
+
+  // Roll the week on at midnight Pacific. A dashboard left open overnight
+  // slides the seven days along and drops what fell off the back, keeping
+  // whichever day the mod was reading if it is still in the window.
   function checkDayRollover() {
-    const fresh = startOfPacificDay();
-    if (fresh === dayStart) return;
-    dayStart = fresh;
-    entries = entries.filter((e) => (e.ts || 0) >= dayStart);
+    const fresh = weekDayStarts();
+    if (fresh[fresh.length - 1] === weekDays[weekDays.length - 1]) return;
+    const wasReading = weekDays[dayIndex];
+    weekDays = fresh;
+    const stillThere = weekDays.indexOf(wasReading);
+    dayIndex = stillThere >= 0 ? stillThere : weekDays.length - 1;
+    dayStart = weekDays[dayIndex];
+    entries = entries.filter((e) => (e.ts || 0) >= weekDays[0]);
     commentsByRef.clear();
     for (const e of entries)
       if (e.type === "comment" && e.refId) {
@@ -541,6 +694,7 @@
         commentsByRef.get(e.refId).push(e);
       }
     updateDayLabel();
+    renderDayPicker();
     if (tab === "activity") renderActivity();
   }
   setInterval(checkDayRollover, 30000);
@@ -575,6 +729,7 @@
       (e) => e.type !== "comment" && passes(e),
     ).length;
     updateFeedNote(totalMatches);
+    renderDayPicker(); // today's count just moved
   }
 
   // ── Focus (trace a user) ──
@@ -3681,7 +3836,17 @@
     loadingEl.classList.add("hidden");
     deniedEl.classList.add("hidden");
     appEl.classList.remove("hidden");
-    if (data && data.dayStart) dayStart = data.dayStart;
+    // The server owns the week boundaries, so every dashboard agrees on them.
+    if (Array.isArray(data && data.days) && data.days.length) {
+      const wasReading = weekDays[dayIndex];
+      weekDays = data.days;
+      const stillThere = weekDays.indexOf(wasReading);
+      dayIndex = stillThere >= 0 ? stillThere : weekDays.length - 1;
+    } else if (data && data.dayStart) {
+      weekDays = [data.dayStart];
+      dayIndex = 0;
+    }
+    dayStart = weekDays[dayIndex];
     updateDayLabel();
     entries = Array.isArray(data && data.entries) ? data.entries : [];
     commentsByRef.clear();
@@ -3704,6 +3869,7 @@
     applyRoleGating();
     renderRoster(data && data.roster);
     renderLegend();
+    renderDayPicker();
     renderActivity();
 
   });
