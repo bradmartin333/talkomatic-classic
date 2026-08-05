@@ -671,24 +671,22 @@
     });
   }
 
-  // Compact mode. Remembered per browser, because whoever wants it wants it
-  // every time they open the board.
+  // Roomy or compact, remembered per browser. Two named options rather than
+  // one button that renames itself: with a single button nobody could tell
+  // whether "Roomy" was the mode they were in or the one they were about to
+  // get. The highlighted half is always the one you are looking at.
   function setCompact(on) {
     document.body.classList.toggle("compact", !!on);
     try {
       localStorage.setItem("talkomatic_modCompact", on ? "1" : "0");
     } catch (_) {
-      /* private mode: the toggle just will not stick */
+      /* private mode: the choice just will not stick */
     }
-    const b = $("compactToggle");
-    if (b) {
-      b.textContent = "";
-      b.appendChild(icon(on ? "fa-expand" : "fa-compress"));
-      b.appendChild(document.createTextNode(on ? " Roomy" : " Compact"));
-      b.title = on
-        ? "Back to full-size cards"
-        : "Compact mode: tighter cards, more on screen";
-    }
+    const seg = $("viewSeg");
+    if (seg)
+      seg.querySelectorAll("button").forEach((b) =>
+        b.classList.toggle("active", (b.dataset.view === "compact") === !!on),
+      );
   }
   (function initCompact() {
     let saved = "0";
@@ -698,10 +696,12 @@
       saved = "0";
     }
     setCompact(saved === "1");
-    const b = $("compactToggle");
-    if (b)
-      b.addEventListener("click", () =>
-        setCompact(!document.body.classList.contains("compact")),
+    const seg = $("viewSeg");
+    if (seg)
+      seg.querySelectorAll("button").forEach((b) =>
+        b.addEventListener("click", () =>
+          setCompact(b.dataset.view === "compact"),
+        ),
       );
   })();
 

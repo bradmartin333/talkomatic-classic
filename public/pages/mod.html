@@ -419,12 +419,11 @@
         flex-wrap: wrap;
         margin-bottom: 1rem;
       }
-      /* The search does not need the whole bar: it is a filter, not the point
-         of the screen, and leaving it greedy pushed the controls beside it to
-         the far edge. */
+      /* Takes the slack, which puts the view switcher at the far right of the
+         bar on its own rather than shrinking the search to make room. */
       .search-wrap {
         position: relative;
-        flex: 0 1 24rem;
+        flex: 1 1 20rem;
         min-width: 11.25rem;
       }
       .search-wrap i {
@@ -737,10 +736,15 @@
         color: var(--orange);
       }
       /* Sits at the end of the filter row, hard right of the Inbox tab. */
-      .compact-toggle {
+      .viewseg {
         flex: none;
-        white-space: nowrap;
         margin-left: auto;
+      }
+      .viewseg button {
+        white-space: nowrap;
+      }
+      .viewseg button i {
+        margin-right: 0.25rem;
       }
       body.compact .compact-toggle {
         border-color: var(--orange);
@@ -860,14 +864,30 @@
         word-break: break-word;
       }
       /* ── Compact mode ──
-         One full-width row per entry, read straight down. Compact here means
-         fewer lines, not smaller text: the type is a step LARGER than the
-         three-column view, because a card the width of the screen can afford
-         it. The fields spread across that width instead of stacking down the
-         left and leaving the right half of the card empty. */
+         One column of full records, read straight down, at a width you can
+         actually read a line of text at. Compact means fewer lines and larger
+         type than the three-column view, not smaller everything.
+
+         The column is capped: stretched to a 1600px screen the fields end up
+         miles from their labels and the body text runs to 200 characters a
+         line. */
       body.compact .grid3 {
         gap: 0.5rem;
         grid-template-columns: minmax(0, 1fr);
+      }
+      /* The whole activity area becomes one centred column: the controls above
+         the feed share its edges, so the cards read as a deliberate reading
+         column rather than a list that got cut short on one side. */
+      body.compact #tab-activity .strip,
+      body.compact #tab-activity .toolbar,
+      body.compact #tab-activity .daybar,
+      body.compact #tab-activity .focusbar,
+      body.compact #tab-activity .feed-note,
+      body.compact #tab-activity .roster,
+      body.compact #tab-activity .grid3 {
+        max-width: 68rem;
+        margin-left: auto;
+        margin-right: auto;
       }
       body.compact .e-top {
         gap: 0.75rem;
@@ -897,29 +917,40 @@
         flex: none;
         white-space: nowrap;
       }
-      /* The fields flow across the card. auto-fill rather than a fixed count so
-         a narrow window collapses to one column on its own. */
+      /* Two aligned columns of label-and-value. Labels line up down each
+         column, which is what makes a record skimmable; free-flowing tiles
+         sized to their contents were tried and read as noise. */
       body.compact .e-body {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
-        column-gap: 1.5rem;
-        row-gap: 0.1875rem;
-        padding: 0 0.875rem 0.5rem;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        column-gap: 2rem;
+        row-gap: 0.25rem;
+        padding: 0.125rem 0.875rem 0.625rem;
+      }
+      @media (max-width: 56rem) {
+        body.compact .e-body {
+          grid-template-columns: minmax(0, 1fr);
+        }
       }
       body.compact .kv {
         font-size: 0.9375rem;
-        gap: 0.5rem;
+        gap: 0.625rem;
         min-width: 0;
       }
       body.compact .kv .k {
-        width: 5.5rem;
-        font-size: 0.75rem;
+        width: 7rem;
+        flex: none;
+        font-size: 0.6875rem;
+        text-align: right;
+      }
+      body.compact .kv .v {
+        overflow-wrap: anywhere;
       }
       body.compact .kv .v.ip {
         font-size: 0.9375rem;
       }
       body.compact .entry .detail {
-        margin: 0 0.875rem 0.5rem;
+        margin: 0.1875rem 0.875rem 0.625rem;
         padding: 0.5rem 0.75rem;
         font-size: 0.9375rem;
       }
@@ -2985,14 +3016,14 @@
                 ></span>
               </button>
             </div>
-            <button
-              id="compactToggle"
-              class="btn sm compact-toggle"
-              type="button"
-              title="Compact mode: tighter cards, more on screen"
-            >
-              <i class="fas fa-compress"></i> Compact
-            </button>
+            <div class="seg viewseg" id="viewSeg">
+              <button data-view="roomy" title="Three columns of cards">
+                <i class="fas fa-table-cells-large"></i> Roomy
+              </button>
+              <button data-view="compact" title="One column, full records">
+                <i class="fas fa-bars"></i> Compact
+              </button>
+            </div>
           </div>
           <div class="daybar">
             <span class="daybar-label">
@@ -3515,6 +3546,6 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="js/staff-ui.js?v=1.8.1"></script>
-    <script src="js/mod.js?v=4.9.0"></script>
+    <script src="js/mod.js?v=4.10.0"></script>
   </body>
 </html>
