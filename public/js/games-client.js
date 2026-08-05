@@ -900,8 +900,9 @@
 
       // Draw & Guess sizes itself to the space rather than scrolling, on a
       // phone as well as a desktop.
-      main.classList.toggle("gm-main-fit", t.type === "drawguess");
-      split.classList.toggle("gm-split-fit", t.type === "drawguess");
+      const fits = t.type === "drawguess" || t.type === "flagguess";
+      main.classList.toggle("gm-main-fit", fits);
+      split.classList.toggle("gm-split-fit", fits);
       board = BOARDS[t.type] ? BOARDS[t.type]() : null;
       if (board) board.mount(main);
       side = makeSide();
@@ -1225,13 +1226,54 @@
     let lastChatId = 0;
     let typingSentAt = 0;
     let stopWatching = null;
+    let jumpEl, foldCaret;
+    let rosterFolded = false;
 
-    function atBottom() {
-      return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
+    // Whether the log follows new messages. Measuring "am I at the bottom?" at
+    // the moment a line arrives was not enough: one tall line with an avatar is
+    // most of the threshold, and a picture finishing loading after the line was
+    // added moved the floor out from under it. So the state is tracked from the
+    // person's own scrolling instead, and the jump happens after layout.
+    let pinned = true;
+    let missed = 0;
+
+    function nearBottom() {
+      return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 90;
+    }
+
+    function toBottom() {
+      logEl.scrollTop = logEl.scrollHeight;
+      // Again next frame, so an avatar or an emote that changes the height
+      // after paint cannot leave the newest line half off the bottom.
+      requestAnimationFrame(() => {
+        if (pinned) logEl.scrollTop = logEl.scrollHeight;
+      });
+    }
+
+    function repin() {
+      pinned = true;
+      missed = 0;
+      paintJump();
+      toBottom();
+    }
+
+    // Only shown when they have scrolled up and something arrived meanwhile.
+    function paintJump() {
+      if (!jumpEl) return;
+      jumpEl.style.display = !pinned && missed ? "" : "none";
+      jumpEl.textContent = "";
+      if (!pinned && missed) {
+        jumpEl.appendChild(el("i", { class: "fas fa-arrow-down" }));
+        jumpEl.appendChild(
+          document.createTextNode(
+            " " + missed + (missed === 1 ? " new message" : " new messages"),
+          ),
+        );
+      }
     }
 
     function addLine(m) {
-      const stick = atBottom();
+      const stick = pinned;
       let node;
       if (m.kind === "system") {
         node = el("div", {
@@ -1268,23 +1310,55 @@
       }
       logEl.appendChild(node);
       while (logEl.childNodes.length > 120) logEl.removeChild(logEl.firstChild);
-      if (stick) logEl.scrollTop = logEl.scrollHeight;
+      if (stick) toBottom();
+      else {
+        missed++;
+        paintJump();
+      }
     }
 
     return {
       mount(host) {
         root = el("div", { class: "gm-sidepanel" });
 
-        const ph = el("div", { class: "gm-side-head" }, [
+        // The roster folds away. On a phone it was taking a third of the panel
+        // and leaving the chat a slot to type into, so it starts folded there.
+        const ph = el("button", {
+          class: "gm-side-head gm-side-fold",
+          type: "button",
+          title: "Show or hide the players",
+        }, [
           el("i", { class: "fas fa-users" }),
           el("span", { text: "In this game" }),
         ]);
         countEl = el("span", { class: "gm-side-count" });
         ph.appendChild(countEl);
+        foldCaret = el("i", { class: "fas fa-chevron-down gm-fold-caret" });
+        ph.appendChild(foldCaret);
         root.appendChild(ph);
 
         playersEl = el("div", { class: "gm-players" });
         root.appendChild(playersEl);
+
+        const setFold = (on) => {
+          rosterFolded = !!on;
+          playersEl.style.display = rosterFolded ? "none" : "";
+          foldCaret.className =
+            "fas gm-fold-caret " + (rosterFolded ? "fa-chevron-right" : "fa-chevron-down");
+          try {
+            localStorage.setItem("tk-games-roster", rosterFolded ? "0" : "1");
+          } catch (e) {
+            /* private mode: it just will not stick */
+          }
+        };
+        let saved = null;
+        try {
+          saved = localStorage.getItem("tk-games-roster");
+        } catch (e) {
+          saved = null;
+        }
+        setFold(saved === null ? window.innerWidth <= 720 : saved === "0");
+        ph.addEventListener("click", () => setFold(!rosterFolded));
 
         nextHead = el("div", { class: "gm-side-head gm-next-head" }, [
           el("i", { class: "fas fa-hand" }),
@@ -1313,7 +1387,24 @@
           ]),
         );
         logEl = el("div", { class: "gm-chat-log" });
+        // Follow the newest message unless they have deliberately scrolled up
+        // to read something. Their own scrolling is what decides it.
+        logEl.addEventListener("scroll", () => {
+          const now = nearBottom();
+          if (now === pinned) return;
+          pinned = now;
+          if (pinned) missed = 0;
+          paintJump();
+        });
         root.appendChild(logEl);
+
+        jumpEl = el("button", {
+          class: "gm-chat-jump",
+          type: "button",
+          onclick: repin,
+        });
+        jumpEl.style.display = "none";
+        root.appendChild(jumpEl);
 
         typingEl = el("div", { class: "gm-chat-typing" });
         root.appendChild(typingEl);
@@ -1507,7 +1598,7 @@
             lastChatId = Math.max(lastChatId, m.id);
             addLine(m);
           });
-          logEl.scrollTop = logEl.scrollHeight;
+          repin(); // opening a game always lands on the newest message
         }
         paintTyping(t.typing || []);
       },
@@ -1829,6 +1920,284 @@
   };
 
   // Draw & Guess ------------------------------------------------------------
+  // Guess the Flag ----------------------------------------------------------
+  // The flag is painted onto a canvas from an image that is never put in the
+  // document, and its url is an opaque per-round token rather than a country
+  // code. Nothing in the page names the country until the round is revealed.
+  BOARDS.flagguess = function () {
+    let root, timerRow, timerNum, timerFill, roundEl, promptEl;
+    let canvas, ctx, canvasBox, canvasWrap;
+    let guessWrap, guessForm, guessInput, guessLabel, statusEl;
+    let img = null;
+    let shownToken = null;
+    let ro = null;
+    let focused = false;
+
+    // 3:2 is the commonest flag shape. The canvas keeps it at every size and
+    // letterboxes anything squarer or longer, so Nepal and Switzerland are not
+    // stretched into something unrecognisable.
+    const ART_W = 900;
+    const ART_H = 600;
+
+    function fit() {
+      if (!canvasBox || !canvasWrap) return;
+      const box = canvasBox.getBoundingClientRect();
+      if (!box.width) return;
+      const room = box.height > 60 ? box.height : Infinity;
+      const scale = Math.min(box.width / ART_W, room / ART_H);
+      const w = Math.max(180, Math.floor(ART_W * scale));
+      canvasWrap.style.width = w + "px";
+      canvasWrap.style.height = Math.max(120, Math.floor(ART_H * scale)) + "px";
+      // The guess box lines up with the flag rather than running the whole
+      // width of the panel, which looked enormous next to a small flag.
+      if (root) root.style.setProperty("--gm-art-w", w + "px");
+    }
+
+    function resize() {
+      if (!canvas) return;
+      fit();
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width) return;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.round(rect.width * dpr);
+      const h = Math.round(rect.height * dpr);
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      paint();
+    }
+
+    function clear() {
+      if (!ctx) return;
+      ctx.fillStyle = "#101010";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function paint() {
+      if (!ctx) return;
+      clear();
+      if (!img || !img.complete || !img.naturalWidth) return;
+      // Contain, not cover: a flag cropped to fill the box is a different flag.
+      const s = Math.min(canvas.width / img.naturalWidth, canvas.height / img.naturalHeight);
+      const w = img.naturalWidth * s;
+      const h = img.naturalHeight * s;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+    }
+
+    function show(token) {
+      if (token === shownToken) return;
+      shownToken = token;
+      img = null;
+      clear();
+      if (!token) return;
+      const next = new Image();
+      // Deliberately never appended to the document: the only thing in the
+      // page is the canvas, so there is no src for anybody to read.
+      next.onload = () => {
+        if (shownToken !== token) return; // a newer round already started
+        img = next;
+        paint();
+      };
+      next.onerror = () => {
+        if (shownToken !== token) return;
+        clear();
+        if (ctx) {
+          ctx.fillStyle = "#888";
+          ctx.font = Math.round(canvas.width / 26) + "px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText("Flag could not load", canvas.width / 2, canvas.height / 2);
+        }
+      };
+      next.src = "flag/" + encodeURIComponent(token) + ".png";
+    }
+
+    return {
+      mount(stage) {
+        root = el("div", { class: "gm-board gm-fg" });
+
+        timerNum = el("div", { class: "gm-dg-secs" });
+        timerFill = el("div", { class: "gm-dg-timefill" });
+        roundEl = el("div", { class: "gm-dg-turn" });
+        timerRow = el("div", { class: "gm-dg-timer" }, [
+          timerNum,
+          el("div", { class: "gm-dg-timebar" }, timerFill),
+          roundEl,
+        ]);
+        root.appendChild(timerRow);
+
+        promptEl = el("div", { class: "gm-dg-prompt gm-fg-prompt" });
+        root.appendChild(promptEl);
+
+        canvas = el("canvas", { class: "gm-fg-canvas" });
+        ctx = canvas.getContext("2d");
+        canvasWrap = el("div", { class: "gm-fg-canvas-wrap" }, canvas);
+        canvasBox = el("div", { class: "gm-dg-canvasbox" }, canvasWrap);
+        root.appendChild(canvasBox);
+        clear();
+
+        guessLabel = el("div", { class: "gm-dg-guesslabel" });
+        guessInput = el("input", {
+          class: "gm-dg-input",
+          type: "text",
+          maxlength: "40",
+          placeholder: "Which country is this?",
+          autocomplete: "off",
+          autocapitalize: "off",
+          autocorrect: "off",
+          spellcheck: "false",
+        });
+        guessForm = el("form", { class: "gm-dg-guessform" }, [
+          guessInput,
+          el("button", { class: "gm-btn gm-btn-primary", type: "submit", text: "Guess" }),
+        ]);
+        guessForm.addEventListener("submit", (e) => {
+          e.preventDefault();
+          const v = guessInput.value.trim();
+          if (!v) return;
+          S.emit("games move", {
+            tableId: detail.id, move: { kind: "guess", text: v },
+          });
+          guessInput.value = "";
+        });
+        guessWrap = el("div", { class: "gm-dg-guesswrap" }, [guessLabel, guessForm]);
+        root.appendChild(guessWrap);
+
+        statusEl = el("div", { class: "gm-dg-status" });
+        root.appendChild(statusEl);
+
+        stage.appendChild(root);
+        setTimeout(resize, 0);
+        window.addEventListener("resize", resize);
+        if (window.ResizeObserver) {
+          ro = new ResizeObserver(() => resize());
+          ro.observe(canvasBox);
+        }
+      },
+
+      destroy() {
+        window.removeEventListener("resize", resize);
+        if (ro) ro.disconnect();
+        ro = null;
+        img = null;
+        shownToken = null;
+      },
+
+      say(msg, good) {
+        const line = el("div", {
+          class: "gm-dg-flash " + (good ? "gm-good" : "gm-bad"),
+          text: msg,
+        });
+        statusEl.insertBefore(line, statusEl.firstChild);
+        setTimeout(() => line.remove(), 2400);
+      },
+
+      clock() {
+        const g = detail && detail.game;
+        if (!g || !g.endsAt) {
+          timerRow.style.display = "none";
+          return;
+        }
+        timerRow.style.display = "";
+        const left = Math.max(0, Math.ceil((g.endsAt - Date.now()) / 1000));
+        timerNum.textContent = left;
+        const pct = Math.max(0, Math.min(100, ((g.endsAt - Date.now()) / g.phaseMs) * 100));
+        timerFill.style.width = pct + "%";
+        timerRow.classList.toggle("gm-dg-low", g.phase === "guessing" && left <= 6);
+      },
+
+      update(t) {
+        const g = t.game;
+        if (!g) {
+          promptEl.textContent = "Getting things ready...";
+          guessWrap.style.display = "none";
+          timerRow.style.display = "none";
+          return;
+        }
+
+        resize();
+        show(g.token);
+
+        roundEl.textContent = g.totalRounds
+          ? "Flag " + Math.min(g.round + 1, g.totalRounds) + "/" + g.totalRounds
+          : "";
+
+        promptEl.textContent = "";
+        if (g.phase === "opening") {
+          promptEl.appendChild(
+            el("span", { class: "gm-dg-waiting" }, [
+              el("i", { class: "fas fa-hourglass-start" }),
+              " First flag coming up",
+            ]),
+          );
+        } else if (g.phase === "guessing") {
+          promptEl.appendChild(
+            el("span", { class: "gm-dg-label", text: "Name this country" }),
+          );
+          if (g.hint)
+            promptEl.appendChild(el("span", { class: "gm-dg-hint", text: g.hint }));
+        } else if (g.reveal) {
+          promptEl.appendChild(el("span", { class: "gm-dg-label", text: "It was" }));
+          promptEl.appendChild(el("span", { class: "gm-dg-word", text: g.reveal }));
+          const n = g.guessed.length;
+          promptEl.appendChild(
+            el("span", {
+              class: "gm-dg-label",
+              text: n ? n + (n === 1 ? " got it" : " got it") : "Nobody got it",
+            }),
+          );
+        }
+
+        const showGuess = t.seated && g.phase === "guessing";
+        guessWrap.style.display = showGuess ? "" : "none";
+        if (showGuess) {
+          guessLabel.textContent = "";
+          if (g.canGuess) {
+            guessWrap.classList.remove("gm-dg-got");
+            guessLabel.appendChild(el("i", { class: "fas fa-earth-americas" }));
+            guessLabel.appendChild(el("span", { text: " Type the country" }));
+            guessInput.disabled = false;
+            if (!focused) {
+              focused = true;
+              setTimeout(() => guessInput.focus(), 40);
+            }
+          } else {
+            guessWrap.classList.add("gm-dg-got");
+            guessLabel.appendChild(el("i", { class: "fas fa-circle-check" }));
+            guessLabel.appendChild(el("span", { text: " Got it. Wait for the rest." }));
+            guessInput.disabled = true;
+          }
+        }
+        if (g.phase !== "guessing") focused = false;
+
+        statusEl.textContent = "";
+        if (g.phase === "guessing" && g.guessed.length) {
+          const got = el("div", { class: "gm-dg-line" });
+          got.appendChild(el("span", { class: "gm-dg-linelabel", text: "Got it" }));
+          g.guessed.forEach((x) =>
+            got.appendChild(
+              el("span", { class: "gm-dg-gotchip" }, [
+                el("b", { text: "#" + x.place }),
+                x.username,
+              ]),
+            ),
+          );
+          statusEl.appendChild(got);
+        }
+        if (g.phase === "guessing" && g.waitingOn && g.waitingOn.length) {
+          const wait = el("div", { class: "gm-dg-line" });
+          wait.appendChild(el("span", { class: "gm-dg-linelabel", text: "Thinking" }));
+          g.waitingOn.forEach((x) =>
+            wait.appendChild(el("span", { class: "gm-dg-waitchip", text: x.username })),
+          );
+          statusEl.appendChild(wait);
+        }
+      },
+    };
+  };
+
   BOARDS.drawguess = function () {
     let root, timerRow, timerNum, timerFill, progEl, promptEl, choiceEl;
     let canvas, ctx, tools, guessWrap, guessForm, guessInput, guessHint;
@@ -1898,8 +2267,11 @@
       // A column layout leaves the height open, so size from the width there.
       const room = box.height > 60 ? box.height : Infinity;
       const scale = Math.min(box.width / ART_W, room / ART_H);
-      canvasWrap.style.width = Math.max(160, Math.floor(ART_W * scale)) + "px";
+      const w = Math.max(160, Math.floor(ART_W * scale));
+      canvasWrap.style.width = w + "px";
       canvasWrap.style.height = Math.max(112, Math.floor(ART_H * scale)) + "px";
+      // Keeps the guess box the same width as the drawing it belongs to.
+      if (root) root.style.setProperty("--gm-art-w", w + "px");
     }
     function resize() {
       if (!canvas) return;
@@ -2702,7 +3074,10 @@
     else if (d.correct && board.say)
       board.say("Correct, +" + d.pts + " points", true);
     else if (d.close && board.say) board.say("So close", false);
-    else if (d.correct === false && board.say) board.say("Not it", false);
+    // "known" means they typed a real country, just the wrong one. Worth
+    // saying, because it separates a near miss from a typo.
+    else if (d.correct === false && board.say)
+      board.say(d.known ? "That is a country, but not this one" : "Not it", false);
   });
 
   S.on("games error", (d) => {

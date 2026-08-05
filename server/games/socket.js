@@ -94,6 +94,8 @@ function register(socket, safe) {
           pts: out.pts || 0,
           correct: out.correct === true,
           close: out.close === true,
+          // A real country, just not this one. Never says which.
+          known: out.known === true,
         });
       }
       return out;

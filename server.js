@@ -683,6 +683,29 @@ app.get("/", (req, res) =>
   sendPage(req, res, path.join(PAGES_DIR, "index.html")),
 );
 
+// ── Guess the Flag images ───────────────────────────────────────────────────
+// Served from here rather than letting the browser talk to flagcdn directly:
+// their url carries the country code, which would put the answer in the
+// network tab. The token is opaque and per round, so the page never learns
+// which country it is looking at until the round is revealed.
+const gamesFloor = require("./server/games");
+app.get("/flag/:token.png", async (req, res) => {
+  const pending = gamesFloor.flagImage(req.params.token);
+  if (!pending) return res.status(404).end();
+  try {
+    const buf = await pending;
+    res.set({
+      "Content-Type": "image/png",
+      // The token is unique per round, so the bytes behind it never change.
+      "Cache-Control": "public, max-age=3600, immutable",
+      "Cross-Origin-Resource-Policy": "same-origin",
+    });
+    res.end(buf);
+  } catch (_) {
+    res.status(502).end();
+  }
+});
+
 // ── API Routes ──────────────────────────────────────────────────────────────
 
 const API = `/api/${CONFIG.VERSIONS.API}`;

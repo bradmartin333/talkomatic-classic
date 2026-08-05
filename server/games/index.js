@@ -29,9 +29,11 @@ const tictactoe = require("./tictactoe");
 const connect4 = require("./connect4");
 const wordrace = require("./wordrace");
 const drawguess = require("./drawguess");
+const flagguess = require("./flagguess");
+const flagcdn = require("./flagcdn");
 
 // Order matters: this is the order the picker lists them in, most-played first.
-const GAMES = { drawguess, tictactoe, connect4, wordrace };
+const GAMES = { drawguess, flagguess, tictactoe, connect4, wordrace };
 
 // Games that live on their own page under public/games. No sockets, no seats,
 // no server state; the panel just frames them.
@@ -63,7 +65,7 @@ const EXTERNAL = [
 // Games worth telling the room about when one starts. The turn-based pair are
 // deliberately not here: two people playing tic tac toe is not news, and it
 // would fire every rotation.
-const SHOUT_TYPES = { wordrace: true, drawguess: true };
+const SHOUT_TYPES = { wordrace: true, drawguess: true, flagguess: true };
 const SHOUT_GAP_MS = 4 * 60 * 1000; // per room, per game type
 
 // Winner keeps the seat in these; the timed group dissolves its table instead.
@@ -1564,6 +1566,12 @@ module.exports = {
   drawStrokes,
   syncCanvas,
   isPlaying,
+  // The flag proxy, wired to an express route. Takes the opaque round token
+  // and gives back image bytes, so the country code is never in a url.
+  flagImage: (token) => {
+    const code = flagcdn.codeForToken(token);
+    return code ? flagcdn.imageFor(code) : null;
+  },
   userLeftRoom,
   roomClosed,
   emitFloor,
