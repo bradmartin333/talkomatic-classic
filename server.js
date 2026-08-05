@@ -265,6 +265,10 @@ app.use((req, res, next) => {
   // The puzzle page is self-contained too (Tailwind/FontAwesome/TF.js from CDNs,
   // its own canvas + inline module) and runs sandboxed in a room iframe.
   if (req.path === "/puzzle.html") return next();
+  // Same for the standalone games under /games: they are whole pages with their
+  // own inline scripts, framed by the mini games panel. They cannot carry our
+  // per-request nonce, so the strict policy would just break them.
+  if (req.path.startsWith("/games/")) return next();
   return helmetMiddleware(req, res, next);
 });
 
@@ -493,6 +497,9 @@ io.use((socket, next) => {
               // per-message), so the blunt generic limiter must not drop them -
               // that is what made notes cut out during active play.
               "piano notes",
+              // Same story for Draw & Guess strokes: batched, and capped by
+              // its own per-second limit in server/games/socket.js.
+              "games draw",
               "get rooms",
               "get room state",
             ].includes(evt)

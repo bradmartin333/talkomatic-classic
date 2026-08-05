@@ -1536,12 +1536,13 @@ const APPS_DATA = {
   },
   minigames: {
     name: "Mini Games",
-    description: "Uno, Hangman, Tic Tac Toe & more",
+    description: "Tic Tac Toe, Connect Four, Word Race, Draw & Guess",
     icon: "\uD83C\uDFAE",
     iconClass: "placeholder",
-    status: "coming-soon",
+    status: "available",
     url: null,
     openInNewTab: false,
+    action: "games",
   },
   fileshare: {
     name: "File Share",
@@ -1611,6 +1612,8 @@ function createAppDirectoryDropdown() {
           if (window.TalkomaticPuzzle) window.TalkomaticPuzzle.open();
         } else if (app.action === "themeEditor") {
           if (window.ThemeEditor) window.ThemeEditor.open();
+        } else if (app.action === "games") {
+          if (window.TalkomaticGames) window.TalkomaticGames.open();
         } else if (app.openInNewTab) {
           window.open(app.url, "_blank", "noopener,noreferrer");
         } else {
