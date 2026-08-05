@@ -331,106 +331,300 @@ function recent(limit = 500, includeIp = true, modLevel = 2, since = 0) {
 // Action strings carry their parameters ("ip block 24h", "rename (was Bob)",
 // "grant mod L1"). Strip those so the per-moderator tally groups the same kind
 // of action together instead of splitting it across every variation.
+//
+// The bracket is cut from the first "(" to the end rather than matched as a
+// pair: room and user names contain brackets of their own, so a paired match on
+// `rename room (was Ha(ha))` left a stray ")" behind and split one action into
+// two separate tallies.
 function baseAction(action) {
   return String(action || "?")
-    .replace(/\s*\([^)]*\)/g, "")
+    .replace(/\s*\([\s\S]*$/, "")
     .replace(/\s+(1h|24h|7d|permanent)\b/gi, "")
-    .replace(/\s+L\d\b/g, "")
+    .replace(/\s+L\d+\b/gi, "")
+    .replace(/\s+\d+$/, "")
     .trim()
     .toLowerCase();
 }
 
-// Which bucket an action belongs to. "passive" is deliberately separate: it is
-// things a staff member did that are not moderation work (watching a room,
-// unlocking the panel), so counting them towards someone's workload would make
-// a lurker look busier than a moderator who actually clears queues.
+// Which bucket an action belongs to.
+//
+// Membership is by exact action name, not by prefix. Prefix matching used to
+// file `rename room` under "Acting on users" because the list had `rename` in
+// it, which quietly inflated the one number promotion is judged on: a mod who
+// renamed rooms all day read as a mod who had handled people all day.
+//
+// "passive" is deliberately separate: watching a room or unlocking the panel is
+// not moderation work, and counting it would make a lurker look busier than
+// somebody actually answering reports.
 const ACTION_GROUPS = [
   {
-    key: "enforcement",
+    key: "users",
     label: "Acting on users",
-    match: /^(kick|kick\+ban|ban|ip block|ban ip|unblock ip|warn|wipe buffer|rename|reset location|turn pfp off|allow pfp|freeze|force kick)/,
+    blurb: "Landed on a person. This is what moderating actually is.",
+    actions: [
+      "kick", "kick+ban", "wipe buffer", "warn",
+      "ban", "ban ip", "ip block", "unblock ip",
+      "rename", "reset location", "turn pfp off", "allow pfp",
+      "freeze", "unfreeze", "piano mute", "piano unmute",
+    ],
   },
   {
-    key: "reviews",
+    key: "queues",
     label: "Clearing queues",
-    match: /^(dismiss report|approve mod application|reject mod application|review application|dismiss appeal|lift ban|approve suggestion|decline suggestion|purge invites|undo invite purge)/,
+    blurb: "Worked through reports, appeals, applications and suggestions.",
+    actions: [
+      "dismiss report", "dismiss appeal", "lift ban",
+      "approve mod application", "reject mod application", "review application",
+      "approve suggestion", "decline suggestion",
+      "suggestion approved", "suggestion declined", "suggestion done",
+      "delete board post", "delete board reply",
+      "purge invites", "undo invite purge",
+      "open applications", "close applications",
+    ],
   },
   {
     key: "rooms",
     label: "Looking after rooms",
-    match: /^(lock room|unlock room|slow mode|close room|rename room|clear board|spotlight|set room size|wipe)/,
+    blurb: "Tidied a room. Useful, but nobody was moderated.",
+    actions: [
+      "lock room", "unlock room", "slow mode on", "slow mode off",
+      "close room", "rename room", "clear board",
+      "spotlight on", "spotlight off", "set room size", "party mode",
+    ],
   },
   {
     key: "records",
     label: "Record keeping",
-    match: /^(set note|clear note|set block message|set block duration)/,
+    blurb: "Notes and block copy. Bookkeeping, not enforcement.",
+    actions: [
+      "set note", "clear note", "set block message", "set block duration",
+    ],
   },
   {
     key: "admin",
     label: "Server and roles",
-    match: /^(grant mod|revoke mod|set mod level|megaphone|party|ticker|maintenance|flag|nuke|clear blacklist)/,
+    blurb: "Server-wide switches and staff roles.",
+    actions: [
+      "grant mod", "revoke mod", "set mod level", "grant mod to user",
+      "set mod level for user", "revoke mod from user",
+      "megaphone", "set ticker", "maintenance on", "maintenance off",
+      "set flags", "nuke all rooms", "clear blacklist",
+    ],
   },
   {
     key: "passive",
     label: "Not counted as work",
-    match: /^(spectate|unspectate|staff key entered|staff login|staff logout)/,
+    blurb: "Watching and signing in. Real, but not a workload.",
+    actions: ["spectate", "unspectate", "staff key entered", "staff login", "staff logout"],
   },
 ];
 
+// baseAction -> group key, built once.
+const GROUP_BY_ACTION = new Map();
+for (const g of ACTION_GROUPS)
+  for (const a of g.actions) GROUP_BY_ACTION.set(a, g.key);
+
+const GROUP_LABEL = new Map(ACTION_GROUPS.map((g) => [g.key, g.label]));
+
+// Anything new that has not been added to a bucket yet. Kept out of "Acting on
+// users" on purpose: an unrecognised action must never silently pad the number
+// a promotion is decided on.
 function groupOf(action) {
-  const a = baseAction(action);
-  for (const g of ACTION_GROUPS) if (g.match.test(a)) return g.key;
-  return "enforcement"; // an unrecognised staff action is still real work
+  return GROUP_BY_ACTION.get(baseAction(action)) || "other";
 }
 
-// Anything that is not passive counts towards a moderator's workload.
+// The three actions a junior moderator has, and the only ones they can use to
+// build a record. Broken out so the record can say plainly how much of somebody
+// is the day-to-day job rather than the powers that came with a level.
+const CORE_USER_ACTIONS = new Set(["kick", "wipe buffer", "warn"]);
+
+// Anything that is not passive counts as something happening. It is NOT the
+// promotion number - see onUsers in historyFor.
 function isUsefulAction(action) {
   return groupOf(action) !== "passive";
 }
 
+// Switches that can be flipped back and forth. Flipping one and immediately
+// flipping it back is two log lines and zero moderation, so a record full of
+// them is the clearest sign somebody is padding a total.
+const TOGGLE_PAIRS = new Map([
+  ["lock room", "unlock room"],
+  ["unlock room", "lock room"],
+  ["slow mode on", "slow mode off"],
+  ["slow mode off", "slow mode on"],
+  ["spotlight on", "spotlight off"],
+  ["spotlight off", "spotlight on"],
+  ["freeze", "unfreeze"],
+  ["unfreeze", "freeze"],
+  ["turn pfp off", "allow pfp"],
+  ["allow pfp", "turn pfp off"],
+  ["piano mute", "piano unmute"],
+  ["piano unmute", "piano mute"],
+  ["maintenance on", "maintenance off"],
+  ["maintenance off", "maintenance on"],
+]);
+
+const TOGGLE_WINDOW_MS = 2 * 60 * 1000; // undone within two minutes
+const REPEAT_WINDOW_MS = 10 * 60 * 1000; // same thing, same person, again
+const RAPID_GAP_MS = 5 * 1000; // back-to-back, faster than reading a room
+
+// Pull the display name and id back out of the "user:Name(id)" / "room:Name(id)"
+// strings logStaff writes. Names can contain brackets, so anchor on the LAST
+// "(" rather than the first.
+function splitTag(tag, prefix) {
+  const s = String(tag || "");
+  if (!s.startsWith(prefix)) return null;
+  const body = s.slice(prefix.length);
+  const open = body.lastIndexOf("(");
+  const close = body.lastIndexOf(")");
+  if (open === -1 || close < open) return { name: body, id: null };
+  return { name: body.slice(0, open), id: body.slice(open + 1, close) };
+}
+
+const parseUserTag = (t) => splitTag(t, "user:");
+const parseRoomTag = (t) => splitTag(t, "room:");
+
 const HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
-// One staff member's record. The tallies are lifetime and never move; the
-// listed entries cover the last 30 days only and are paged, so a moderator
-// with tens of thousands of actions cannot hang the page.
+// How much work on actual users a junior should have behind them before a
+// developer is asked to look at full mod. It is a prompt to go and read the
+// record, never an entitlement, and only actions in the "users" group count -
+// renaming rooms and writing notes cannot carry somebody to it.
+const PROMOTION_AT = 1000;
+
+// Reads a staff member's whole record and works out both what they did and
+// whether the shape of it should worry anybody.
+//
+// The tallies are lifetime and never move. The listed entries cover the last 30
+// days, are filterable by group or by who they landed on, and are paged, so a
+// moderator with tens of thousands of actions cannot hang the page.
 function historyFor(label, role, opts = {}) {
   const want = String(label || "");
   const offset = Math.max(0, Number(opts.offset) || 0);
   const limit = Math.max(1, Math.min(Number(opts.limit) || 50, 200));
-  if (!want)
-    return {
-      label: want, total: 0, useful: 0, counts: [], groups: [],
-      entries: [], offset, limit, windowTotal: 0, windowDays: 30,
-    };
+  const wantGroup = opts.group ? String(opts.group) : null;
+  const wantTarget = opts.targetUid ? String(opts.targetUid) : null;
+  const empty = {
+    label: want, role: role || null, total: 0, useful: 0, onUsers: 0, core: 0,
+    counts: [], groups: [], targets: [], flags: [], entries: [],
+    offset, limit, windowTotal: 0, windowMatched: 0, windowDays: 30,
+    promotionAt: PROMOTION_AT, group: wantGroup, targetUid: wantTarget,
+  };
+  if (!want) return empty;
 
   const counts = new Map();
   const groupTotals = new Map();
+  const targets = new Map(); // uid -> { uid, name, n, actions: Map }
   const recent = [];
   const cutoff = Date.now() - HISTORY_WINDOW_MS;
   let total = 0;
   let useful = 0;
+  let onUsers = 0;
+  let core = 0;
   let first = null;
   let last = null;
+
+  // Abuse-shape counters, all built in the same pass.
+  const history = []; // { ts, base, group, targetId, roomId, used }
+  let rapid = 0;
+  let repeats = 0;
+  let togglePairs = 0;
+  let kicks = 0;
+  let warns = 0;
+  let prevTs = null;
 
   for (const e of entries) {
     if (e.type !== "action") continue;
     if (e.label !== want) continue;
     if (role && e.role && e.role !== role) continue;
+
     total++;
     if (first == null) first = e.ts;
     last = e.ts;
-    const a = baseAction(e.action);
-    counts.set(a, (counts.get(a) || 0) + 1);
-    const g = groupOf(e.action);
-    groupTotals.set(g, (groupTotals.get(g) || 0) + 1);
-    if (g !== "passive") useful++;
-    if ((e.ts || 0) >= cutoff) recent.push(e);
+
+    const base = baseAction(e.action);
+    const group = groupOf(e.action);
+    counts.set(base, (counts.get(base) || 0) + 1);
+    groupTotals.set(group, (groupTotals.get(group) || 0) + 1);
+    if (group !== "passive") useful++;
+    if (group === "users") {
+      onUsers++;
+      if (CORE_USER_ACTIONS.has(base)) core++;
+    }
+    if (base === "kick" || base === "kick+ban") kicks++;
+    if (base === "warn") warns++;
+
+    const tgt = parseUserTag(e.target);
+    const room = parseRoomTag(e.room);
+    const ts = e.ts || 0;
+
+    // Who they have actually pointed their powers at.
+    if (group === "users" && tgt) {
+      const key = tgt.id || "name:" + tgt.name;
+      let t = targets.get(key);
+      if (!t) {
+        t = { uid: tgt.id || null, name: tgt.name, n: 0, actions: new Map() };
+        targets.set(key, t);
+      }
+      t.name = tgt.name; // keep the most recent name they were logged under
+      t.n++;
+      t.actions.set(base, (t.actions.get(base) || 0) + 1);
+    }
+
+    // Back-to-back actions, faster than anybody could have read the room.
+    if (group !== "passive" && prevTs != null && ts - prevTs < RAPID_GAP_MS)
+      rapid++;
+    if (group !== "passive") prevTs = ts;
+
+    const rec = {
+      ts,
+      base,
+      group,
+      targetId: tgt ? tgt.id || tgt.name : null,
+      roomId: room ? room.id || room.name : null,
+      used: false,
+    };
+
+    // The same thing, to the same person, again within ten minutes.
+    if (group === "users" && rec.targetId) {
+      for (let i = history.length - 1; i >= 0; i--) {
+        const p = history[i];
+        if (ts - p.ts > REPEAT_WINDOW_MS) break;
+        if (p.base === base && p.targetId === rec.targetId) {
+          repeats++;
+          break;
+        }
+      }
+    }
+
+    // A switch flipped and flipped straight back on the same room or person.
+    const opposite = TOGGLE_PAIRS.get(base);
+    if (opposite) {
+      const scope = rec.roomId || rec.targetId;
+      for (let i = history.length - 1; i >= 0; i--) {
+        const p = history[i];
+        if (ts - p.ts > TOGGLE_WINDOW_MS) break;
+        if (p.used || p.base !== opposite) continue;
+        if ((p.roomId || p.targetId) !== scope) continue;
+        p.used = true;
+        rec.used = true;
+        togglePairs++;
+        break;
+      }
+    }
+
+    history.push(rec);
+    if (history.length > 4000) history.shift();
+
+    if (ts >= cutoff) recent.push({ ...e, base, group });
   }
 
   recent.reverse(); // newest first
+
   const groups = ACTION_GROUPS.map((g) => ({
     key: g.key,
     label: g.label,
+    blurb: g.blurb,
     n: groupTotals.get(g.key) || 0,
     actions: [...counts.entries()]
       .filter(([a]) => groupOf(a) === g.key)
@@ -438,27 +632,144 @@ function historyFor(label, role, opts = {}) {
       .sort((a, b) => b.n - a.n),
   })).filter((g) => g.n > 0);
 
+  // Anything the buckets above do not know about yet, so a new action is
+  // visible in the record instead of disappearing.
+  const otherActions = [...counts.entries()]
+    .filter(([a]) => groupOf(a) === "other")
+    .map(([action, n]) => ({ action, n }))
+    .sort((a, b) => b.n - a.n);
+  if (otherActions.length)
+    groups.push({
+      key: "other",
+      label: "Not yet classified",
+      blurb: "New actions that have not been sorted into a bucket.",
+      n: otherActions.reduce((s, c) => s + c.n, 0),
+      actions: otherActions,
+    });
+
+  const topTargets = [...targets.values()]
+    .sort((a, b) => b.n - a.n)
+    .map((t) => ({
+      uid: t.uid,
+      name: t.name,
+      n: t.n,
+      actions: [...t.actions.entries()]
+        .map(([action, n]) => ({ action, n }))
+        .sort((a, b) => b.n - a.n),
+    }));
+
+  const filtered = recent.filter((e) => {
+    if (wantGroup && e.group !== wantGroup) return false;
+    if (wantTarget) {
+      const t = parseUserTag(e.target);
+      if (!t || (t.id || t.name) !== wantTarget) return false;
+    }
+    return true;
+  });
+
   return {
     label: want,
     role: role || null,
     total,
     useful,
+    onUsers,
+    core,
+    passive: groupTotals.get("passive") || 0,
     first,
     last,
     groups,
+    targets: topTargets.slice(0, 10),
+    distinctTargets: targets.size,
+    flags: buildFlags({
+      total, useful, onUsers, kicks, warns, rapid, repeats, togglePairs,
+      targets: topTargets, groupTotals,
+    }),
+    promotionAt: PROMOTION_AT,
     counts: [...counts.entries()]
       .map(([action, n]) => ({ action, n }))
       .sort((a, b) => b.n - a.n),
     windowDays: 30,
     windowTotal: recent.length,
+    windowMatched: filtered.length,
+    group: wantGroup,
+    targetUid: wantTarget,
     offset,
     limit,
-    entries: recent.slice(offset, offset + limit),
+    entries: filtered.slice(offset, offset + limit),
   };
 }
 
+// Turns the shape counters into plain sentences. These are prompts to go and
+// read the log, not verdicts: every one of them has an innocent explanation,
+// and the point is that somebody looks rather than that the number is trusted.
+function buildFlags(s) {
+  const out = [];
+  const add = (key, level, title, detail) =>
+    out.push({ key, level, title, detail });
+  const pct = (n, d) => (d > 0 ? Math.round((n / d) * 100) : 0);
+
+  const roomish =
+    (s.groupTotals.get("rooms") || 0) + (s.groupTotals.get("users") || 0);
+  if (s.togglePairs >= 3) {
+    const share = pct(s.togglePairs * 2, roomish);
+    add(
+      "toggles",
+      s.togglePairs >= 10 ? "watch" : "note",
+      s.togglePairs + " switches flipped and flipped straight back",
+      "Locking a room and unlocking it seconds later is two entries in the log and no moderation. " +
+        (share >= 10 ? "That is about " + share + "% of their room and user actions. " : "") +
+        "Worth a look if their total is what is being judged.",
+    );
+  }
+
+  if (s.repeats >= 10)
+    add(
+      "repeats",
+      s.repeats >= 25 ? "watch" : "note",
+      s.repeats + " repeats of the same action on the same person",
+      "The same power used on one person again inside ten minutes. Sometimes that is somebody who came straight back; a lot of it is somebody leaning on one user.",
+    );
+
+  if (s.rapid >= 10 && pct(s.rapid, s.useful) >= 25)
+    add(
+      "rapid",
+      pct(s.rapid, s.useful) >= 40 ? "watch" : "note",
+      pct(s.rapid, s.useful) + "% of their actions came within 5 seconds of the last one",
+      "Bursts this tight usually mean a toolbar being clicked through rather than decisions being made one at a time.",
+    );
+
+  const top = s.targets && s.targets[0];
+  if (top && s.onUsers >= 10 && pct(top.n, s.onUsers) >= 40)
+    add(
+      "focus",
+      pct(top.n, s.onUsers) >= 60 ? "watch" : "note",
+      pct(top.n, s.onUsers) + "% of everything they did to a user landed on " + top.name,
+      "One person taking most of a moderator's attention is either a genuinely persistent problem user or a grudge. The log says which.",
+    );
+
+  if (s.kicks >= 10 && s.warns === 0)
+    add(
+      "nowarn",
+      "note",
+      s.kicks + " kicks and not one warning",
+      "Nobody was told what they did wrong before being removed.",
+    );
+
+  if (s.onUsers === 0 && s.useful >= 40)
+    add(
+      "nousers",
+      "note",
+      "No actions on users at all",
+      s.useful +
+        " logged actions, none of which landed on a person. This is a record built entirely out of rooms, notes and settings.",
+    );
+
+  return out;
+}
+
 // Every staff member's workload in one pass, for the leaderboard and for
-// spotting a junior who has earned a look at promotion.
+// spotting a junior who has earned a look at promotion. The ranking is by work
+// done on users, so a record padded with room tidying does not climb it.
 function leaderboard() {
   const by = new Map(); // "role:label" -> stats
   const cutoff = Date.now() - HISTORY_WINDOW_MS;
@@ -469,8 +780,8 @@ function leaderboard() {
     if (!s) {
       s = {
         label: e.label, role: e.role || "mod",
-        total: 0, useful: 0, recentUseful: 0,
-        enforcement: 0, reviews: 0, rooms: 0, last: null,
+        total: 0, useful: 0, recentUseful: 0, onUsers: 0, recentOnUsers: 0,
+        queues: 0, rooms: 0, records: 0, passive: 0, last: null,
       };
       by.set(key, s);
     }
@@ -481,11 +792,17 @@ function leaderboard() {
       s.useful++;
       if ((e.ts || 0) >= cutoff) s.recentUseful++;
     }
-    if (g === "enforcement") s.enforcement++;
-    else if (g === "reviews") s.reviews++;
+    if (g === "users") {
+      s.onUsers++;
+      if ((e.ts || 0) >= cutoff) s.recentOnUsers++;
+    } else if (g === "queues") s.queues++;
     else if (g === "rooms") s.rooms++;
+    else if (g === "records") s.records++;
+    else if (g === "passive") s.passive++;
   }
-  return [...by.values()].sort((a, b) => b.useful - a.useful);
+  return [...by.values()].sort(
+    (a, b) => b.onUsers - a.onUsers || b.useful - a.useful,
+  );
 }
 
 function setAuditSub(socket, on) {
@@ -533,6 +850,7 @@ module.exports = {
   historyFor,
   leaderboard,
   isUsefulAction,
+  PROMOTION_AT,
   startOfPacificDay,
   pacificDayStarts,
   setAuditSub,

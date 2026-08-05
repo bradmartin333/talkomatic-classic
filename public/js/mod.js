@@ -1658,23 +1658,57 @@
   // actions a page at a time. Somebody with tens of thousands of actions must
   // not be able to hang this modal, so the list is paged server-side.
   const RECORD_PAGE = 50;
-  // A junior who has done this much real work has earned a look at L2.
-  const PROMOTION_AT = 200;
-  let recordCtx = null; // { label, role, modLevel, offset } for the open record
+  // Actions on users a junior should have behind them before a developer is
+  // asked to look at full mod. The server owns the real number and sends it
+  // with every record; this is only the fallback if an old payload arrives.
+  let PROMOTION_AT = 1000;
+  // { label, role, modLevel, offset, group, targetUid, host } for the open
+  // record. `host` is the mounted .mh-wrap so paging and filtering can swap the
+  // contents in place instead of closing and reopening the modal.
+  let recordCtx = null;
 
-  function openModHistory(m, offset) {
+  function openModHistory(m, opts) {
+    const o = opts || {};
     recordCtx = {
       label: m.label,
       role: m.rank === "dev" ? "dev" : "mod",
       modLevel: m.rank === "l1" ? 1 : m.rank === "l2" ? 2 : 0,
-      offset: offset || 0,
+      offset: o.offset || 0,
+      group: o.group || null,
+      targetUid: o.targetUid || null,
+      host: o.keepHost && recordCtx ? recordCtx.host : null,
     };
     socket.emit("staff get mod history", {
       label: recordCtx.label,
       role: recordCtx.role,
       offset: recordCtx.offset,
       limit: RECORD_PAGE,
+      group: recordCtx.group,
+      targetUid: recordCtx.targetUid,
     });
+  }
+
+  // Re-query the open record with one thing changed, keeping the modal up.
+  function refineRecord(patch) {
+    if (!recordCtx) return;
+    const rank =
+      recordCtx.role === "dev"
+        ? "dev"
+        : recordCtx.modLevel === 1
+          ? "l1"
+          : "l2";
+    openModHistory(
+      { label: recordCtx.label, rank },
+      Object.assign(
+        {
+          offset: 0,
+          group: recordCtx.group,
+          targetUid: recordCtx.targetUid,
+          keepHost: true,
+        },
+        patch,
+      ),
+    );
   }
 
   // "3 months" / "6 days" for how long they have been active.
@@ -1695,45 +1729,70 @@
     return t;
   }
 
-  // The detail line under an action: who it was against, where, and any note
-  // the moderator left at the time.
-  function recordRowDetail(e) {
-    const wrap = divc("mh-meta");
-    const t = parseTarget(e.target);
-    if (t) {
-      wrap.appendChild(span("k", "on "));
-      const u = uref(t.name, t.uid);
-      u.addEventListener("click", () => {
-        const card = document.querySelector(".tk-card");
-        const x = card && card.querySelector(".tk-x");
-        if (x) x.click();
-      });
-      wrap.appendChild(u);
-    } else if (e.target) {
-      wrap.appendChild(span("k", "on "));
-      wrap.appendChild(span("v", e.target));
-    }
-    if (e.room) {
-      wrap.appendChild(span("k", "  in "));
-      wrap.appendChild(span("v", String(e.room).replace(/^room:/, "")));
-    }
-    if (e.ip) {
-      wrap.appendChild(span("k", "  from "));
-      wrap.appendChild(span("ipv", e.ip));
-    }
-    return wrap;
+  // Which bucket a logged action belongs to, for the row icon. The server sends
+  // `group` on every entry now, so this no longer has to guess from the text.
+  const REC_GROUP = {
+    users: { icon: "fa-user-shield", label: "Acting on users" },
+    queues: { icon: "fa-inbox", label: "Clearing queues" },
+    rooms: { icon: "fa-door-open", label: "Looking after rooms" },
+    records: { icon: "fa-note-sticky", label: "Record keeping" },
+    admin: { icon: "fa-sliders", label: "Server and roles" },
+    passive: { icon: "fa-eye", label: "Not counted as work" },
+    other: { icon: "fa-circle-info", label: "Not yet classified" },
+  };
+
+  // "rename room (was Old Name)" -> { verb: "rename room", note: "was Old Name" }
+  // The parameter is the useful half and it was buried in the middle of a long
+  // headline, so it is split out onto its own line.
+  function splitAction(action) {
+    const s = String(action || "?");
+    const i = s.indexOf(" (");
+    if (i === -1 || !s.endsWith(")")) return { verb: s, note: null };
+    return { verb: s.slice(0, i), note: s.slice(i + 2, -1) };
   }
 
-  function renderModHistory(h) {
-    if (!window.StaffUI || !h) return;
-    const wrap = divc("mh-wrap");
+  // "room:Some name(123456)" -> { name, id }. Names contain brackets of their
+  // own, so anchor on the LAST "(" rather than the first.
+  function parseRoomTag(tag) {
+    const s = String(tag || "");
+    if (!s.startsWith("room:")) return null;
+    const body = s.slice(5);
+    const open = body.lastIndexOf("(");
+    const close = body.lastIndexOf(")");
+    if (open === -1 || close < open) return { name: body, id: null };
+    return { name: body.slice(0, open), id: body.slice(open + 1, close) };
+  }
 
-    // ── Lifetime figures ──
+  // ── The headline figures ────────────────────────────────────────────────
+  // "Actions on users" leads, because that is the job. Everything else is real
+  // but does not make somebody a moderator, and mixing the two into one "real
+  // work" total was how a record made mostly of room renames and notes read as
+  // a busy moderator.
+  function recordSummary(h, isDev) {
     const sum = divc("mh-sum");
+    if (!isDev) {
+      const lead = statTile(
+        h.onUsers || 0,
+        "actions on users",
+        "Kicks, warnings, buffer wipes, bans, forced renames - anything that landed on a person",
+      );
+      lead.classList.add("lead");
+      sum.appendChild(lead);
+    }
     sum.appendChild(
-      statTile(h.useful, "actions of real work", "Everything except passive things like spectating"),
+      statTile(
+        (h.useful || 0) - (h.onUsers || 0),
+        "rooms, queues, notes",
+        "Real work, but nobody was moderated: room tidying, review queues, notes and settings",
+      ),
     );
-    sum.appendChild(statTile(h.total, "actions in total"));
+    sum.appendChild(
+      statTile(
+        h.passive || 0,
+        "passive",
+        "Spectating and signing in. Logged, never counted as work.",
+      ),
+    );
     sum.appendChild(
       statTile(
         h.first ? spanLabel(h.first, h.last) : "-",
@@ -1748,11 +1807,40 @@
         h.last ? fmtTime(h.last) : null,
       ),
     );
-    wrap.appendChild(sum);
+    return sum;
+  }
 
-    // ── Promotion prompt for a junior who is carrying real weight ──
-    const ctx = recordCtx || {};
-    if (ctx.modLevel === 1 && h.useful >= PROMOTION_AT) {
+  // ── Worth a look ────────────────────────────────────────────────────────
+  // Shapes in the log that a person should read before trusting the numbers
+  // above them. Deliberately worded as prompts, not accusations: every one of
+  // these has an innocent explanation, and the point is that somebody checks.
+  function recordFlags(h) {
+    const flags = h.flags || [];
+    if (!flags.length) return null;
+    const worst = flags.some((f) => f.level === "watch") ? "watch" : "note";
+    const box = divc("mh-flags " + worst);
+    const head = divc("mh-fhead");
+    head.appendChild(
+      icon(worst === "watch" ? "fa-triangle-exclamation" : "fa-circle-exclamation"),
+    );
+    head.appendChild(span("mh-ftitle", "Worth a look before trusting the total"));
+    box.appendChild(head);
+    flags.forEach((f) => {
+      const row = divc("mh-flag " + (f.level || "note"));
+      row.appendChild(span("mh-fname", f.title));
+      row.appendChild(span("mh-fbody", f.detail));
+      box.appendChild(row);
+    });
+    return box;
+  }
+
+  // ── Promotion ───────────────────────────────────────────────────────────
+  function recordPromotion(h, modLevel) {
+    if (modLevel !== 1) return null;
+    const on = h.onUsers || 0;
+    const at = h.promotionAt || PROMOTION_AT;
+    const clean = !(h.flags || []).some((f) => f.level === "watch");
+    if (on >= at && clean) {
       const p = divc("mh-promote");
       p.appendChild(icon("fa-arrow-up"));
       const txt = divc("mh-ptext");
@@ -1765,28 +1853,197 @@
       txt.appendChild(
         span(
           "mh-pbody",
-          h.useful +
-            " real actions as a junior. Full mods can place bans and IP blocks, close rooms, and work the review queues. Promoting is a developer decision.",
+          on +
+            " actions on actual users as a junior, of which " +
+            (h.core || 0) +
+            " were kicks, warnings and buffer wipes. Full mods can place bans and IP blocks, close rooms, and work the review queues. Read the log below first - the number is a prompt to look, not a qualification. Promoting is a developer decision.",
         ),
       );
       p.appendChild(txt);
-      wrap.appendChild(p);
-    } else if (ctx.modLevel === 1 && h.useful > 0) {
-      const p = divc("mh-progress");
-      const bar = divc("mh-bar");
-      const fill = divc("mh-fill");
-      fill.style.width =
-        Math.min(100, Math.round((h.useful / PROMOTION_AT) * 100)) + "%";
-      bar.appendChild(fill);
-      p.appendChild(
+      return p;
+    }
+    const p = divc("mh-progress");
+    const bar = divc("mh-bar");
+    const fill = divc("mh-fill");
+    fill.style.width = Math.min(100, Math.round((on / at) * 100)) + "%";
+    bar.appendChild(fill);
+    p.appendChild(
+      span(
+        "mh-plabel",
+        on +
+          " of " +
+          at +
+          " actions on users towards a promotion review" +
+          (on >= at ? ", but see the flags above" : ""),
+      ),
+    );
+    p.appendChild(bar);
+    return p;
+  }
+
+  // ── Who they acted on ───────────────────────────────────────────────────
+  // The question the old record could not answer without reading every page.
+  // Clicking a name filters the log down to just that person.
+  function recordTargets(h) {
+    const targets = h.targets || [];
+    if (!targets.length) return null;
+    const box = divc("mh-sect");
+    const head = divc("mh-lhead");
+    head.appendChild(span("mh-lt", "Who they acted on"));
+    head.appendChild(
+      span(
+        "mh-ls",
+        h.distinctTargets === 1
+          ? "one person, ever"
+          : h.distinctTargets + " different people",
+      ),
+    );
+    box.appendChild(head);
+
+    const list = divc("mh-tlist");
+    const top = targets[0].n || 1;
+    targets.forEach((t) => {
+      const key = t.uid || t.name;
+      const row = divc(
+        "mh-trow" + (recordCtx && recordCtx.targetUid === key ? " on" : ""),
+      );
+      row.title = "Show only what they did to " + t.name;
+      const n = span("mh-tn", String(t.n));
+      row.appendChild(n);
+      const who = divc("mh-twho");
+      who.appendChild(span("mh-tname", t.name));
+      who.appendChild(
         span(
-          "mh-plabel",
-          h.useful + " of " + PROMOTION_AT + " actions towards a promotion review",
+          "mh-tacts",
+          t.actions.map((a) => a.n + " " + a.action).join("  ·  "),
         ),
       );
-      p.appendChild(bar);
-      wrap.appendChild(p);
+      row.appendChild(who);
+      const barWrap = divc("mh-tbar");
+      const fill = divc("mh-tfill");
+      fill.style.width = Math.max(4, Math.round((t.n / top) * 100)) + "%";
+      barWrap.appendChild(fill);
+      row.appendChild(barWrap);
+      row.addEventListener("click", () =>
+        refineRecord({
+          targetUid: recordCtx && recordCtx.targetUid === key ? null : key,
+          group: null,
+        }),
+      );
+      list.appendChild(row);
+    });
+    box.appendChild(list);
+    return box;
+  }
+
+  // ── One line of the log ─────────────────────────────────────────────────
+  // What was done, and to whom, on the same line. Where and from which address
+  // sit underneath, so scanning a page answers "who did they do this to"
+  // without reading past the action name.
+  function recordRow(e) {
+    const row = divc("mh-row");
+    const g = REC_GROUP[e.group] || REC_GROUP.other;
+    const ic = divc("ico g-" + (e.group || "other"));
+    ic.title = g.label;
+    ic.appendChild(icon(g.icon));
+    row.appendChild(ic);
+
+    const main = divc("mh-main");
+    const top = divc("mh-top");
+    const parts = splitAction(e.action);
+    top.appendChild(span("mh-act", parts.verb));
+
+    const t = parseTarget(e.target);
+    if (t) {
+      top.appendChild(icon("fa-arrow-right", "mh-arrow"));
+      top.appendChild(uref(t.name, t.uid));
+    } else if (e.target) {
+      top.appendChild(icon("fa-arrow-right", "mh-arrow"));
+      top.appendChild(span("v", e.target));
     }
+
+    const when = span("mh-when", relTime(e.ts));
+    when.title = fmtTime(e.ts);
+    top.appendChild(when);
+    main.appendChild(top);
+
+    const meta = divc("mh-meta");
+    const room = parseRoomTag(e.room);
+    if (room) {
+      const r = span("mh-in");
+      r.appendChild(icon("fa-door-open"));
+      r.appendChild(document.createTextNode(" " + room.name));
+      if (room.id) r.title = "Room " + room.id;
+      meta.appendChild(r);
+    }
+    if (parts.note) meta.appendChild(span("mh-was", parts.note));
+    if (e.ip) meta.appendChild(span("ipv", e.ip));
+    if (meta.childNodes.length) main.appendChild(meta);
+
+    if (e.details) main.appendChild(span("mh-det", e.details));
+    row.appendChild(main);
+    return row;
+  }
+
+  // Day heading, so a burst of thirty actions inside one minute is visibly a
+  // burst rather than a wall of "5h ago".
+  function dayKey(ts) {
+    const d = new Date(ts || 0);
+    return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate();
+  }
+  function dayLabel(ts) {
+    const d = new Date(ts || 0);
+    const today = new Date();
+    if (dayKey(ts) === dayKey(today.getTime())) return "Today";
+    const y = new Date(today.getTime() - 86400000);
+    if (dayKey(ts) === dayKey(y.getTime())) return "Yesterday";
+    try {
+      return d.toLocaleDateString(undefined, {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      });
+    } catch (_) {
+      return d.toDateString();
+    }
+  }
+
+  function renderModHistory(h) {
+    if (!window.StaffUI || !h) return;
+    if (h.promotionAt) PROMOTION_AT = h.promotionAt;
+    // A reply can outlive the context that asked for it (the modal was closed
+    // and the response landed after). Rebuild enough of it to render rather
+    // than dropping the record on the floor.
+    if (!recordCtx) {
+      const known = leaderboard.find((s) => s.label === h.label);
+      recordCtx = {
+        label: h.label,
+        role: h.role || "mod",
+        modLevel: h.role === "dev" ? 0 : known ? known.modLevel || 2 : 2,
+        offset: h.offset || 0,
+        group: null,
+        targetUid: null,
+        host: null,
+      };
+    }
+    const ctx = recordCtx;
+    // The server is the authority on the filters actually applied, so a reply
+    // that arrives out of order cannot leave the chips lying about the list.
+    if (recordCtx) {
+      recordCtx.group = h.group || null;
+      recordCtx.targetUid = h.targetUid || null;
+      recordCtx.offset = h.offset || 0;
+    }
+    const isDev = h.role === "dev";
+    const wrap = divc("mh-wrap");
+
+    wrap.appendChild(recordSummary(h, isDev));
+
+    const flags = recordFlags(h);
+    if (flags) wrap.appendChild(flags);
+
+    const promo = recordPromotion(h, ctx.modLevel);
+    if (promo) wrap.appendChild(promo);
 
     if (!h.total) {
       wrap.appendChild(
@@ -1795,139 +2052,205 @@
           "No recorded actions yet. Either they are new, or they have not used any staff powers.",
         ),
       );
-    } else {
-      // ── What they spend their time on, grouped ──
-      const gwrap = divc("mh-groups");
-      (h.groups || []).forEach((g) => {
-        const box = divc("mh-group" + (g.key === "passive" ? " passive" : ""));
-        const head = divc("mh-ghead");
-        head.appendChild(span("mh-gname", g.label));
-        head.appendChild(span("mh-gn", String(g.n)));
-        box.appendChild(head);
-        const chips = divc("mh-counts");
-        g.actions.forEach((c) => {
-          const chip = divc("mh-chip");
-          chip.appendChild(span("n", String(c.n)));
-          chip.appendChild(span("a", c.action));
-          chips.appendChild(chip);
-        });
-        box.appendChild(chips);
-        gwrap.appendChild(box);
-      });
-      wrap.appendChild(gwrap);
+      return mountRecord(h, wrap, isDev, ctx);
+    }
 
-      // ── The actual log, last 30 days, paged ──
-      const listHead = divc("mh-lhead");
-      listHead.appendChild(span("mh-lt", "What they did"));
-      listHead.appendChild(
+    // ── What they spend their time on ──
+    const gsect = divc("mh-sect");
+    const ghead = divc("mh-lhead");
+    ghead.appendChild(span("mh-lt", "What they spend their time on"));
+    ghead.appendChild(span("mh-ls", "whole time as staff"));
+    gsect.appendChild(ghead);
+    const gwrap = divc("mh-groups");
+    (h.groups || []).forEach((g) => {
+      const box = divc("mh-group g-" + g.key);
+      const head = divc("mh-ghead");
+      head.appendChild(span("mh-gname", g.label));
+      head.appendChild(span("mh-gn", String(g.n)));
+      box.appendChild(head);
+      if (g.blurb) box.appendChild(span("mh-gblurb", g.blurb));
+      const chips = divc("mh-counts");
+      g.actions.forEach((c) => {
+        const chip = divc("mh-chip");
+        chip.appendChild(span("n", String(c.n)));
+        chip.appendChild(span("a", c.action));
+        chips.appendChild(chip);
+      });
+      box.appendChild(chips);
+      gwrap.appendChild(box);
+    });
+    gsect.appendChild(gwrap);
+    wrap.appendChild(gsect);
+
+    const targets = recordTargets(h);
+    if (targets) wrap.appendChild(targets);
+
+    // ── The log itself ──
+    const listHead = divc("mh-lhead mh-loghead");
+    listHead.appendChild(span("mh-lt", "What they did"));
+    listHead.appendChild(span("mh-ls", "last " + h.windowDays + " days"));
+    wrap.appendChild(listHead);
+
+    // Filters. Only buckets they have actually used are offered, so the row
+    // does not fill up with chips that lead to an empty list.
+    const filters = divc("mh-filters");
+    const chip = (label, group) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mh-fchip" + ((ctx.group || null) === group ? " on" : "");
+      b.textContent = label;
+      b.addEventListener("click", () => refineRecord({ group }));
+      return b;
+    };
+    filters.appendChild(chip("Everything", null));
+    (h.groups || []).forEach((g) => filters.appendChild(chip(g.label, g.key)));
+    if (recordCtx && recordCtx.targetUid) {
+      const clear = document.createElement("button");
+      clear.type = "button";
+      clear.className = "mh-fchip on clear";
+      const name =
+        (h.targets || []).find(
+          (t) => (t.uid || t.name) === recordCtx.targetUid,
+        ) || {};
+      clear.textContent = "only " + (name.name || "one user") + "  ×";
+      clear.title = "Show everyone again";
+      clear.addEventListener("click", () => refineRecord({ targetUid: null }));
+      filters.appendChild(clear);
+    }
+    wrap.appendChild(filters);
+
+    const list = divc("mh-list");
+    let lastDay = null;
+    (h.entries || []).forEach((e) => {
+      const k = dayKey(e.ts);
+      if (k !== lastDay) {
+        lastDay = k;
+        list.appendChild(span("mh-day", dayLabel(e.ts)));
+      }
+      list.appendChild(recordRow(e));
+    });
+    if (!h.entries || !h.entries.length)
+      list.appendChild(
         span(
-          "mh-ls",
-          h.windowTotal
-            ? "last " + h.windowDays + " days"
-            : "nothing in the last " + h.windowDays + " days",
+          "mh-none",
+          ctx.group || ctx.targetUid
+            ? "Nothing matching that filter in the last " + h.windowDays + " days."
+            : "Nothing in the last " + h.windowDays + " days.",
         ),
       );
-      wrap.appendChild(listHead);
+    wrap.appendChild(list);
 
-      const list = divc("mh-list");
-      (h.entries || []).forEach((e) => {
-        const row = divc("mh-row");
-        const cat = categorize(e);
-        const ic = divc("ico cat-" + cat);
-        ic.appendChild(icon(CAT[cat] ? CAT[cat].icon : "fa-circle-info"));
-        row.appendChild(ic);
-        const main = divc("mh-main");
-        const top = divc("mh-top");
-        top.appendChild(span("mh-act", e.action || "?"));
-        const when = span("mh-when", relTime(e.ts));
-        when.title = fmtTime(e.ts);
-        top.appendChild(when);
-        main.appendChild(top);
-        const det = recordRowDetail(e);
-        if (det.childNodes.length) main.appendChild(det);
-        if (e.details) main.appendChild(span("mh-det", e.details));
-        row.appendChild(main);
-        list.appendChild(row);
-      });
-      if (!h.entries || !h.entries.length)
-        list.appendChild(
-          span("mh-none", "Nothing in the last " + h.windowDays + " days."),
-        );
-      wrap.appendChild(list);
-
-      // ── Paging ──
-      const pages = Math.max(1, Math.ceil(h.windowTotal / h.limit));
+    // ── Paging ──
+    const shown = h.windowMatched != null ? h.windowMatched : h.windowTotal;
+    if (shown > h.limit) {
+      const pages = Math.max(1, Math.ceil(shown / h.limit));
       const page = Math.floor(h.offset / h.limit) + 1;
-      if (h.windowTotal > h.limit) {
-        const pager = divc("mh-pager");
-        const mk = (label, faIcon, atEnd, disabled, target) => {
-          const b = document.createElement("button");
-          b.className = "btn sm";
-          b.disabled = disabled;
-          if (!atEnd) b.appendChild(icon(faIcon));
-          b.appendChild(document.createTextNode(label));
-          if (atEnd) b.appendChild(icon(faIcon));
-          if (!disabled)
-            b.addEventListener("click", () => {
-              const card = document.querySelector(".tk-card");
-              const x = card && card.querySelector(".tk-x");
-              if (x) x.click();
-              openModHistory(
-                { label: h.label, rank: ctx.modLevel === 1 ? "l1" : h.role === "dev" ? "dev" : "l2" },
-                target,
-              );
-            });
-          return b;
-        };
-        pager.appendChild(
-          mk(" Newer", "fa-chevron-left", false, h.offset === 0, h.offset - h.limit),
-        );
-        pager.appendChild(
-          span(
-            null,
-            h.offset + 1 +
-              "-" +
-              Math.min(h.offset + h.limit, h.windowTotal) +
-              " of " +
-              h.windowTotal +
-              "  (page " + page + " of " + pages + ")",
-          ),
-        );
-        pager.appendChild(
-          mk(
-            "Older ",
-            "fa-chevron-right",
-            true,
-            h.offset + h.limit >= h.windowTotal,
-            h.offset + h.limit,
-          ),
-        );
-        wrap.appendChild(pager);
-      }
-      if (h.total > h.windowTotal)
-        wrap.appendChild(
-          span(
-            "mh-note",
-            "The list covers the last " +
-              h.windowDays +
-              " days. The totals above are for their whole time as staff and never reset.",
-          ),
-        );
+      const pager = divc("mh-pager");
+      const mk = (label, faIcon, atEnd, disabled, target) => {
+        const b = document.createElement("button");
+        b.className = "btn sm";
+        b.disabled = disabled;
+        if (!atEnd) b.appendChild(icon(faIcon));
+        b.appendChild(document.createTextNode(label));
+        if (atEnd) b.appendChild(icon(faIcon));
+        if (!disabled)
+          b.addEventListener("click", () =>
+            refineRecord({ offset: Math.max(0, target) }),
+          );
+        return b;
+      };
+      pager.appendChild(
+        mk(" Newer", "fa-chevron-left", false, h.offset === 0, h.offset - h.limit),
+      );
+      pager.appendChild(
+        span(
+          null,
+          h.offset +
+            1 +
+            "-" +
+            Math.min(h.offset + h.limit, shown) +
+            " of " +
+            shown +
+            "  (page " +
+            page +
+            " of " +
+            pages +
+            ")",
+        ),
+      );
+      pager.appendChild(
+        mk(
+          "Older ",
+          "fa-chevron-right",
+          true,
+          h.offset + h.limit >= shown,
+          h.offset + h.limit,
+        ),
+      );
+      wrap.appendChild(pager);
+    }
+    if (h.total > h.windowTotal)
+      wrap.appendChild(
+        span(
+          "mh-note",
+          "The list covers the last " +
+            h.windowDays +
+            " days. The figures above are for their whole time as staff and never reset.",
+        ),
+      );
+
+    return mountRecord(h, wrap, isDev, ctx);
+  }
+
+  // Opens the record, or swaps the contents of the one already open. Paging and
+  // filtering used to close and reopen the modal, which threw away the scroll
+  // position and flashed the whole card on every click.
+  function mountRecord(h, wrap, isDev, ctx) {
+    const rank = isDev
+      ? "Developer"
+      : ctx.modLevel === 1
+        ? "Junior moderator"
+        : "Moderator";
+    const subtitle = isDev
+      ? rank + "  ·  " + h.total + " actions logged"
+      : rank +
+        "  ·  " +
+        (h.onUsers || 0) +
+        " on users  ·  " +
+        h.total +
+        " logged in total";
+
+    const open = recordCtx && recordCtx.host;
+    if (open && open.isConnected) {
+      const body = open.parentNode;
+      const card = open.closest(".tk-card");
+      const sub = card && card.querySelector(".tk-sub");
+      if (sub) sub.textContent = subtitle;
+      body.replaceChild(wrap, open);
+      recordCtx.host = wrap;
+      // Land on the log, not back at the top of the card. Filtering or paging
+      // then leaves you looking at the thing you just asked for instead of
+      // scrolling past the summary again every time.
+      const anchor = wrap.querySelector(".mh-loghead");
+      if (anchor)
+        body.scrollTop +=
+          anchor.getBoundingClientRect().top - body.getBoundingClientRect().top;
+      else body.scrollTop = 0;
+      return;
     }
 
     StaffUI.modal({
       title: (h.label || "Staff") + "'s record",
       icon: '<i class="fas fa-clock-rotate-left"></i>',
-      subtitle:
-        (h.role === "dev" ? "Developer" : "Moderator") +
-        "  ·  " +
-        h.useful +
-        " actions of real work out of " +
-        h.total,
+      subtitle,
       xwide: true,
       body: wrap,
       actions: [{ label: "Close", kind: "primary", onClick: () => {} }],
+      onClose: () => {
+        recordCtx = null;
+      },
     });
+    if (recordCtx) recordCtx.host = wrap;
   }
 
   // ── Team workload ────────────────────────────────────────────────────────
@@ -1949,7 +2272,7 @@
 
     // Juniors past the bar, surfaced before the table so they are not missed.
     const ready = leaderboard.filter(
-      (s) => s.role !== "dev" && s.modLevel === 1 && s.useful >= PROMOTION_AT,
+      (s) => s.role !== "dev" && s.modLevel === 1 && s.onUsers >= PROMOTION_AT,
     );
     if (ready.length) {
       const banner = divc("promo-banner");
@@ -1967,16 +2290,18 @@
         span(
           "promo-body",
           ready
-            .map((s) => s.label + " (" + s.useful + " actions)")
+            .map((s) => s.label + " (" + s.onUsers + " on users)")
             .join(", ") +
-            ". Open their record to see what that work was before deciding. Promoting is a developer decision.",
+            ". Open their record and read what that work actually was before deciding - the record flags padding and grudges. Promoting is a developer decision.",
         ),
       );
       banner.appendChild(tx);
       wrap.appendChild(banner);
     }
 
-    const top = leaderboard[0].useful || 1;
+    // Ranked on work done to users, so a total padded with room renames and
+    // notes does not climb the board.
+    const top = leaderboard[0].onUsers || 1;
     const table = divc("board");
     leaderboard.slice(0, 12).forEach((s, i) => {
       const rank = s.role === "dev" ? "dev" : s.modLevel === 1 ? "l1" : "l2";
@@ -2001,8 +2326,14 @@
           rank === "dev" ? "DEV" : rank === "l1" ? "MOD L1" : "MOD L2",
         ),
       );
-      if (s.recentUseful)
-        meta.appendChild(span("board-recent", s.recentUseful + " in 30 days"));
+      if (s.recentOnUsers)
+        meta.appendChild(
+          span("board-recent", s.recentOnUsers + " on users in 30 days"),
+        );
+      else if (s.recentUseful)
+        meta.appendChild(
+          span("board-recent", s.recentUseful + " in 30 days, none on users"),
+        );
       who.appendChild(meta);
       row.appendChild(who);
 
@@ -2010,7 +2341,7 @@
       const barWrap = divc("board-barwrap");
       const bar = divc("board-bar");
       const fill = divc("board-fill");
-      fill.style.width = Math.max(2, Math.round((s.useful / top) * 100)) + "%";
+      fill.style.width = Math.max(2, Math.round((s.onUsers / top) * 100)) + "%";
       bar.appendChild(fill);
       barWrap.appendChild(bar);
       const split = divc("board-split");
@@ -2019,16 +2350,21 @@
         const b = span("board-bit " + cls, n + " " + label);
         split.appendChild(b);
       };
-      bit(s.enforcement, "on users", "b-enf");
-      bit(s.reviews, "reviews", "b-rev");
+      bit(s.onUsers, "on users", "b-enf");
+      bit(s.queues, "queues", "b-rev");
       bit(s.rooms, "rooms", "b-room");
+      bit(s.records, "notes", "b-rec");
       barWrap.appendChild(split);
       row.appendChild(barWrap);
 
       const n = divc("board-n");
-      n.appendChild(span("board-useful", String(s.useful)));
-      n.appendChild(span("board-unit", "actions"));
-      n.title = s.total + " including passive actions like spectating";
+      n.appendChild(span("board-useful", String(s.onUsers || 0)));
+      n.appendChild(span("board-unit", "on users"));
+      n.title =
+        s.useful +
+        " actions that were not passive, " +
+        s.total +
+        " logged in total. Only work that landed on a person is ranked here.";
       row.appendChild(n);
 
       row.addEventListener("click", () =>
@@ -4007,8 +4343,15 @@
 
   socket.on("staff mod history", (h) => renderModHistory(h));
 
-  socket.on("staff mod leaderboard", (list) => {
-    leaderboard = Array.isArray(list) ? list : [];
+  socket.on("staff mod leaderboard", (data) => {
+    // Older payloads were a bare array; the current one carries the promotion
+    // threshold alongside the board so client and server cannot disagree.
+    if (Array.isArray(data)) {
+      leaderboard = data;
+    } else {
+      leaderboard = Array.isArray(data?.board) ? data.board : [];
+      if (data?.promotionAt) PROMOTION_AT = data.promotionAt;
+    }
     renderLeaderboard();
   });
 

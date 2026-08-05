@@ -28,11 +28,16 @@
 //       Incremental rendering for live strokes. Distance-based point filtering.
 
 class Talkoboard {
-  constructor(socketRef, userId, username) {
+  constructor(socketRef, userId, username, staff) {
     this.socket = socketRef;
     this.userId = userId;
     this.username = username || "Anonymous";
     this.isOpen = false;
+    // Staff get one extra tool: tap a stroke to find out who drew it. The
+    // answer comes from the server, so this flag only decides whether the
+    // button is built - it grants nothing on its own.
+    this.isStaff = !!(staff && (staff.isDev || staff.isMod));
+    this.inspectActive = false;
 
     // ── Canvas state ────────────────────────────────────────────────
     this.canvas = null;
@@ -266,6 +271,18 @@ class Talkoboard {
     drawGroup.appendChild(this.panBtn);
     drawGroup.appendChild(this.penBtn);
     drawGroup.appendChild(this.eraserBtn);
+
+    // Staff only: point at something and find out who put it there, rather
+    // than clearing the whole board because one drawing has to go.
+    if (this.isStaff) {
+      this.inspectBtn = this.makeBtn(
+        "tb-tool-btn tb-icon-btn",
+        '<i class="fas fa-magnifying-glass"></i>',
+        "Who drew this? (staff)",
+      );
+      this.inspectBtn.addEventListener("click", () => this.setTool("inspect"));
+      drawGroup.appendChild(this.inspectBtn);
+    }
 
     // ── Group: color ────────────────────────────────────────────────
     const colorGroup = document.createElement("div");
@@ -940,9 +957,13 @@ class Talkoboard {
   setTool(name) {
     this.panMode = name === "pan";
     this.eraser = name === "eraser";
+    this.inspectActive = name === "inspect";
     this.penBtn.classList.toggle("active", name === "pen");
     this.eraserBtn.classList.toggle("active", name === "eraser");
     if (this.panBtn) this.panBtn.classList.toggle("active", name === "pan");
+    if (this.inspectBtn)
+      this.inspectBtn.classList.toggle("active", name === "inspect");
+    if (this.inspectActive) this.showHint("Tap a stroke to see who drew it");
     this.updateCursor();
   }
 
@@ -958,7 +979,7 @@ class Talkoboard {
     this.colorSwatch.style.background = color;
     if (this.colorInput) this.colorInput.value = this.normalizeHex(color);
     // Choosing a color switches you back to the pen
-    if (this.eraser || this.panMode) this.setTool("pen");
+    if (this.eraser || this.panMode || this.inspectActive) this.setTool("pen");
     this.updateSizeDot();
     this.updateCursor();
     this.updateGradientSelection();
@@ -972,7 +993,7 @@ class Talkoboard {
     this.gradient = stops.slice();
     this.colorSwatch.style.background =
       "linear-gradient(135deg, " + stops.join(", ") + ")";
-    if (this.eraser || this.panMode) this.setTool("pen");
+    if (this.eraser || this.panMode || this.inspectActive) this.setTool("pen");
     this.updateSizeDot();
     this.updateGradientSelection();
   }
@@ -1104,6 +1125,50 @@ class Talkoboard {
     } catch (_) {
       return null;
     }
+  }
+
+  // ── Hit testing (staff "who drew this") ─────────────────────────
+  // Topmost stroke whose line passes near a world point. Walks newest-first so
+  // the thing somebody just drew over the top is the thing that gets named.
+  // Tolerance grows with the brush and shrinks as you zoom in, so a hairline at
+  // 4x zoom is still tappable without a fat stroke swallowing its neighbours.
+  strokeAt(pt) {
+    if (!pt) return null;
+    const candidates = this.strokes.concat([
+      ...this.remoteActiveStrokes.values(),
+    ]);
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const s = candidates[i];
+      if (!s || !s.points || !s.points.length) continue;
+      const tol = Math.max((s.size || 3) / 2, 6 / this.zoom);
+      if (this.strokeHit(s, pt, tol)) return s;
+    }
+    return null;
+  }
+
+  strokeHit(stroke, pt, tol) {
+    const pts = stroke.points;
+    const tol2 = tol * tol;
+    if (pts.length === 1) {
+      const dx = pts[0].x - pt.x;
+      const dy = pts[0].y - pt.y;
+      return dx * dx + dy * dy <= tol2;
+    }
+    for (let i = 1; i < pts.length; i++) {
+      if (this.distToSegmentSq(pt, pts[i - 1], pts[i]) <= tol2) return true;
+    }
+    return false;
+  }
+
+  distToSegmentSq(p, a, b) {
+    const vx = b.x - a.x;
+    const vy = b.y - a.y;
+    const len2 = vx * vx + vy * vy;
+    let t = len2 === 0 ? 0 : ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const dx = p.x - (a.x + t * vx);
+    const dy = p.y - (a.y + t * vy);
+    return dx * dx + dy * dy;
   }
 
   showHint(text) {
@@ -1283,6 +1348,10 @@ class Talkoboard {
     if (!this.canvas) return;
     if (this.eyedropperActive) {
       this.canvas.style.cursor = "copy";
+      return;
+    }
+    if (this.inspectActive) {
+      this.canvas.style.cursor = "help";
       return;
     }
     this.canvas.style.cursor =
@@ -1693,6 +1762,23 @@ class Talkoboard {
       return;
     }
 
+    // Staff inspect: ask the server who owns the stroke under the tap. The
+    // tool stays on, so several drawings can be checked in a row.
+    if (this.inspectActive) {
+      const hit = this.strokeAt(this.getCanvasPoint(e));
+      if (!hit) {
+        this.showHint("Nothing there - tap on a line");
+        return;
+      }
+      if (hit.owner === this.userId) {
+        this.showHint("That one is yours");
+        return;
+      }
+      this.showHint("Checking...");
+      this.socket.emit("board who drew", { id: hit.id });
+      return;
+    }
+
     // Hand tool, space+click, or middle-click = pan the board
     if (this.panMode || this._spaceDown || e.button === 1) {
       this.isPanning = true;
@@ -1717,6 +1803,7 @@ class Talkoboard {
     const gradient = this.eraser ? null : this.gradient;
     this.currentStroke = {
       id,
+      owner: this.userId, // matches what the server stores, so lookups agree
       points: [pt],
       color: this.color,
       size: this.size,
@@ -1844,9 +1931,11 @@ class Talkoboard {
   handleRemoteStrokeStart(data) {
     if (data.userId === this.userId) return;
 
-    // Create a new active stroke for this remote user
+    // Create a new active stroke for this remote user. `owner` is kept so a
+    // stroke drawn live is as traceable as one loaded from server state.
     const stroke = {
       id: data.id,
+      owner: data.userId,
       points: [data.point],
       color: data.color || "#000000",
       size: data.size || 3,
@@ -2229,6 +2318,18 @@ class Talkoboard {
 
     // ── Full state sync ─────────────────────────────────────────────
     this.socket.on("board state", (data) => this.handleBoardState(data));
+
+    // ── Staff: answer to "who drew this" ────────────────────────────
+    this.socket.on("board stroke author", (data) => {
+      if (!data) return;
+      if (data.unknown || !data.userId)
+        return this.showHint("Whoever drew that is no longer traceable");
+      const name =
+        data.username || this.peerNames.get(data.userId) || "Someone";
+      this.showHint(
+        data.present ? name + " drew that" : name + " drew that, and has left",
+      );
+    });
 
     // ── Clear ────────────────────────────────────────────────────────
     this.socket.on("board clear", () => {

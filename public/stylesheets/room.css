@@ -275,7 +275,11 @@ html {
   font-size: 14px;
   padding: 8px;
   color: var(--tk-text);
-  background: linear-gradient(to bottom, var(--tk-border), var(--tk-userbar-bottom, #303030));
+  background: linear-gradient(
+    to bottom,
+    var(--tk-border),
+    var(--tk-userbar-bottom, #303030)
+  );
   display: flex;
   align-items: center;
 }
@@ -684,7 +688,11 @@ html {
 #modalTitle {
   margin-top: 0;
   margin-right: 30px; /* Space for the X button */
-  background: linear-gradient(to bottom, var(--tk-border), var(--tk-userbar-bottom, #303030));
+  background: linear-gradient(
+    to bottom,
+    var(--tk-border),
+    var(--tk-userbar-bottom, #303030)
+  );
   color: var(--tk-accent);
   padding: 10px 15px;
   border-radius: 4px 4px 0 0;
@@ -2911,7 +2919,6 @@ html {
   border-radius: 4px;
   object-fit: cover;
   margin-right: 6px;
-  border: 1px solid rgba(0, 0, 0, 0.4);
   flex-shrink: 0;
 }
 

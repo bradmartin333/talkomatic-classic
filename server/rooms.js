@@ -554,6 +554,17 @@ function getUserStaffRole(userId) {
   return null;
 }
 
+// True when the target is staff who have turned their flair off. A vanished dev
+// does not count: nobody can see them to vote in the first place.
+function isUserStaffHidden(userId) {
+  for (const s of findSocketsByUserId(userId)) {
+    if (!s.isDev && !s.isMod) continue;
+    if (s.isVanished) return false;
+    if (s.isHidden) return true;
+  }
+  return false;
+}
+
 // Resolve a target user's mod level from their live socket(s): 2 = full,
 // 1 = junior, 0 = not a mod.
 function getUserModLevel(userId) {
@@ -2172,8 +2183,11 @@ function joinRoom(socket, roomId, userId) {
         );
     }
 
+    // Staff sit in as many rooms at once as they have tabs open: watching three
+    // rooms is the job, and being bounced out of one to look at another was the
+    // main reason moderators spectated instead of joining.
     const isAnon = username === "Anonymous" && location === "On The Web";
-    if (!isAnon) {
+    if (!isAnon && !isStaff) {
       const curRoom = getUserCurrentRoom(userId);
       if (curRoom && curRoom !== roomId) {
         const name = state.rooms.get(curRoom)?.name || "Unknown";
@@ -2250,7 +2264,10 @@ function joinRoom(socket, roomId, userId) {
     // One active room tab per browser: pause any OTHER tab of this session that
     // is also in a room. Lobby-only tabs and the Mod Log are left alone, so a
     // user can watch the lobby in one tab and chat in another.
-    if (socket.handshake?.sessionID && !socket.isModLog) {
+    //
+    // Staff are exempt, otherwise the multi-room allowance above is undone the
+    // moment they open the second room: each new tab would kill the last.
+    if (socket.handshake?.sessionID && !socket.isModLog && !isStaff) {
       const sid = socket.handshake.sessionID;
       for (const [, other] of io().sockets.sockets) {
         if (other.id === socket.id || other.isBot || other.isModLog) continue;
@@ -2873,6 +2890,47 @@ function registerSocketHandlers(opts) {
           { userId: socket.handshake.session.userId, open: true },
           false,
         );
+      }),
+    );
+
+    // ── Talkoboard: who drew a stroke (staff only) ──────────────────────
+    // Every stroke already carries its author server-side, so a moderator
+    // looking at something they have to act on can find out who put it there
+    // instead of guessing or clearing the whole board. The lookup is by stroke
+    // id and answered from server state, so a client cannot fish for names, and
+    // a vanished dev stays invisible exactly as they are everywhere else.
+    socket.on(
+      "board who drew",
+      safe(async (data) => {
+        if (!socket.roomId) return;
+        if (!isStaffSocket(socket)) return;
+        const id = typeof data?.id === "string" ? data.id : null;
+        if (!id) return;
+
+        const bs = getBoardState(socket.roomId);
+        let stroke = bs.strokes.find((s) => s.id === id);
+        if (!stroke) {
+          for (const [, s] of bs.active) {
+            if (s && s.id === id) {
+              stroke = s;
+              break;
+            }
+          }
+        }
+        if (!stroke || !stroke.owner)
+          return socket.emit("board stroke author", { id, unknown: true });
+
+        const room = state.rooms.get(socket.roomId);
+        const user = room?.users?.find((u) => u.id === stroke.owner);
+        if (user && !canRecipientSeeDevUser(socket, user))
+          return socket.emit("board stroke author", { id, unknown: true });
+
+        socket.emit("board stroke author", {
+          id,
+          userId: stroke.owner,
+          username: user ? user.username : null,
+          present: !!user,
+        });
       }),
     );
 
@@ -3521,7 +3579,10 @@ function registerSocketHandlers(opts) {
           );
         }
 
+        // Staff can already sit in several rooms at once (see joinRoom), so the
+        // one-room limit does not apply to opening another one either.
         if (
+          !creatorIsStaff &&
           getUsernameLocationRoomsCount(username, location, userId) >=
           CONFIG.LIMITS.MAX_ROOMS_PER_USER
         )
@@ -3529,7 +3590,10 @@ function registerSocketHandlers(opts) {
             "error",
             createErrorResponse(ERROR_CODES.FORBIDDEN, "Already in a room."),
           );
-        if (getUserRoomsCount(userId) >= CONFIG.LIMITS.MAX_ROOMS_PER_USER)
+        if (
+          !creatorIsStaff &&
+          getUserRoomsCount(userId) >= CONFIG.LIMITS.MAX_ROOMS_PER_USER
+        )
           return socket.emit(
             "error",
             createErrorResponse(ERROR_CODES.FORBIDDEN, "Already in a room."),
@@ -3691,8 +3755,11 @@ function registerSocketHandlers(opts) {
         username = username || "Anonymous";
         location = location || "On The Web";
 
+        // Early copy of the one-room-at-a-time rule, so a normal user is turned
+        // away before any of the join work happens. Staff are exempt here for
+        // the same reason as in joinRoom: watching several rooms is the job.
         const isAnon = username === "Anonymous" && location === "On The Web";
-        if (!isAnon) {
+        if (!isAnon && !socket.isDev && !socket.isMod) {
           const cur = getUserCurrentRoom(userId);
           if (cur && cur !== data.roomId) {
             const n = state.rooms.get(cur)?.name || "Unknown";
@@ -3769,8 +3836,16 @@ function registerSocketHandlers(opts) {
         // Votes are only accepted at or above the minimum room size
         if (room.users.length < CONFIG.LIMITS.MIN_USERS_FOR_VOTING) return;
         if (!room.users.find((u) => u.id === data.targetUserId)) return;
-        // Staff cannot be vote-kicked - mods and devs are immune.
-        if (getUserStaffRole(data.targetUserId)) return;
+        // Staff wearing their badge cannot be vote-kicked. Turning the flair off
+        // gives that up: while they are passing as a normal user they take a
+        // normal user's dislikes, which is the whole point of hiding. They can
+        // walk back into the room afterwards (staff ignore the room ban list),
+        // so the worst case is being told to put the badge back on.
+        if (
+          getUserStaffRole(data.targetUserId) &&
+          !isUserStaffHidden(data.targetUserId)
+        )
+          return;
         if (!room.votes) room.votes = {};
         if (room.votes[userId] === data.targetUserId) delete room.votes[userId];
         else room.votes[userId] = data.targetUserId;
@@ -4096,13 +4171,23 @@ function registerSocketHandlers(opts) {
         }
 
         const userId = socket.handshake.session?.userId;
-        if (userId && socket.roomId) {
-          const room = state.rooms.get(socket.roomId);
-          const user = room?.users?.find((u) => u.id === userId);
-          if (user) user.isHidden = desired;
-          updateRoom(socket.roomId);
+        if (userId) {
+          // Staff can hold several rooms open at once, so every socket and every
+          // room they are sitting in has to agree about the flair. Missing one
+          // leaves a tab still wearing the badge - and, because hidden staff are
+          // votable, leaves it unclear which way round they are.
+          for (const s of findSocketsByUserId(userId)) {
+            s.isHidden = desired;
+            if (s !== socket) s.emit("dev hide status", { isHidden: desired });
+          }
+          for (const [rid, room] of state.rooms) {
+            const user = room?.users?.find((u) => u.id === userId);
+            if (!user) continue;
+            user.isHidden = desired;
+            updateRoom(rid);
+            sendDevRoomContext(rid);
+          }
           updateLobby();
-          sendDevRoomContext(socket.roomId);
         }
         socket.emit("dev hide status", { isHidden: desired });
       }),
@@ -6011,6 +6096,8 @@ function registerSocketHandlers(opts) {
         const h = audit.historyFor(label, role, {
           offset: data?.offset,
           limit: data?.limit,
+          group: typeof data?.group === "string" ? data.group : null,
+          targetUid: typeof data?.targetUid === "string" ? data.targetUid : null,
         });
         socket.emit("staff mod history", {
           ...h,
@@ -6038,13 +6125,13 @@ function registerSocketHandlers(opts) {
         const levelByLabel = new Map(
           roles.listModKeys().map((k) => [k.label, k.level]),
         );
-        socket.emit(
-          "staff mod leaderboard",
-          board.map((s) => ({
+        socket.emit("staff mod leaderboard", {
+          promotionAt: audit.PROMOTION_AT,
+          board: board.map((s) => ({
             ...s,
             modLevel: s.role === "dev" ? 0 : levelByLabel.get(s.label) || 2,
           })),
-        );
+        });
       }),
     );
 
