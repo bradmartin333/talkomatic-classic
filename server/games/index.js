@@ -351,6 +351,8 @@ function seatPlayer(f, t, user) {
     rules.addPlayer(t.game, { userId: user.userId, username: user.username });
   }
   say(t, `${user.username} joined`);
+  // Catch them up on the canvas, once.
+  if (t.game) syncCanvas(t.roomId, user.userId, t.id);
 }
 
 function unseatPlayer(f, t, userId) {
@@ -477,6 +479,33 @@ function pump(f, type) {
       break;
     }
     maybeStart(f, t);
+    if (t.state === "open") emitTable(t);
+  }
+
+  // One person left over with nowhere to sit gets their own board and waits
+  // there, instead of watching a queue position on the floor. Only when this
+  // game has nothing else running: if a board already exists, they queue for
+  // it so the winner-stays rotation still feeds off the line.
+  if (
+    pool.length &&
+    !tablesOfType(f, type).length &&
+    f.tables.size < MAX_TABLES_PER_ROOM
+  ) {
+    const t = createTable(f, type);
+    while (pool.length && t.seats.length < rules.maxPlayers) {
+      const uid = pool.shift();
+      const u = deps.userInfo(f.roomId, uid);
+      if (!u) continue;
+      seatPlayer(f, t, u);
+    }
+    if (!t.seats.length) {
+      f.tables.delete(t.id);
+      return;
+    }
+    maybeStart(f, t);
+    // Hand them their board even though it cannot start yet, so they wait at
+    // it rather than on the floor.
+    if (t.state === "open") emitTable(t);
   }
 }
 
@@ -767,6 +796,26 @@ function voteRemove(roomId, userId, tableId, targetUserId) {
   return { ok: true };
 }
 
+// The drawing canvas is sent once on join and then kept current by deltas.
+// This is the "catch me up" call for a joiner, a watcher, or a client that
+// spots a gap in the revision numbers.
+function syncCanvas(roomId, userId, tableId) {
+  const f = floorFor(roomId);
+  const t = f.tables.get(tableId);
+  if (!t || !t.game) return { ok: true };
+  const rules = rulesFor(t.type);
+  if (!rules || !rules.snapshotStrokes) return { ok: true };
+  if (!audienceOf(t).has(userId)) return { ok: true };
+  const snap = rules.snapshotStrokes(t.game);
+  toUser(roomId, userId, "games relay", {
+    tableId: t.id,
+    kind: "strokes",
+    strokes: snap.strokes,
+    rev: snap.rev,
+  });
+  return { ok: true };
+}
+
 function isPlaying(roomId, userId) {
   const f = floors.get(roomId);
   if (!f) return false;
@@ -865,13 +914,38 @@ function makeMove(roomId, userId, tableId, mv) {
   // instead of resending the board to everyone.
   if (out.relay) emitRelay(t, out.relay);
   if (out.quiet) {
-    // Only the mover's own view changed.
-    toUser(roomId, userId, "games table", tableDetail(t, userId));
+    // Only the mover's own view changed, and only some moves need it resent.
+    // Strokes do not: the relay above already carries them.
+    if (out.selfPush)
+      toUser(roomId, userId, "games table", tableDetail(t, userId));
   } else {
     armTurn(t);
     emitTable(t);
   }
   return { ok: true, ...out };
+}
+
+// A drag arrives as a batch. Applying them one at a time meant one broadcast
+// per segment; this applies the lot and sends a single relay.
+function drawStrokes(roomId, userId, tableId, segments) {
+  const f = floorFor(roomId);
+  const t = f.tables.get(tableId);
+  if (!t || t.state !== "playing" || !t.game) return { err: "No game running." };
+  const rules = rulesFor(t.type);
+  const applied = [];
+  for (const seg of segments) {
+    const out = rules.move(t.game, userId, { kind: "stroke", stroke: seg });
+    if (!out.ok) break;
+    if (out.relay && out.relay.stroke) applied.push(out.relay.stroke);
+  }
+  if (!applied.length) return { ok: true };
+  t.misses.delete(userId);
+  emitRelay(t, {
+    kind: "strokeBatch",
+    strokes: applied,
+    rev: rules.snapshotStrokes ? rules.snapshotStrokes(t.game).rev : 0,
+  });
+  return { ok: true };
 }
 
 function rematch(roomId, userId, tableId) {
@@ -896,7 +970,10 @@ function spectate(roomId, userId, tableId, on) {
     return { err: "You are playing in this one." };
   if (on) t.spectators.add(userId);
   else t.spectators.delete(userId);
-  if (on) toUser(roomId, userId, "games table", tableDetail(t, userId));
+  if (on) {
+    toUser(roomId, userId, "games table", tableDetail(t, userId));
+    syncCanvas(roomId, userId, t.id);
+  }
   emitFloor(roomId);
   return { ok: true };
 }
@@ -1186,6 +1263,8 @@ module.exports = {
   chat,
   typing,
   voteRemove,
+  drawStrokes,
+  syncCanvas,
   isPlaying,
   userLeftRoom,
   roomClosed,

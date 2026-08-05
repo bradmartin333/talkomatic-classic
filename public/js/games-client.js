@@ -798,6 +798,7 @@
 
       const split = el("div", { class: "gm-split" });
       const main = el("div", { class: "gm-main" });
+      main.appendChild(el("div", { class: "gm-waitslot", id: "gmWait" }));
       const sideEl = el("div", { class: "gm-side" });
       split.appendChild(main);
       split.appendChild(sideEl);
@@ -811,10 +812,22 @@
     }
 
     paintBanner(t);
+    paintWaiting(t);
     paintTurn(t);
     paintActs(t);
     if (board) board.update(t);
     if (side) side.update(t);
+  }
+
+  function paintWaiting(t) {
+    const slot = overlay.querySelector("#gmWait");
+    if (!slot) return;
+    const main = slot.parentNode;
+    slot.textContent = "";
+    // Only when the board itself cannot run yet, never mid-match.
+    const short = t.state === "open" && !t.game && !t.reservedFor;
+    main.classList.toggle("gm-main-waiting", short);
+    if (short) slot.appendChild(waitingPanel(t));
   }
 
   // The result, said plainly and at full width. Nobody should have to work out
@@ -947,6 +960,54 @@
         el("button", { class: "gm-btn", text: "Stop watching", onclick: backToFloor }),
       );
     }
+  }
+
+  // Shown in place of the board while a game is short of players, so somebody
+  // who started one sits at their own board instead of watching a queue number.
+  function waitingPanel(t) {
+    const g = gameById(t.type);
+    const box = el("div", { class: "gm-waiting" });
+    box.appendChild(el("div", { class: "gm-waiting-pulse" }));
+    box.appendChild(
+      el("div", { class: "gm-waiting-head", text: "Waiting for someone to join" }),
+    );
+    const need = g && g.maxPlayers === 2 ? "one more player" : "another player";
+    box.appendChild(
+      el("div", {
+        class: "gm-waiting-sub",
+        text:
+          "Your board is set up and needs " + need +
+          ". Anyone in the room can jump in, or you can ask somebody by name.",
+      }),
+    );
+    const acts = el("div", { class: "gm-waiting-acts" });
+    if (g && g.turnBased && g.maxPlayers === 2)
+      acts.appendChild(
+        el("button", {
+          class: "gm-btn gm-btn-primary",
+          text: "Challenge someone",
+          onclick: () => showChallengePicker(g),
+        }),
+      );
+    acts.appendChild(
+      el("button", {
+        class: "gm-btn",
+        text: "Leave",
+        onclick: () => {
+          S.emit("games leave", { tableId: t.id });
+          backToFloor();
+        },
+      }),
+    );
+    box.appendChild(acts);
+    if (t.streak && t.streak.n > 1)
+      box.appendChild(
+        el("div", {
+          class: "gm-waiting-streak",
+          text: "You are on " + t.streak.n + " wins in a row.",
+        }),
+      );
+    return box;
   }
 
   // ── Side panel: who is here, and the chat ─────────────────────────────────
@@ -1454,6 +1515,11 @@
     let strokes = [];
     let painted = 0;
     let startNext = true;
+    // Revision the server stamps on each canvas change. Local strokes are drawn
+    // optimistically and counted here too, so a state push arriving while a
+    // batch is still in flight cannot roll the canvas back.
+    let rev = -1;
+    let syncing = false;
 
     function clearCanvas() {
       ctx.fillStyle = "#fdf5e6";
@@ -1646,15 +1712,37 @@
         if (flushTimer) clearTimeout(flushTimer);
       },
       relay(payload) {
-        if (payload.kind === "stroke") {
+        if (payload.kind === "strokeBatch") {
+          // Our own segments are already on screen; just move the revision on.
+          if (detail && detail.game && detail.game.amDrawer) {
+            rev = payload.rev;
+            return;
+          }
+          const segs = payload.strokes || [];
+          for (const seg of segs) {
+            strokes.push(seg);
+            drawSeg(seg);
+          }
+          painted = strokes.length;
+          rev = payload.rev;
+        } else if (payload.kind === "stroke") {
+          if (detail && detail.game && detail.game.amDrawer) {
+            rev = payload.rev;
+            return;
+          }
           strokes.push(payload.stroke);
           drawSeg(payload.stroke);
           painted = strokes.length;
+          rev = payload.rev;
         } else if (payload.kind === "clear") {
           strokes = [];
+          rev = payload.rev;
           repaint();
         } else if (payload.kind === "strokes") {
+          // A full canvas: the answer to a sync, or an undo.
           strokes = payload.strokes || [];
+          rev = payload.rev;
+          syncing = false;
           repaint();
         }
       },
@@ -1677,9 +1765,15 @@
         }
         resize();
 
-        if (g.strokeCount !== painted) {
-          strokes = g.strokes || [];
-          repaint();
+        // Never rebuild the canvas from a state push. Ask for a fresh copy
+        // only when the revision says we actually missed something and we have
+        // nothing of our own still in flight.
+        if (rev === -1 || (g.rev > rev && !pending.length && !drawing)) {
+          if (!syncing) {
+            syncing = true;
+            S.emit("games draw", { tableId: detail.id, kind: "sync" });
+            setTimeout(() => { syncing = false; }, 1500);
+          }
         }
 
         progEl.textContent = "";
@@ -1693,6 +1787,17 @@
           fill.style.width = Math.round((g.turn / g.totalTurns) * 100) + "%";
           bar.appendChild(fill);
           progEl.appendChild(bar);
+        }
+
+        // A new turn wipes the canvas straight away rather than leaving the
+        // last drawing up until the sync comes back.
+        if (
+          (g.phase === "choosing" || g.phase === "waiting") &&
+          strokes.length &&
+          !g.strokeCount
+        ) {
+          strokes = [];
+          repaint();
         }
 
         promptEl.textContent = "";

@@ -103,18 +103,22 @@ function register(socket, safe) {
       const tableId = String((data && data.tableId) || "");
       const kind = (data && data.kind) || "stroke";
 
+      if (kind === "sync") {
+        floor.syncCanvas(socket.roomId, u.userId, tableId);
+        return;
+      }
       if (kind === "clear" || kind === "undo") {
         floor.makeMove(socket.roomId, u.userId, tableId, { kind });
         return;
       }
       const segs = Array.isArray(data && data.segments) ? data.segments : [];
-      for (const s of segs.slice(0, DRAW_SEGMENTS_PER_MSG)) {
-        const out = floor.makeMove(socket.roomId, u.userId, tableId, {
-          kind: "stroke",
-          stroke: s,
-        });
-        if (out && out.err) return; // not the drawer, or the phase moved on
-      }
+      if (!segs.length) return;
+      floor.drawStrokes(
+        socket.roomId,
+        u.userId,
+        tableId,
+        segs.slice(0, DRAW_SEGMENTS_PER_MSG),
+      );
     }),
   );
 

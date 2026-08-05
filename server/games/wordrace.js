@@ -170,6 +170,7 @@ function move(state, userId, mv) {
   return {
     ok: true,
     quiet: true,
+    selfPush: true, // their private word list changed, so they need a resend
     accepted: raw,
     pts: points(raw),
     relay: {

@@ -792,6 +792,49 @@
 .gm-chat-input:focus { outline: none; border-color: var(--primary, var(--tk-accent)); }
 .gm-chat-send { padding: 9px 13px; }
 
+/* Waiting for a second player: the board is hidden and this takes its place */
+
+.gm-waitslot { display: none; width: 100%; }
+.gm-main-waiting .gm-waitslot { display: block; }
+.gm-main-waiting .gm-board { display: none; }
+
+.gm-waiting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  padding: 40px 24px;
+  border: 1px dashed var(--tk-border);
+  border-radius: 8px;
+  background: var(--room-background-color, #000);
+}
+
+.gm-waiting-pulse {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 2px solid var(--primary, var(--tk-accent));
+  animation: gmPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes gmPulse {
+  0%, 100% { transform: scale(0.86); opacity: 0.45; }
+  50% { transform: scale(1); opacity: 1; }
+}
+
+.gm-waiting-head { font-size: 19px; font-weight: bold; color: var(--tk-text); }
+
+.gm-waiting-sub {
+  font-size: 13px;
+  color: var(--tk-muted);
+  max-width: 380px;
+  line-height: 1.5;
+}
+
+.gm-waiting-acts { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.gm-waiting-streak { font-size: 12px; color: #ffc107; font-weight: bold; }
+
 /* ── Shared board bits ── */
 
 .gm-youare {

@@ -54,6 +54,7 @@ function create(players) {
     endsAt: 0,
     guessed: [], // { userId, username, pts, at }
     strokes: [],
+    rev: 0, // bumped on every canvas change, so a client can spot a gap
     used: [],
     over: false,
   };
@@ -84,6 +85,7 @@ function pickDrawer(state, exclude) {
 function advance(state) {
   state.guessed = [];
   state.strokes = [];
+  state.rev++;
   state.word = null;
   state.choices = [];
 
@@ -229,13 +231,19 @@ function move(state, userId, mv) {
     const s = sanitizeStroke(mv.stroke);
     if (!s) return { ok: false, err: "Bad stroke." };
     state.strokes.push(s);
-    return { ok: true, quiet: true, relay: { kind: "stroke", stroke: s } };
+    state.rev++;
+    return {
+      ok: true,
+      quiet: true,
+      relay: { kind: "stroke", stroke: s, rev: state.rev },
+    };
   }
 
   if (kind === "clear") {
     if (!isDrawer) return { ok: false, err: "You are not drawing." };
     state.strokes = [];
-    return { ok: true, quiet: true, relay: { kind: "clear" } };
+    state.rev++;
+    return { ok: true, quiet: true, relay: { kind: "clear", rev: state.rev } };
   }
 
   if (kind === "undo") {
@@ -246,10 +254,11 @@ function move(state, userId, mv) {
     let i = end - 1;
     while (i > 0 && !state.strokes[i].start) i--;
     state.strokes = state.strokes.slice(0, i);
+    state.rev++;
     return {
       ok: true,
       quiet: true,
-      relay: { kind: "strokes", strokes: state.strokes },
+      relay: { kind: "strokes", strokes: state.strokes, rev: state.rev },
     };
   }
 
@@ -464,7 +473,10 @@ function view(state, userId) {
       amDrawer && state.phase === "choosing"
         ? state.choices.map(prettyPrompt)
         : null,
-    strokes: state.strokes,
+    // Deliberately no stroke array here: it is sent once on join and then
+    // kept up to date by deltas. Shipping it on every push meant serialising
+    // thousands of segments per viewer per change.
+    rev: state.rev,
     strokeCount: state.strokes.length,
     guessed: state.guessed.map((g) => ({
       userId: g.userId,
@@ -490,6 +502,10 @@ function view(state, userId) {
       })),
     over: state.over,
   };
+}
+
+function snapshotStrokes(state) {
+  return { strokes: state.strokes, rev: state.rev };
 }
 
 module.exports = {
@@ -519,5 +535,6 @@ module.exports = {
   view,
   addPlayer,
   removePlayer,
+  snapshotStrokes,
   rounds,
 };
