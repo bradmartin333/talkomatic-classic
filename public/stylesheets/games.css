@@ -18,8 +18,12 @@
 }
 
 @keyframes gmFadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .gm-modal {
@@ -47,7 +51,9 @@
   flex-shrink: 0;
 }
 
-.gm-title-wrap { min-width: 0; }
+.gm-title-wrap {
+  min-width: 0;
+}
 
 .gm-title {
   color: var(--primary, var(--tk-accent));
@@ -55,11 +61,23 @@
   font-weight: bold;
 }
 
-.gm-title i { margin-right: 10px; color: #ffc107; }
+.gm-title i {
+  margin-right: 10px;
+  color: #ffc107;
+}
 
-.gm-sub { color: var(--tk-detail); font-size: 12px; margin-top: 3px; }
+.gm-sub {
+  color: var(--tk-detail);
+  font-size: 12px;
+  margin-top: 3px;
+}
 
-.gm-stats { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.gm-stats {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
 
 .gm-chip {
   display: inline-flex;
@@ -75,9 +93,15 @@
   white-space: nowrap;
 }
 
-.gm-chip i { color: #ffc107; }
-.gm-chip-live i { color: var(--tk-success, #4caf50); }
-.gm-chip-queue i { color: var(--tk-detail); }
+.gm-chip i {
+  color: #ffc107;
+}
+.gm-chip-live i {
+  color: var(--tk-success, #4caf50);
+}
+.gm-chip-queue i {
+  color: var(--tk-detail);
+}
 
 .gm-close {
   background: none;
@@ -90,7 +114,9 @@
   transition: color 0.15s ease;
 }
 
-.gm-close:hover { color: var(--primary, var(--tk-accent)); }
+.gm-close:hover {
+  color: var(--primary, var(--tk-accent));
+}
 
 .gm-strip {
   background: var(--known-as-section-background-color, var(--tk-cream));
@@ -111,11 +137,15 @@
 .gm-body::-webkit-scrollbar,
 .gm-main::-webkit-scrollbar,
 .gm-chat-log::-webkit-scrollbar,
-.gm-players::-webkit-scrollbar { width: 9px; }
+.gm-players::-webkit-scrollbar {
+  width: 9px;
+}
 .gm-body::-webkit-scrollbar-track,
 .gm-main::-webkit-scrollbar-track,
 .gm-chat-log::-webkit-scrollbar-track,
-.gm-players::-webkit-scrollbar-track { background: transparent; }
+.gm-players::-webkit-scrollbar-track {
+  background: transparent;
+}
 .gm-body::-webkit-scrollbar-thumb,
 .gm-main::-webkit-scrollbar-thumb,
 .gm-chat-log::-webkit-scrollbar-thumb,
@@ -137,7 +167,10 @@
   font-family: inherit;
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .gm-btn:hover:not(:disabled) {
@@ -145,7 +178,10 @@
   border-color: var(--tk-border);
 }
 
-.gm-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.gm-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
 
 .gm-btn-primary {
   background: var(--tk-card);
@@ -157,8 +193,13 @@
   color: var(--tk-card);
 }
 
-.gm-btn-ghost { color: var(--tk-muted); font-weight: normal; }
-.gm-btn-ghost:hover:not(:disabled) { color: var(--tk-text); }
+.gm-btn-ghost {
+  color: var(--tk-muted);
+  font-weight: normal;
+}
+.gm-btn-ghost:hover:not(:disabled) {
+  color: var(--tk-text);
+}
 .gm-btn-danger:hover:not(:disabled) {
   color: var(--tk-error, #ff5252);
   border-color: var(--tk-error, #ff5252);
@@ -178,7 +219,9 @@
   margin: 24px 0 10px;
 }
 
-.gm-section i { color: #ffc107; }
+.gm-section i {
+  color: #ffc107;
+}
 
 .gm-section-badge {
   background: var(--tk-tile);
@@ -187,9 +230,19 @@
   letter-spacing: 0;
 }
 
-.gm-empty { text-align: center; color: var(--tk-muted); padding: 44px 0; font-size: 15px; }
-.gm-empty i { font-size: 38px; color: #ffc107; }
-.gm-empty p { margin: 14px 0 0; }
+.gm-empty {
+  text-align: center;
+  color: var(--tk-muted);
+  padding: 44px 0;
+  font-size: 15px;
+}
+.gm-empty i {
+  font-size: 38px;
+  color: #ffc107;
+}
+.gm-empty p {
+  margin: 14px 0 0;
+}
 
 /* ── Game picker cards ──
    One column, three rows: title row, action row, small print row. The icon
@@ -213,12 +266,20 @@
   transition: border-color 0.15s ease;
 }
 
-.gm-card:hover { border-color: var(--primary, var(--tk-accent)); }
-.gm-card-mine { border-color: var(--primary, var(--tk-accent)); }
+.gm-card:hover {
+  border-color: var(--primary, var(--tk-accent));
+}
+.gm-card-mine {
+  border-color: var(--primary, var(--tk-accent));
+}
 
 /* Row 1 */
 
-.gm-card-top { display: flex; align-items: center; gap: 13px; }
+.gm-card-top {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
 
 .gm-card-icon {
   font-size: 30px;
@@ -233,10 +294,20 @@
   border-radius: 8px;
 }
 
-.gm-card-icon img { width: 30px; height: 30px; object-fit: contain; }
-.gm-card-icon i { font-size: 24px; color: var(--primary, var(--tk-accent)); }
+.gm-card-icon img {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+}
+.gm-card-icon i {
+  font-size: 24px;
+  color: var(--primary, var(--tk-accent));
+}
 
-.gm-card-text { flex: 1; min-width: 0; }
+.gm-card-text {
+  flex: 1;
+  min-width: 0;
+}
 
 .gm-card-name {
   display: flex;
@@ -257,8 +328,14 @@
 
 /* Row 2: the action, and who is in there */
 
-.gm-card-mid { display: flex; align-items: center; gap: 11px; }
-.gm-card-mid > .gm-btn { flex-shrink: 0; }
+.gm-card-mid {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.gm-card-mid > .gm-btn {
+  flex-shrink: 0;
+}
 
 .gm-card-who {
   display: flex;
@@ -269,7 +346,10 @@
   color: var(--tk-muted);
 }
 
-.gm-card-who b { color: var(--tk-text); white-space: nowrap; }
+.gm-card-who b {
+  color: var(--tk-text);
+  white-space: nowrap;
+}
 
 .gm-card-names {
   color: var(--tk-muted);
@@ -287,8 +367,12 @@
   flex-shrink: 0;
 }
 
-.gm-dot-live { background: var(--tk-success, #4caf50); }
-.gm-dot-wait { background: #ffc107; }
+.gm-dot-live {
+  background: var(--tk-success, #4caf50);
+}
+.gm-dot-wait {
+  background: #ffc107;
+}
 
 /* Row 3: small print and inviting somebody */
 
@@ -302,7 +386,13 @@
   margin-top: auto; /* pins the row to the bottom of a stretched card */
 }
 
-.gm-card-tags { display: flex; gap: 5px; flex-wrap: wrap; flex: 1; min-width: 0; }
+.gm-card-tags {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
 
 .gm-tag {
   font-size: 10px;
@@ -316,7 +406,11 @@
   white-space: nowrap;
 }
 
-.gm-card-invite { padding: 6px 12px; font-size: 12px; flex-shrink: 0; }
+.gm-card-invite {
+  padding: 6px 12px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
 
 /* ── Loading ── */
 
@@ -341,12 +435,23 @@
 }
 
 @keyframes gmSpin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-.gm-loading-text { color: var(--tk-text); font-size: 15px; font-weight: bold; }
-.gm-loading-sub { color: var(--tk-muted); font-size: 12px; }
-.gm-hidden { visibility: hidden; }
+.gm-loading-text {
+  color: var(--tk-text);
+  font-size: 15px;
+  font-weight: bold;
+}
+.gm-loading-sub {
+  color: var(--tk-muted);
+  font-size: 12px;
+}
+.gm-hidden {
+  visibility: hidden;
+}
 
 /* How to play */
 
@@ -361,10 +466,19 @@
   transition: color 0.15s ease;
 }
 
-.gm-help:hover { color: var(--primary, var(--tk-accent)); }
-.gm-help-bar { font-size: 16px; padding: 4px 6px; }
+.gm-help:hover {
+  color: var(--primary, var(--tk-accent));
+}
+.gm-help-bar {
+  font-size: 16px;
+  padding: 4px 6px;
+}
 
-.gm-howto { display: flex; flex-direction: column; gap: 11px; }
+.gm-howto {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
 
 .gm-howto-step {
   display: flex;
@@ -403,10 +517,22 @@
   vertical-align: middle;
 }
 
-.gm-staff-dev { background: var(--primary, var(--tk-accent)); color: #000; }
-.gm-staff-dev img { width: 11px; height: 11px; }
-.gm-staff-mod { background: #5aa9ff; color: #001229; }
-.gm-staff-jr { background: #c08bff; color: #16002b; }
+.gm-staff-dev {
+  background: var(--primary, var(--tk-accent));
+  color: #000;
+}
+.gm-staff-dev img {
+  width: 11px;
+  height: 11px;
+}
+.gm-staff-mod {
+  background: #5aa9ff;
+  color: #001229;
+}
+.gm-staff-jr {
+  background: #c08bff;
+  color: #16002b;
+}
 
 .gm-pfp {
   width: 22px;
@@ -417,12 +543,27 @@
   flex-shrink: 0;
 }
 
-.gm-pfp-sm { width: 16px; height: 16px; border-radius: 3px; vertical-align: -3px; margin-right: 5px; }
-.gm-trophy { width: 14px; height: 14px; flex-shrink: 0; }
+.gm-pfp-sm {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  vertical-align: -3px;
+  margin-right: 5px;
+}
+.gm-trophy {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
 
 /* Solo games in a frame */
 
-.gm-body-solo { display: flex; flex-direction: column; overflow: hidden; padding-top: 12px; }
+.gm-body-solo {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-top: 12px;
+}
 
 .gm-solo-wrap {
   flex: 1;
@@ -434,15 +575,31 @@
   background: var(--tk-card);
 }
 
-.gm-solo-frame { width: 100%; height: 100%; border: 0; display: block; }
-.gm-card-solo .gm-card-icon img { border-radius: 6px; }
+.gm-solo-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+.gm-card-solo .gm-card-icon img {
+  border-radius: 6px;
+}
 
-.gm-card-blurb { color: var(--tk-muted); font-size: 12px; margin-top: 2px; line-height: 1.4; }
+.gm-card-blurb {
+  color: var(--tk-muted);
+  font-size: 12px;
+  margin-top: 2px;
+  line-height: 1.4;
+}
 
 /* The "who is in there" line, the thing people actually scan for */
 /* ── Running game rows ── */
 
-.gm-rows { display: flex; flex-direction: column; gap: 8px; }
+.gm-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 
 .gm-row {
   display: flex;
@@ -455,8 +612,12 @@
   transition: border-color 0.15s ease;
 }
 
-.gm-row:hover { border-color: var(--primary, var(--tk-accent)); }
-.gm-row-mine { border-color: var(--primary, var(--tk-accent)); }
+.gm-row:hover {
+  border-color: var(--primary, var(--tk-accent));
+}
+.gm-row-mine {
+  border-color: var(--primary, var(--tk-accent));
+}
 .gm-row-icon {
   font-size: 22px;
   width: 32px;
@@ -467,9 +628,19 @@
   justify-content: center;
 }
 
-.gm-row-icon img { width: 26px; height: 26px; object-fit: contain; }
-.gm-row-icon i { font-size: 20px; color: var(--primary, var(--tk-accent)); }
-.gm-row-mid { flex: 1; min-width: 0; }
+.gm-row-icon img {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+.gm-row-icon i {
+  font-size: 20px;
+  color: var(--primary, var(--tk-accent));
+}
+.gm-row-mid {
+  flex: 1;
+  min-width: 0;
+}
 
 .gm-row-title {
   display: flex;
@@ -499,7 +670,12 @@
   padding: 1px 6px;
 }
 
-.gm-row-who { color: var(--tk-muted); font-size: 13px; margin-top: 3px; word-break: break-word; }
+.gm-row-who {
+  color: var(--tk-muted);
+  font-size: 13px;
+  margin-top: 3px;
+  word-break: break-word;
+}
 
 .gm-row-meta {
   display: flex;
@@ -511,9 +687,18 @@
   margin-top: 4px;
 }
 
-.gm-streak { color: #ffc107; font-weight: bold; }
-.gm-count { font-variant-numeric: tabular-nums; color: var(--tk-detail); }
-.gm-count.gm-urgent { color: var(--tk-error, #ff5252); font-weight: bold; }
+.gm-streak {
+  color: #ffc107;
+  font-weight: bold;
+}
+.gm-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--tk-detail);
+}
+.gm-count.gm-urgent {
+  color: var(--tk-error, #ff5252);
+  font-weight: bold;
+}
 
 .gm-count-pill {
   background: var(--tk-tile);
@@ -522,11 +707,21 @@
   font-weight: bold;
 }
 
-.gm-row-acts { display: flex; gap: 6px; flex-shrink: 0; }
+.gm-row-acts {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
 
 /* ── Challenge picker ── */
 
-.gm-picker { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+.gm-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
 
 .gm-picker-btn {
   background: var(--tk-tile);
@@ -538,10 +733,15 @@
   font-family: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
 }
 
-.gm-picker-btn:hover { background: var(--tk-tile-hover); border-color: var(--primary, var(--tk-accent)); }
+.gm-picker-btn:hover {
+  background: var(--tk-tile-hover);
+  border-color: var(--primary, var(--tk-accent));
+}
 
 /* ── Game view shell ── */
 
@@ -562,7 +762,10 @@
   flex-shrink: 0;
 }
 
-.gm-back { padding-left: 10px; padding-right: 14px; }
+.gm-back {
+  padding-left: 10px;
+  padding-right: 14px;
+}
 
 .gm-turnline {
   display: flex;
@@ -614,9 +817,17 @@
   background: var(--tk-tile);
 }
 
-.gm-turn { font-weight: bold; }
-.gm-turn-mine { color: var(--primary, var(--tk-accent)); }
-.gm-gameacts { display: flex; gap: 6px; margin-left: auto; }
+.gm-turn {
+  font-weight: bold;
+}
+.gm-turn-mine {
+  color: var(--primary, var(--tk-accent));
+}
+.gm-gameacts {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
 
 /* Folding the chat away is how the board gets room, so the control sits in the
    bar rather than buried in the panel it hides. */
@@ -640,7 +851,9 @@
   line-height: 1.5;
 }
 
-.gm-split.gm-nochat .gm-side { display: none; }
+.gm-split.gm-nochat .gm-side {
+  display: none;
+}
 
 /* The result banner. Full width, unmissable, says who won in words. */
 
@@ -656,17 +869,41 @@
   flex-shrink: 0;
 }
 
-.gm-banner.show { display: flex; animation: gmPop 0.25s ease-out; }
-
-@keyframes gmPop {
-  from { opacity: 0; transform: translateY(-6px); }
-  to { opacity: 1; transform: none; }
+.gm-banner.show {
+  display: flex;
+  animation: gmPop 0.25s ease-out;
 }
 
-.gm-banner > i { font-size: 30px; flex-shrink: 0; }
-.gm-banner-text { flex: 1; min-width: 0; }
-.gm-banner-head { font-size: 24px; font-weight: bold; color: var(--tk-text); line-height: 1.15; }
-.gm-banner-sub { font-size: 13px; color: var(--tk-muted); margin-top: 3px; }
+@keyframes gmPop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.gm-banner > i {
+  font-size: 30px;
+  flex-shrink: 0;
+}
+.gm-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+.gm-banner-head {
+  font-size: 24px;
+  font-weight: bold;
+  color: var(--tk-text);
+  line-height: 1.15;
+}
+.gm-banner-sub {
+  font-size: 13px;
+  color: var(--tk-muted);
+  margin-top: 3px;
+}
 
 .gm-banner-next {
   font-size: 12px;
@@ -676,19 +913,37 @@
   flex-shrink: 0;
 }
 
-.gm-banner-win { border-color: var(--tk-success, #4caf50); }
-.gm-banner-win > i { color: var(--tk-success, #4caf50); }
-.gm-banner-win .gm-banner-head { color: var(--tk-success, #4caf50); }
+.gm-banner-win {
+  border-color: var(--tk-success, #4caf50);
+}
+.gm-banner-win > i {
+  color: var(--tk-success, #4caf50);
+}
+.gm-banner-win .gm-banner-head {
+  color: var(--tk-success, #4caf50);
+}
 
-.gm-banner-loss { border-color: var(--tk-error, #ff5252); }
-.gm-banner-loss > i { color: var(--tk-error, #ff5252); }
-.gm-banner-loss .gm-banner-head { color: var(--tk-error, #ff5252); }
+.gm-banner-loss {
+  border-color: var(--tk-error, #ff5252);
+}
+.gm-banner-loss > i {
+  color: var(--tk-error, #ff5252);
+}
+.gm-banner-loss .gm-banner-head {
+  color: var(--tk-error, #ff5252);
+}
 
-.gm-banner-draw { border-color: #ffc107; }
-.gm-banner-draw > i { color: #ffc107; }
+.gm-banner-draw {
+  border-color: #ffc107;
+}
+.gm-banner-draw > i {
+  color: #ffc107;
+}
 
 .gm-banner-watched > i,
-.gm-banner-over > i { color: var(--primary, var(--tk-accent)); }
+.gm-banner-over > i {
+  color: var(--primary, var(--tk-accent));
+}
 
 /* Split: board on the left, people and chat on the right */
 
@@ -710,7 +965,11 @@
   justify-content: center;
 }
 
-.gm-board { width: 100%; max-width: 660px; min-width: 0; }
+.gm-board {
+  width: 100%;
+  max-width: 660px;
+  min-width: 0;
+}
 
 .gm-side {
   width: 310px;
@@ -744,7 +1003,9 @@
   flex-shrink: 0;
 }
 
-.gm-side-head i { color: #ffc107; }
+.gm-side-head i {
+  color: #ffc107;
+}
 
 /* The roster header doubles as a fold control */
 button.gm-side-fold {
@@ -756,9 +1017,17 @@ button.gm-side-fold {
   border-bottom: 1px solid var(--tk-border);
 }
 
-button.gm-side-fold:hover { color: var(--tk-text); }
-.gm-fold-caret { font-size: 9px; margin-left: 6px; opacity: 0.7; }
-.gm-side-fold .gm-side-count { margin-left: auto; }
+button.gm-side-fold:hover {
+  color: var(--tk-text);
+}
+.gm-fold-caret {
+  font-size: 9px;
+  margin-left: 6px;
+  opacity: 0.7;
+}
+.gm-side-fold .gm-side-count {
+  margin-left: auto;
+}
 
 /* Only appears when they scrolled up and missed something */
 .gm-chat-jump {
@@ -779,8 +1048,14 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   flex: none;
 }
 
-.gm-chat-jump i { font-size: 10px; }
-.gm-side-count { margin-left: auto; letter-spacing: 0; text-transform: none; }
+.gm-chat-jump i {
+  font-size: 10px;
+}
+.gm-side-count {
+  margin-left: auto;
+  letter-spacing: 0;
+  text-transform: none;
+}
 
 .gm-players {
   max-height: 30%;
@@ -803,15 +1078,44 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   font-size: 13px;
 }
 
-.gm-player-me { border-color: var(--tk-border); }
-.gm-player-active { border-color: var(--primary, var(--tk-accent)); }
-.gm-player-got { border-color: var(--tk-success, #4caf50); }
-.gm-player-name { flex: 1; min-width: 0; color: var(--tk-text); font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gm-player-score { color: var(--primary, var(--tk-accent)); font-weight: bold; font-variant-numeric: tabular-nums; }
-.gm-got { color: var(--tk-success, #4caf50); font-size: 11px; }
-.gm-badge { font-weight: bold; font-size: 13px; }
-.gm-mark-X { color: var(--primary, var(--tk-accent)); }
-.gm-mark-O { color: var(--tk-detail); }
+.gm-player-me {
+  border-color: var(--tk-border);
+}
+.gm-player-active {
+  border-color: var(--primary, var(--tk-accent));
+}
+.gm-player-got {
+  border-color: var(--tk-success, #4caf50);
+}
+.gm-player-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--tk-text);
+  font-weight: bold;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gm-player-score {
+  color: var(--primary, var(--tk-accent));
+  font-weight: bold;
+  font-variant-numeric: tabular-nums;
+}
+.gm-got {
+  color: var(--tk-success, #4caf50);
+  font-size: 11px;
+}
+.gm-badge {
+  font-weight: bold;
+  font-size: 13px;
+  color: #fff;
+}
+.gm-mark-X {
+  color: var(--primary, var(--tk-accent));
+}
+.gm-mark-O {
+  color: var(--tk-detail);
+}
 
 .gm-kick {
   background: none;
@@ -827,14 +1131,25 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   transition: color 0.15s ease;
 }
 
-.gm-kick:hover { color: var(--tk-error, #ff5252); }
-.gm-kick-voted { color: var(--tk-error, #ff5252); }
-.gm-kick-n { font-size: 10px; font-weight: bold; }
+.gm-kick:hover {
+  color: var(--tk-error, #ff5252);
+}
+.gm-kick-voted {
+  color: var(--tk-error, #ff5252);
+}
+.gm-kick-n {
+  font-size: 10px;
+  font-weight: bold;
+}
 
 /* Who is watching */
 
-.gm-watch-head { border-top: 1px solid var(--tk-border); }
-.gm-watch-head i { color: var(--tk-detail); }
+.gm-watch-head {
+  border-top: 1px solid var(--tk-border);
+}
+.gm-watch-head i {
+  color: var(--tk-detail);
+}
 
 .gm-watchers {
   display: flex;
@@ -864,7 +1179,10 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   white-space: nowrap;
 }
 
-.gm-watcher-more { color: var(--tk-muted); font-style: italic; }
+.gm-watcher-more {
+  color: var(--tk-muted);
+  font-style: italic;
+}
 
 .gm-watchpill {
   display: inline-flex;
@@ -914,8 +1232,13 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   min-width: 0;
 }
 
-.gm-chat-head .gm-pfp-sm { margin: 0; flex-shrink: 0; }
-.gm-chat-head .gm-staff { flex-shrink: 0; }
+.gm-chat-head .gm-pfp-sm {
+  margin: 0;
+  flex-shrink: 0;
+}
+.gm-chat-head .gm-staff {
+  flex-shrink: 0;
+}
 
 .gm-chat-who {
   color: var(--user-detail-color, var(--tk-accent));
@@ -926,9 +1249,17 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   white-space: nowrap;
 }
 
-.gm-chat-who i { font-size: 9px; margin-left: 4px; opacity: 0.7; }
-.gm-chat-mine .gm-chat-who { color: var(--tk-text); }
-.gm-chat-watch .gm-chat-who { color: var(--tk-detail); }
+.gm-chat-who i {
+  font-size: 9px;
+  margin-left: 4px;
+  opacity: 0.7;
+}
+.gm-chat-mine .gm-chat-who {
+  color: var(--tk-text);
+}
+.gm-chat-watch .gm-chat-who {
+  color: var(--tk-detail);
+}
 .gm-chat-text {
   color: var(--tk-text);
   min-width: 0;
@@ -949,20 +1280,34 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   text-decoration-color: rgba(255, 82, 82, 0.5);
 }
 
-.gm-chat-wrong .gm-chat-who { opacity: 0.8; }
-.gm-nodraw { color: var(--tk-muted); font-size: 10px; }
+.gm-chat-wrong .gm-chat-who {
+  opacity: 0.8;
+}
+.gm-nodraw {
+  color: var(--tk-muted);
+  font-size: 10px;
+}
 
 /* Watchers holding a place for the next round */
-.gm-next-head i { color: var(--primary, var(--tk-accent)); }
-.gm-nextup .gm-watcher { border-style: solid; }
+.gm-next-head i {
+  color: var(--primary, var(--tk-accent));
+}
+.gm-nextup .gm-watcher {
+  border-style: solid;
+}
 .gm-next-pos {
   font-size: 9px;
   font-weight: bold;
   color: var(--primary, var(--tk-accent));
   font-variant-numeric: tabular-nums;
 }
-.gm-next-me { border-color: var(--primary, var(--tk-accent)); }
-.gm-wants { color: var(--primary, var(--tk-accent)); font-size: 10px; }
+.gm-next-me {
+  border-color: var(--primary, var(--tk-accent));
+}
+.gm-wants {
+  color: var(--primary, var(--tk-accent));
+  font-size: 10px;
+}
 
 .gm-chat-typing {
   min-height: 15px;
@@ -993,14 +1338,26 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   font-size: 14px;
 }
 
-.gm-chat-input:focus { outline: none; border-color: var(--primary, var(--tk-accent)); }
-.gm-chat-send { padding: 9px 13px; }
+.gm-chat-input:focus {
+  outline: none;
+  border-color: var(--primary, var(--tk-accent));
+}
+.gm-chat-send {
+  padding: 9px 13px;
+}
 
 /* Waiting for a second player: the board is hidden and this takes its place */
 
-.gm-waitslot { display: none; width: 100%; }
-.gm-main-waiting .gm-waitslot { display: block; }
-.gm-main-waiting .gm-board { display: none; }
+.gm-waitslot {
+  display: none;
+  width: 100%;
+}
+.gm-main-waiting .gm-waitslot {
+  display: block;
+}
+.gm-main-waiting .gm-board {
+  display: none;
+}
 
 .gm-waiting {
   display: flex;
@@ -1023,11 +1380,22 @@ button.gm-side-fold:hover { color: var(--tk-text); }
 }
 
 @keyframes gmPulse {
-  0%, 100% { transform: scale(0.86); opacity: 0.45; }
-  50% { transform: scale(1); opacity: 1; }
+  0%,
+  100% {
+    transform: scale(0.86);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
-.gm-waiting-head { font-size: 19px; font-weight: bold; color: var(--tk-text); }
+.gm-waiting-head {
+  font-size: 19px;
+  font-weight: bold;
+  color: var(--tk-text);
+}
 
 .gm-waiting-sub {
   font-size: 13px;
@@ -1036,8 +1404,17 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   line-height: 1.5;
 }
 
-.gm-waiting-acts { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
-.gm-waiting-streak { font-size: 12px; color: #ffc107; font-weight: bold; }
+.gm-waiting-acts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.gm-waiting-streak {
+  font-size: 12px;
+  color: #ffc107;
+  font-weight: bold;
+}
 
 /* ── Shared board bits ── */
 
@@ -1051,8 +1428,12 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   margin-bottom: 12px;
 }
 
-.gm-youare b { font-size: 18px; }
-.gm-idle { opacity: 0.3; }
+.gm-youare b {
+  font-size: 18px;
+}
+.gm-idle {
+  opacity: 0.3;
+}
 
 .gm-disc {
   border-radius: 3px;
@@ -1062,8 +1443,14 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   letter-spacing: 0.5px;
 }
 
-.gm-disc.gm-c4-R { background: #e53935; color: #fff; }
-.gm-disc.gm-c4-Y { background: #fdd835; color: #000; }
+.gm-disc.gm-c4-R {
+  background: #e53935;
+  color: #fff;
+}
+.gm-disc.gm-c4-Y {
+  background: #fdd835;
+  color: #000;
+}
 
 /* ── Tic Tac Toe ── */
 
@@ -1085,15 +1472,33 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   font-weight: bold;
   color: var(--tk-text);
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
 }
 
-.gm-ttt-cell.gm-open:hover { background: var(--tk-tile-hover); border-color: var(--primary, var(--tk-accent)); }
-.gm-ttt-cell:disabled { cursor: default; }
-.gm-ttt-cell.gm-mark-X { color: var(--primary, var(--tk-accent)); }
-.gm-ttt-cell.gm-mark-O { color: var(--tk-detail); }
-.gm-ttt-cell.gm-win { border-color: var(--tk-success, #4caf50); background: rgba(76, 175, 80, 0.12); }
-.gm-ttt-grid.gm-myturn { outline: 2px solid var(--primary, var(--tk-accent)); outline-offset: 8px; border-radius: 4px; }
+.gm-ttt-cell.gm-open:hover {
+  background: var(--tk-tile-hover);
+  border-color: var(--primary, var(--tk-accent));
+}
+.gm-ttt-cell:disabled {
+  cursor: default;
+}
+.gm-ttt-cell.gm-mark-X {
+  color: var(--primary, var(--tk-accent));
+}
+.gm-ttt-cell.gm-mark-O {
+  color: var(--tk-detail);
+}
+.gm-ttt-cell.gm-win {
+  border-color: var(--tk-success, #4caf50);
+  background: rgba(76, 175, 80, 0.12);
+}
+.gm-ttt-grid.gm-myturn {
+  outline: 2px solid var(--primary, var(--tk-accent));
+  outline-offset: 8px;
+  border-radius: 4px;
+}
 
 /* ── Connect Four ── */
 
@@ -1106,7 +1511,9 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   margin: 0 auto;
 }
 
-.gm-c4-cols { margin-bottom: 6px; }
+.gm-c4-cols {
+  margin-bottom: 6px;
+}
 
 .gm-c4-drop {
   background: var(--tk-tile);
@@ -1117,11 +1524,19 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   padding: 6px 0;
   cursor: pointer;
   font-family: inherit;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
 }
 
-.gm-c4-drop:hover:not(:disabled) { background: var(--tk-tile-hover); border-color: var(--primary, var(--tk-accent)); }
-.gm-c4-drop:disabled { opacity: 0.15; cursor: not-allowed; }
+.gm-c4-drop:hover:not(:disabled) {
+  background: var(--tk-tile-hover);
+  border-color: var(--primary, var(--tk-accent));
+}
+.gm-c4-drop:disabled {
+  opacity: 0.15;
+  cursor: not-allowed;
+}
 
 .gm-c4-grid {
   background: var(--room-background-color, #000);
@@ -1131,8 +1546,15 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   box-sizing: border-box;
 }
 
-.gm-c4-grid.gm-myturn { border-color: var(--primary, var(--tk-accent)); }
-.gm-c4-cell { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; }
+.gm-c4-grid.gm-myturn {
+  border-color: var(--primary, var(--tk-accent));
+}
+.gm-c4-cell {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 
 .gm-c4-cell span {
   width: 84%;
@@ -1144,21 +1566,54 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   transition: background-color 0.12s ease;
 }
 
-.gm-c4-R span { background: #e53935; border-color: #e53935; }
-.gm-c4-Y span { background: #fdd835; border-color: #fdd835; }
-.gm-c4-cell.gm-win span { border: 3px solid var(--tk-text); }
+.gm-c4-R span {
+  background: #e53935;
+  border-color: #e53935;
+}
+.gm-c4-Y span {
+  background: #fdd835;
+  border-color: #fdd835;
+}
+.gm-c4-cell.gm-win span {
+  border: 3px solid var(--tk-text);
+}
 
 /* Column preview while hovering the drop button */
-.gm-c4-grid.gm-myturn .gm-c4-hover span { border-color: var(--primary, var(--tk-accent)); }
-.gm-c4-grid.gm-myturn[data-mark="R"] .gm-c4-hover:not(.gm-c4-R):not(.gm-c4-Y) span { background: rgba(229, 57, 53, 0.3); }
-.gm-c4-grid.gm-myturn[data-mark="Y"] .gm-c4-hover:not(.gm-c4-R):not(.gm-c4-Y) span { background: rgba(253, 216, 53, 0.3); }
+.gm-c4-grid.gm-myturn .gm-c4-hover span {
+  border-color: var(--primary, var(--tk-accent));
+}
+.gm-c4-grid.gm-myturn[data-mark="R"]
+  .gm-c4-hover:not(.gm-c4-R):not(.gm-c4-Y)
+  span {
+  background: rgba(229, 57, 53, 0.3);
+}
+.gm-c4-grid.gm-myturn[data-mark="Y"]
+  .gm-c4-hover:not(.gm-c4-R):not(.gm-c4-Y)
+  span {
+  background: rgba(253, 216, 53, 0.3);
+}
 
 /* ── Word Race ── */
 
-.gm-wr-timer { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-.gm-wr-secs { font-size: 20px; font-weight: bold; min-width: 46px; }
+.gm-wr-timer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.gm-wr-secs {
+  font-size: 20px;
+  font-weight: bold;
+  min-width: 46px;
+}
 
-.gm-wr-bar { flex: 1; height: 8px; background: var(--tk-tile); border-radius: 4px; overflow: hidden; }
+.gm-wr-bar {
+  flex: 1;
+  height: 8px;
+  background: var(--tk-tile);
+  border-radius: 4px;
+  overflow: hidden;
+}
 
 .gm-wr-bar-fill {
   height: 100%;
@@ -1167,7 +1622,9 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   transition: width 0.25s linear;
 }
 
-.gm-wr-bar-fill.gm-bar-low { background: var(--tk-error, #ff5252); }
+.gm-wr-bar-fill.gm-bar-low {
+  background: var(--tk-error, #ff5252);
+}
 
 .gm-wr-grid {
   display: grid;
@@ -1190,11 +1647,24 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   user-select: none;
 }
 
-.gm-wr-score { text-align: center; margin-bottom: 10px; }
-.gm-wr-pts { font-size: 30px; font-weight: bold; color: var(--primary, var(--tk-accent)); }
-.gm-wr-pts-label { font-size: 13px; color: var(--tk-muted); }
+.gm-wr-score {
+  text-align: center;
+  margin-bottom: 10px;
+}
+.gm-wr-pts {
+  font-size: 30px;
+  font-weight: bold;
+  color: var(--primary, var(--tk-accent));
+}
+.gm-wr-pts-label {
+  font-size: 13px;
+  color: var(--tk-muted);
+}
 
-.gm-wr-form { display: flex; gap: 8px; }
+.gm-wr-form {
+  display: flex;
+  gap: 8px;
+}
 
 .gm-wr-input,
 .gm-dg-input {
@@ -1211,13 +1681,31 @@ button.gm-side-fold:hover { color: var(--tk-text); }
 }
 
 .gm-wr-input:focus,
-.gm-dg-input:focus { outline: none; border-color: var(--primary, var(--tk-accent)); }
+.gm-dg-input:focus {
+  outline: none;
+  border-color: var(--primary, var(--tk-accent));
+}
 
-.gm-wr-feedback { font-size: 13px; min-height: 19px; margin-top: 7px; font-weight: bold; text-align: center; }
-.gm-good { color: var(--tk-success, #4caf50); }
-.gm-bad { color: var(--tk-error, #ff5252); }
+.gm-wr-feedback {
+  font-size: 13px;
+  min-height: 19px;
+  margin-top: 7px;
+  font-weight: bold;
+  text-align: center;
+}
+.gm-good {
+  color: var(--tk-success, #4caf50);
+}
+.gm-bad {
+  color: var(--tk-error, #ff5252);
+}
 
-.gm-wr-mine { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.gm-wr-mine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
 
 .gm-wr-word {
   display: inline-flex;
@@ -1229,10 +1717,20 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   font-size: 12px;
 }
 
-.gm-wr-word b { color: var(--tk-text); }
-.gm-wr-word i { color: var(--tk-success, #4caf50); font-style: normal; font-size: 10px; }
-.gm-wr-word.gm-dup { opacity: 0.45; }
-.gm-wr-word.gm-dup i { color: var(--tk-muted); }
+.gm-wr-word b {
+  color: var(--tk-text);
+}
+.gm-wr-word i {
+  color: var(--tk-success, #4caf50);
+  font-style: normal;
+  font-size: 10px;
+}
+.gm-wr-word.gm-dup {
+  opacity: 0.45;
+}
+.gm-wr-word.gm-dup i {
+  color: var(--tk-muted);
+}
 
 .gm-wr-rank {
   background: var(--room-background-color, #000);
@@ -1242,21 +1740,54 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   margin-bottom: 8px;
 }
 
-.gm-wr-rank.gm-first { border-color: var(--primary, var(--tk-accent)); }
-.gm-wr-rank-head { display: flex; align-items: center; gap: 10px; }
-.gm-wr-pos { color: var(--tk-muted); font-size: 12px; font-weight: bold; }
-.gm-wr-who { flex: 1; font-weight: bold; color: var(--tk-text); }
-.gm-wr-total { font-size: 20px; font-weight: bold; color: var(--primary, var(--tk-accent)); }
-.gm-wr-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
-.gm-wr-possible { color: var(--tk-muted); font-size: 12px; text-align: center; padding: 6px 0 2px; }
+.gm-wr-rank.gm-first {
+  border-color: var(--primary, var(--tk-accent));
+}
+.gm-wr-rank-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.gm-wr-pos {
+  color: var(--tk-muted);
+  font-size: 12px;
+  font-weight: bold;
+}
+.gm-wr-who {
+  flex: 1;
+  font-weight: bold;
+  color: var(--tk-text);
+}
+.gm-wr-total {
+  font-size: 20px;
+  font-weight: bold;
+  color: var(--primary, var(--tk-accent));
+}
+.gm-wr-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+.gm-wr-possible {
+  color: var(--tk-muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 6px 0 2px;
+}
 
 /* ── Draw & Guess ──
    Sized to the space it is given rather than scrolling: the canvas takes
    whatever is left after the header, toolbar and guess box. */
 
-.gm-main-fit { overflow: hidden; align-items: stretch; }
+.gm-main-fit {
+  overflow: hidden;
+  align-items: stretch;
+}
 
-.gm-main-fit { justify-content: stretch; }
+.gm-main-fit {
+  justify-content: stretch;
+}
 
 /* No width cap here: the canvas holds its own shape, so letting the column run
    full width just means the drawing sits in the middle instead of off to one
@@ -1273,11 +1804,20 @@ button.gm-side-fold:hover { color: var(--tk-text); }
 /* While the board cannot run there is nothing to show, so the empty canvas
    goes away entirely and the waiting card gets the space to itself. This has
    to sit after the rule above or the flex display wins and you get both. */
-.gm-main-fit.gm-main-waiting { align-items: center; justify-content: center; }
-.gm-main-fit.gm-main-waiting .gm-board { display: none; }
-.gm-main-fit .gm-waitslot { max-width: 470px; }
+.gm-main-fit.gm-main-waiting {
+  align-items: center;
+  justify-content: center;
+}
+.gm-main-fit.gm-main-waiting .gm-board {
+  display: none;
+}
+.gm-main-fit .gm-waitslot {
+  max-width: 470px;
+}
 
-.gm-dg { gap: 8px; }
+.gm-dg {
+  gap: 8px;
+}
 
 /* Header: seconds, bar, turn counter, all on one line. */
 
@@ -1321,8 +1861,12 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   font-variant-numeric: tabular-nums;
 }
 
-.gm-dg-timer.gm-dg-low .gm-dg-secs { color: var(--tk-error, #ff5252); }
-.gm-dg-timer.gm-dg-low .gm-dg-timefill { background: var(--tk-error, #ff5252); }
+.gm-dg-timer.gm-dg-low .gm-dg-secs {
+  color: var(--tk-error, #ff5252);
+}
+.gm-dg-timer.gm-dg-low .gm-dg-timefill {
+  background: var(--tk-error, #ff5252);
+}
 
 /* Prompt */
 
@@ -1338,8 +1882,15 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   flex-shrink: 0;
 }
 
-.gm-dg-label { font-size: 12px; color: var(--tk-muted); }
-.gm-dg-yourturn { color: var(--primary, var(--tk-accent)); font-weight: bold; font-size: 15px; }
+.gm-dg-label {
+  font-size: 12px;
+  color: var(--tk-muted);
+}
+.gm-dg-yourturn {
+  color: var(--primary, var(--tk-accent));
+  font-weight: bold;
+  font-size: 15px;
+}
 
 .gm-dg-word {
   font-size: 22px;
@@ -1373,7 +1924,10 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   flex-shrink: 0;
 }
 
-.gm-dg-choice { font-size: 15px; padding: 12px 22px; }
+.gm-dg-choice {
+  font-size: 15px;
+  padding: 12px 22px;
+}
 .gm-dg-draweracts {
   display: flex;
   justify-content: center;
@@ -1381,9 +1935,17 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   flex-wrap: wrap;
   flex-shrink: 0;
 }
-.gm-dg-draweracts:empty { display: none; }
-.gm-dg-pass { font-size: 12px; padding: 6px 13px; color: var(--tk-muted); }
-.gm-dg-pass:hover { color: var(--tk-text); }
+.gm-dg-draweracts:empty {
+  display: none;
+}
+.gm-dg-pass {
+  font-size: 12px;
+  padding: 6px 13px;
+  color: var(--tk-muted);
+}
+.gm-dg-pass:hover {
+  color: var(--tk-text);
+}
 
 /* Stage: toolbar rail on the left, canvas taking everything else.
 
@@ -1416,9 +1978,18 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   flex-shrink: 0;
 }
 
-.gm-dg-canvas { display: block; width: 100%; height: 100%; }
-.gm-dg-canvas.gm-dg-live { cursor: crosshair; touch-action: none; }
-.gm-dg-canvas.gm-dg-live.gm-dg-erasing { cursor: cell; }
+.gm-dg-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.gm-dg-canvas.gm-dg-live {
+  cursor: crosshair;
+  touch-action: none;
+}
+.gm-dg-canvas.gm-dg-live.gm-dg-erasing {
+  cursor: cell;
+}
 
 /* Toolbar. A titled block per job: colour, brush size, tool, paper, then undo
    and clear pinned to the bottom. Vertical rail on a desktop, a strip under
@@ -1439,11 +2010,24 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   overflow-x: hidden;
 }
 
-.gm-dg-tools::-webkit-scrollbar { width: 5px; }
-.gm-dg-tools::-webkit-scrollbar-thumb { background: var(--tk-border); border-radius: 3px; }
+.gm-dg-tools::-webkit-scrollbar {
+  width: 5px;
+}
+.gm-dg-tools::-webkit-scrollbar-thumb {
+  background: var(--tk-border);
+  border-radius: 3px;
+}
 
-.gm-dg-grp { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
-.gm-dg-grp + .gm-dg-grp { padding-top: 6px; border-top: 1px solid var(--tk-border); }
+.gm-dg-grp {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.gm-dg-grp + .gm-dg-grp {
+  padding-top: 6px;
+  border-top: 1px solid var(--tk-border);
+}
 
 .gm-dg-toollabel {
   font-size: 8.5px;
@@ -1469,7 +2053,10 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   padding: 0;
 }
 
-.gm-dg-swatch.active { border-color: var(--tk-text); box-shadow: 0 0 0 1px var(--tk-text); }
+.gm-dg-swatch.active {
+  border-color: var(--tk-text);
+  box-shadow: 0 0 0 1px var(--tk-text);
+}
 
 .gm-dg-sizes,
 .gm-dg-modes {
@@ -1513,9 +2100,15 @@ button.gm-side-fold:hover { color: var(--tk-text); }
 }
 
 .gm-dg-size.active,
-.gm-dg-tool.active { border-color: var(--primary, var(--tk-accent)); }
-.gm-dg-size.active span { background: var(--primary, var(--tk-accent)); }
-.gm-dg-tool.active { color: var(--primary, var(--tk-accent)); }
+.gm-dg-tool.active {
+  border-color: var(--primary, var(--tk-accent));
+}
+.gm-dg-size.active span {
+  background: var(--primary, var(--tk-accent));
+}
+.gm-dg-tool.active {
+  color: var(--primary, var(--tk-accent));
+}
 
 .gm-dg-paper {
   width: 20px;
@@ -1526,7 +2119,9 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   padding: 0;
 }
 
-.gm-dg-paper.active { border-color: var(--primary, var(--tk-accent)); }
+.gm-dg-paper.active {
+  border-color: var(--primary, var(--tk-accent));
+}
 
 .gm-dg-toolacts {
   display: flex;
@@ -1549,13 +2144,18 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   white-space: normal;
 }
 
-.gm-dg-shuffle { font-size: 12px; padding: 6px 13px; }
+.gm-dg-shuffle {
+  font-size: 12px;
+  padding: 6px 13px;
+}
 
 /* ── Guess the Flag ──
    Same fitted shell as Draw & Guess. The flag sits on a dark mat so a white
    or pale flag still reads as a flag rather than as a hole in the page. */
 
-.gm-fg { gap: 10px; }
+.gm-fg {
+  gap: 10px;
+}
 
 .gm-fg-canvas-wrap {
   border: 1px solid var(--tk-border);
@@ -1565,9 +2165,15 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   flex-shrink: 0;
 }
 
-.gm-fg-canvas { display: block; width: 100%; height: 100%; }
+.gm-fg-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
 
-.gm-fg-prompt { min-height: 30px; }
+.gm-fg-prompt {
+  min-height: 30px;
+}
 
 /* The masked country. Monospace so the underscores line up into a countable
    length rather than a smear. */
@@ -1587,9 +2193,19 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   padding: 8px 0;
 }
 
-.gm-dg-lobbycard { width: 100%; max-width: 470px; padding: 30px 26px; }
+.gm-dg-lobbycard {
+  width: 100%;
+  max-width: 470px;
+  padding: 30px 26px;
+}
 
-.gm-dg-final { display: flex; flex-direction: column; gap: 4px; width: 100%; max-width: 340px; }
+.gm-dg-final {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  max-width: 340px;
+}
 
 .gm-dg-finalrow {
   display: flex;
@@ -1602,11 +2218,34 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   font-size: 13px;
 }
 
-.gm-dg-finalme { border-color: var(--primary, var(--tk-accent)); }
-.gm-dg-finalpos { color: var(--tk-muted); font-size: 11px; min-width: 20px; text-align: left; }
-.gm-dg-finalname { flex: 1; min-width: 0; text-align: left; color: var(--tk-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gm-dg-finalpts { font-weight: bold; color: var(--primary, var(--tk-accent)); font-variant-numeric: tabular-nums; }
-.gm-dg-lobbyroom { font-size: 12px; color: var(--tk-detail); max-width: 380px; }
+.gm-dg-finalme {
+  border-color: var(--primary, var(--tk-accent));
+}
+.gm-dg-finalpos {
+  color: var(--tk-muted);
+  font-size: 11px;
+  min-width: 20px;
+  text-align: left;
+}
+.gm-dg-finalname {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  color: var(--tk-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gm-dg-finalpts {
+  font-weight: bold;
+  color: var(--primary, var(--tk-accent));
+  font-variant-numeric: tabular-nums;
+}
+.gm-dg-lobbyroom {
+  font-size: 12px;
+  color: var(--tk-detail);
+  max-width: 380px;
+}
 
 .gm-dg-lobbyhere {
   display: flex;
@@ -1659,8 +2298,13 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   margin-bottom: 6px;
 }
 
-.gm-dg-guesswrap.gm-dg-got .gm-dg-guesslabel { color: var(--tk-success, #4caf50); }
-.gm-dg-guessform { display: flex; gap: 7px; }
+.gm-dg-guesswrap.gm-dg-got .gm-dg-guesslabel {
+  color: var(--tk-success, #4caf50);
+}
+.gm-dg-guessform {
+  display: flex;
+  gap: 7px;
+}
 
 .gm-dg-input {
   flex: 1;
@@ -1675,8 +2319,13 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   box-sizing: border-box;
 }
 
-.gm-dg-input:focus { outline: none; border-color: var(--primary, var(--tk-accent)); }
-.gm-dg-input:disabled { opacity: 0.5; }
+.gm-dg-input:focus {
+  outline: none;
+  border-color: var(--primary, var(--tk-accent));
+}
+.gm-dg-input:disabled {
+  opacity: 0.5;
+}
 
 /* Who has it, who we are waiting on, and the nudge */
 
@@ -1715,7 +2364,10 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   color: var(--tk-text);
 }
 
-.gm-dg-gotchip b { color: var(--tk-success, #4caf50); font-size: 9px; }
+.gm-dg-gotchip b {
+  color: var(--tk-success, #4caf50);
+  font-size: 9px;
+}
 
 .gm-dg-waitchip {
   display: inline-flex;
@@ -1727,9 +2379,18 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   color: var(--tk-muted);
 }
 
-.gm-dg-skip { font-size: 11px; padding: 4px 10px; margin-left: auto; }
-.gm-dg-skip:hover { border-color: var(--primary, var(--tk-accent)); }
-.gm-dg-skipped { border-color: var(--primary, var(--tk-accent)); color: var(--primary, var(--tk-accent)); }
+.gm-dg-skip {
+  font-size: 11px;
+  padding: 4px 10px;
+  margin-left: auto;
+}
+.gm-dg-skip:hover {
+  border-color: var(--primary, var(--tk-accent));
+}
+.gm-dg-skipped {
+  border-color: var(--primary, var(--tk-accent));
+  color: var(--primary, var(--tk-accent));
+}
 
 .gm-dg-optbtn {
   background: none;
@@ -1744,80 +2405,224 @@ button.gm-side-fold:hover { color: var(--tk-text); }
   font-family: inherit;
 }
 
-.gm-dg-optbtn:hover { color: var(--tk-text); }
-.gm-dg-optbtn.active { color: var(--primary, var(--tk-accent)); }
-.gm-dg-flash { font-size: 12px; font-weight: bold; }
+.gm-dg-optbtn:hover {
+  color: var(--tk-text);
+}
+.gm-dg-optbtn.active {
+  color: var(--primary, var(--tk-accent));
+}
+.gm-dg-flash {
+  font-size: 12px;
+  font-weight: bold;
+}
 
 /* ── Mobile ── */
 
 @media (max-width: 900px) {
-  .gm-side { width: 260px; }
+  .gm-side {
+    width: 260px;
+  }
 }
 
 @media (max-width: 720px) {
   /* Every pixel of width is the drawing's, so the frame gets out of the way. */
-  .gm-modal { width: 100%; height: 100%; max-height: 100%; border-radius: 0; border: none; }
-  .gm-head { padding: 9px 10px; flex-wrap: wrap; gap: 8px; }
-  .gm-title { font-size: 19px; }
-  .gm-title i { margin-right: 7px; }
-  .gm-sub { display: none; }
-  .gm-stats { order: 3; margin-left: 0; }
-  .gm-chip { padding: 5px 9px; font-size: 12px; }
-  .gm-strip { padding: 7px 10px; font-size: 15px; }
-  .gm-body { padding: 10px 10px 14px; }
-  .gm-body-game { padding-top: 9px; }
-  .gm-gamebar { gap: 8px; padding-bottom: 9px; }
-  .gm-split { padding-top: 10px; }
-  .gm-games { grid-template-columns: 1fr; }
-  .gm-card-mid { flex-wrap: wrap; }
-  .gm-card-mid > .gm-btn { width: 100%; }
-  .gm-card-foot .gm-card-invite { width: 100%; }
-  .gm-loading { padding: 40px 16px; }
-  .gm-row { flex-wrap: wrap; }
-  .gm-row-acts { width: 100%; }
-  .gm-row-acts .gm-btn { flex: 1; }
+  .gm-modal {
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border-radius: 0;
+    border: none;
+  }
+  .gm-head {
+    padding: 9px 10px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .gm-title {
+    font-size: 19px;
+  }
+  .gm-title i {
+    margin-right: 7px;
+  }
+  .gm-sub {
+    display: none;
+  }
+  .gm-stats {
+    order: 3;
+    margin-left: 0;
+  }
+  .gm-chip {
+    padding: 5px 9px;
+    font-size: 12px;
+  }
+  .gm-strip {
+    padding: 7px 10px;
+    font-size: 15px;
+  }
+  .gm-body {
+    padding: 10px 10px 14px;
+  }
+  .gm-body-game {
+    padding-top: 9px;
+  }
+  .gm-gamebar {
+    gap: 8px;
+    padding-bottom: 9px;
+  }
+  .gm-split {
+    padding-top: 10px;
+  }
+  .gm-games {
+    grid-template-columns: 1fr;
+  }
+  .gm-card-mid {
+    flex-wrap: wrap;
+  }
+  .gm-card-mid > .gm-btn {
+    width: 100%;
+  }
+  .gm-card-foot .gm-card-invite {
+    width: 100%;
+  }
+  .gm-loading {
+    padding: 40px 16px;
+  }
+  .gm-row {
+    flex-wrap: wrap;
+  }
+  .gm-row-acts {
+    width: 100%;
+  }
+  .gm-row-acts .gm-btn {
+    flex: 1;
+  }
 
   /* Board first, then people and chat underneath. */
-  .gm-split { flex-direction: column; gap: 12px; overflow-y: auto; }
-  .gm-main { overflow: visible; flex: none; }
-  .gm-side { width: 100%; height: 300px; flex: none; }
-  .gm-players { max-height: 96px; }
+  .gm-split {
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+  }
+  .gm-main {
+    overflow: visible;
+    flex: none;
+  }
+  .gm-side {
+    width: 100%;
+    height: 300px;
+    flex: none;
+  }
+  .gm-players {
+    max-height: 96px;
+  }
   /* Keep the actions on the bar instead of claiming a whole row of a screen
      that has none to spare. */
-  .gm-gameacts { margin-left: auto; width: auto; }
-  .gm-gameacts .gm-btn { flex: 0 0 auto; font-size: 12px; padding: 7px 11px; }
-  .gm-back { width: auto; }
+  .gm-gameacts {
+    margin-left: auto;
+    width: auto;
+  }
+  .gm-gameacts .gm-btn {
+    flex: 0 0 auto;
+    font-size: 12px;
+    padding: 7px 11px;
+  }
+  .gm-back {
+    width: auto;
+  }
 
-  .gm-banner { padding: 13px 15px; gap: 11px; }
-  .gm-banner > i { font-size: 24px; }
-  .gm-banner-head { font-size: 19px; }
-  .gm-banner-next { display: none; }
+  .gm-banner {
+    padding: 13px 15px;
+    gap: 11px;
+  }
+  .gm-banner > i {
+    font-size: 24px;
+  }
+  .gm-banner-head {
+    font-size: 19px;
+  }
+  .gm-banner-next {
+    display: none;
+  }
 
-  .gm-ttt-cell { font-size: 42px; }
-  .gm-c4-cols, .gm-c4-grid { width: 100%; gap: 4px; }
-  .gm-solo-wrap { margin-top: 10px; }
-  .gm-wr-tile { font-size: 26px; }
-  .gm-dg-hint, .gm-dg-word { font-size: 18px; letter-spacing: 3px; }
-  .gm-dg-secs { font-size: 22px; min-width: 38px; }
-  .gm-dg-skip { margin-left: 0; }
-  .gm-dg-choice { font-size: 14px; padding: 11px 16px; }
-  .gm-dg-shuffle { font-size: 12px; padding: 8px 12px; }
+  .gm-ttt-cell {
+    font-size: 42px;
+  }
+  .gm-c4-cols,
+  .gm-c4-grid {
+    width: 100%;
+    gap: 4px;
+  }
+  .gm-solo-wrap {
+    margin-top: 10px;
+  }
+  .gm-wr-tile {
+    font-size: 26px;
+  }
+  .gm-dg-hint,
+  .gm-dg-word {
+    font-size: 18px;
+    letter-spacing: 3px;
+  }
+  .gm-dg-secs {
+    font-size: 22px;
+    min-width: 38px;
+  }
+  .gm-dg-skip {
+    margin-left: 0;
+  }
+  .gm-dg-choice {
+    font-size: 14px;
+    padding: 11px 16px;
+  }
+  .gm-dg-shuffle {
+    font-size: 12px;
+    padding: 8px 12px;
+  }
 
   /* Draw & Guess keeps the fitted layout on a phone: the board takes what is
      left over rather than the whole thing turning into one long scroll. */
-  .gm-split-fit { flex-direction: column; overflow: hidden; gap: 10px; }
-  .gm-split-fit .gm-main { overflow: hidden; flex: 1 1 auto; min-height: 0; }
-  .gm-split-fit .gm-main-fit { overflow: hidden; }
-  .gm-split-fit .gm-main-fit .gm-board { height: 100%; max-height: 100%; }
-  .gm-split-fit .gm-side { width: 100%; height: 46%; min-height: 190px; flex: none; }
-  .gm-split-fit .gm-players { max-height: 66px; }
-  .gm-split-fit .gm-side-head { padding: 6px 10px; }
-  .gm-split-fit .gm-player { padding: 5px 10px; }
-  .gm-split-fit .gm-chat-form { padding: 7px 8px; }
+  .gm-split-fit {
+    flex-direction: column;
+    overflow: hidden;
+    gap: 10px;
+  }
+  .gm-split-fit .gm-main {
+    overflow: hidden;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .gm-split-fit .gm-main-fit {
+    overflow: hidden;
+  }
+  .gm-split-fit .gm-main-fit .gm-board {
+    height: 100%;
+    max-height: 100%;
+  }
+  .gm-split-fit .gm-side {
+    width: 100%;
+    height: 46%;
+    min-height: 190px;
+    flex: none;
+  }
+  .gm-split-fit .gm-players {
+    max-height: 66px;
+  }
+  .gm-split-fit .gm-side-head {
+    padding: 6px 10px;
+  }
+  .gm-split-fit .gm-player {
+    padding: 5px 10px;
+  }
+  .gm-split-fit .gm-chat-form {
+    padding: 7px 8px;
+  }
 
   /* Canvas on top, toolbar underneath as a horizontal strip with targets you
      can actually hit with a thumb. */
-  .gm-dg-stage { flex-direction: column-reverse; gap: 8px; }
+  .gm-dg-stage {
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
   .gm-dg-tools {
     flex-direction: row;
     align-items: flex-start;
@@ -1827,14 +2632,37 @@ button.gm-side-fold:hover { color: var(--tk-text); }
     padding: 8px;
     overflow: visible;
   }
-  .gm-dg-grp + .gm-dg-grp { padding-top: 0; border-top: 0; }
-  .gm-dg-grp { gap: 4px; }
-  .gm-dg-swatches { grid-template-columns: repeat(8, 26px); }
-  .gm-dg-swatch { width: 26px; height: 26px; }
-  .gm-dg-sizes, .gm-dg-modes { grid-template-columns: repeat(4, 32px); }
-  .gm-dg-size, .gm-dg-tool { width: 32px; height: 32px; font-size: 14px; }
-  .gm-dg-papers { grid-template-columns: repeat(5, 26px); }
-  .gm-dg-paper { width: 26px; height: 26px; }
+  .gm-dg-grp + .gm-dg-grp {
+    padding-top: 0;
+    border-top: 0;
+  }
+  .gm-dg-grp {
+    gap: 4px;
+  }
+  .gm-dg-swatches {
+    grid-template-columns: repeat(8, 26px);
+  }
+  .gm-dg-swatch {
+    width: 26px;
+    height: 26px;
+  }
+  .gm-dg-sizes,
+  .gm-dg-modes {
+    grid-template-columns: repeat(4, 32px);
+  }
+  .gm-dg-size,
+  .gm-dg-tool {
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+  }
+  .gm-dg-papers {
+    grid-template-columns: repeat(5, 26px);
+  }
+  .gm-dg-paper {
+    width: 26px;
+    height: 26px;
+  }
   .gm-dg-toolacts {
     flex-direction: row;
     margin-top: 0;
@@ -1843,15 +2671,34 @@ button.gm-side-fold:hover { color: var(--tk-text); }
     border-top: 0;
     padding-top: 0;
   }
-  .gm-dg-toolacts .gm-btn { flex-direction: row; width: auto; font-size: 12px; padding: 8px 12px; }
+  .gm-dg-toolacts .gm-btn {
+    flex-direction: row;
+    width: auto;
+    font-size: 12px;
+    padding: 8px 12px;
+  }
 }
 
 /* No room for both a label and a button on the smallest screens. */
 @media (max-width: 420px) {
-  .gm-chat-toggle-label { display: none; }
-  .gm-chat-toggle { padding: 7px 10px; }
-  .gm-dg-swatches { grid-template-columns: repeat(8, 22px); }
-  .gm-dg-swatch { width: 22px; height: 22px; }
-  .gm-dg-papers { grid-template-columns: repeat(5, 22px); }
-  .gm-dg-paper { width: 22px; height: 22px; }
+  .gm-chat-toggle-label {
+    display: none;
+  }
+  .gm-chat-toggle {
+    padding: 7px 10px;
+  }
+  .gm-dg-swatches {
+    grid-template-columns: repeat(8, 22px);
+  }
+  .gm-dg-swatch {
+    width: 22px;
+    height: 22px;
+  }
+  .gm-dg-papers {
+    grid-template-columns: repeat(5, 22px);
+  }
+  .gm-dg-paper {
+    width: 22px;
+    height: 22px;
+  }
 }

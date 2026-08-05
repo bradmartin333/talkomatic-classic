@@ -136,7 +136,11 @@
   --spectator-count-border-color: rgba(255, 235, 59, 0.3);
 
   --modal-content-info-shadow-color: rgba(0, 0, 0, 0.5);
-  --modal-content-shadow-color: color-mix(in srgb, var(--tk-accent) 50%, transparent);
+  --modal-content-shadow-color: color-mix(
+    in srgb,
+    var(--tk-accent) 50%,
+    transparent
+  );
   --focus-modal-input-shadow-color: rgba(0, 255, 255, 0.3);
   --hover-spectate-button-shadow-color: rgba(255, 235, 59, 0.3);
   --spectator-notice-shadow-color: rgba(0, 0, 0, 0.3);
@@ -182,7 +186,12 @@ html {
   padding: 0; /* Remove default padding */
   height: 100%; /* Ensure body takes up full viewport height */
   overflow: hidden; /* Hide overflow to prevent unwanted scroll bars */
-  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif); /* Use custom font, fallback to Arial */
+  font-family: var(
+    --tk-font-main,
+    talkoSS,
+    Arial,
+    sans-serif
+  ); /* Use custom font, fallback to Arial */
   background-color: var(--background-color); /* Dark background color */
 }
 
@@ -1785,7 +1794,6 @@ button:disabled {
 .pfp-help {
   margin-top: 9px;
   background: #fff;
-  border: 1px solid #dfe2f5;
 
   border-radius: 7px;
   padding: 11px 13px;
@@ -1821,7 +1829,6 @@ button:disabled {
   object-fit: cover;
   vertical-align: middle;
   margin-right: 4px;
-  border: 1px solid var(--card-border-color, #444);
 }
 
 .fa-circle-question {
