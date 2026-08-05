@@ -133,6 +133,7 @@
   let side = null; // players + chat controller for the open game
   let clockTimer = null;
   let cleanupSolo = null; // timers for a solo game's loading state
+  let earlyRelays = []; // relays that landed before the board was ready
 
   function myId() {
     return typeof currentUserId !== "undefined" ? currentUserId : "";
@@ -181,9 +182,8 @@
     bodyEl = el("div", { class: "gm-body" });
 
     overlay.appendChild(el("div", { class: "gm-modal" }, [head, stripEl, bodyEl]));
-    overlay.addEventListener("mousedown", (e) => {
-      if (e.target === overlay) closePanel();
-    });
+    // Deliberately no click-outside-to-close: people were losing a game they
+    // were in the middle of by clicking next to the panel.
     document.body.appendChild(overlay);
   }
 
@@ -197,13 +197,19 @@
   }
 
   function closePanel() {
+    // Give the watch slot back, otherwise the count keeps counting you.
+    if (detail && detail.spectating)
+      S.emit("games spectate", { tableId: detail.id, on: false });
     isOpen = false;
     if (overlay) overlay.classList.remove("show");
     stopClock();
+    view = { name: "floor", tableId: null };
+    detail = null;
     teardownGameView();
   }
 
   function teardownGameView() {
+    earlyRelays = [];
     if (cleanupSolo) {
       cleanupSolo();
       cleanupSolo = null;
@@ -741,6 +747,10 @@
     view = { name: "game", tableId };
     if (!detail || detail.id !== tableId) detail = null;
     const t = floor.tables.find((x) => x.id === tableId);
+    // If we are not playing in it, looking at it means watching it, so the
+    // count is honest and the chat works without a second click.
+    if (t && !t.seats.some((x) => x.userId === myId()))
+      S.emit("games spectate", { tableId, on: true });
     if (t) stripEl.textContent = nameOf(t.type);
     if (detail) return render();
     teardownGameView();
@@ -809,6 +819,14 @@
       side = makeSide();
       side.mount(sideEl);
       boardKey = key;
+
+      // Replay anything that arrived while this was being built.
+      const held = earlyRelays.filter((r) => r.tableId === t.id);
+      earlyRelays = [];
+      for (const r of held) {
+        if (side && side.relay) side.relay(r);
+        if (board && board.relay) board.relay(r);
+      }
     }
 
     paintBanner(t);
@@ -898,6 +916,14 @@
         );
       return;
     }
+
+    if (t.spectators)
+      host.appendChild(
+        el("span", { class: "gm-watchpill" }, [
+          el("i", { class: "fas fa-eye" }),
+          " " + t.spectators + (t.spectators === 1 ? " watching" : " watching"),
+        ]),
+      );
 
     if (t.turnDeadline && g.turnUserId) {
       const yours = g.turnUserId === myId();
@@ -1014,6 +1040,7 @@
 
   function makeSide() {
     let root, playersEl, logEl, form, input, typingEl, countEl;
+    let watchHead, watchCount, watchersEl;
     let lastChatId = 0;
     let typingSentAt = 0;
 
@@ -1062,6 +1089,16 @@
 
         playersEl = el("div", { class: "gm-players" });
         root.appendChild(playersEl);
+
+        watchHead = el("div", { class: "gm-side-head gm-watch-head" }, [
+          el("i", { class: "fas fa-eye" }),
+          el("span", { text: "Watching" }),
+        ]);
+        watchCount = el("span", { class: "gm-side-count" });
+        watchHead.appendChild(watchCount);
+        root.appendChild(watchHead);
+        watchersEl = el("div", { class: "gm-watchers" });
+        root.appendChild(watchersEl);
 
         root.appendChild(
           el("div", { class: "gm-side-head" }, [
@@ -1128,8 +1165,7 @@
           g.players && g.players.length
             ? g.players
             : t.seats.map((s) => ({ userId: s.userId, username: s.username }));
-        countEl.textContent =
-          list.length + (t.spectators ? " + " + t.spectators + " watching" : "");
+        countEl.textContent = String(list.length);
 
         playersEl.textContent = "";
         list.forEach((p) => {
@@ -1185,6 +1221,29 @@
           }
           playersEl.appendChild(row);
         });
+
+        // Who is watching. Names, not just a number, so the room can see who
+        // turned up. Anyone watching can talk in the chat below.
+        const watchers = t.watchers || [];
+        const extra = (t.spectators || 0) - watchers.length;
+        const show = watchers.length > 0;
+        watchHead.style.display = show ? "" : "none";
+        watchersEl.style.display = show ? "" : "none";
+        watchCount.textContent = show ? String(t.spectators || watchers.length) : "";
+        watchersEl.textContent = "";
+        watchers.forEach((w) => {
+          const chip = el("div", { class: "gm-watcher" });
+          const pfp = avatarNode(w.avatar, true);
+          if (pfp) chip.appendChild(pfp);
+          chip.appendChild(el("span", { class: "gm-watcher-name", text: w.username }));
+          const badge = badgeFor(w.role);
+          if (badge) chip.appendChild(badge);
+          watchersEl.appendChild(chip);
+        });
+        if (extra > 0)
+          watchersEl.appendChild(
+            el("div", { class: "gm-watcher gm-watcher-more", text: "+" + extra + " more" }),
+          );
 
         // Backfill history the first time this game opens.
         if (!lastChatId && Array.isArray(t.chat)) {
@@ -1704,6 +1763,12 @@
         stage.appendChild(root);
         setTimeout(resize, 0);
         window.addEventListener("resize", resize);
+        // Ask for whatever is already on the canvas, straight away.
+        if (detail) {
+          syncing = true;
+          S.emit("games draw", { tableId: detail.id, kind: "sync" });
+          setTimeout(() => { syncing = false; }, 1500);
+        }
       },
       destroy() {
         window.removeEventListener("resize", resize);
@@ -1901,7 +1966,25 @@
   S.on("games snapshot", (d) => {
     catalog = d.catalog || [];
     takeFloor(d);
+    // Back from a reconnect: if we still hold a game, drop straight back into
+    // it instead of leaving a dead board on screen.
+    const mine = Object.values(floor.myTables || {})[0];
+    if (isOpen && mine && view.name === "floor") {
+      view = { name: "game", tableId: mine };
+      detail = null;
+    }
     render();
+  });
+
+  // A dropped connection leaves the panel showing a board the server no longer
+  // knows we are looking at. Re-announce on the way back.
+  S.on("connect", () => {
+    if (!isOpen) return;
+    boardKey = "";
+    detail = null;
+    S.emit("games open");
+    if (view.name === "game" && view.tableId)
+      S.emit("games spectate", { tableId: view.tableId, on: true });
   });
 
   S.on("games floor", (d) => {
@@ -1924,7 +2007,15 @@
   });
 
   S.on("games relay", (d) => {
-    if (!detail || d.tableId !== detail.id) return;
+    // Landed before the board is up: keep it and replay on mount, otherwise a
+    // mid round joiner never sees the drawing already on the canvas.
+    if (!board || !detail || d.tableId !== detail.id) {
+      if (view.tableId === d.tableId) {
+        earlyRelays.push(d);
+        if (earlyRelays.length > 40) earlyRelays.shift();
+      }
+      return;
+    }
     if (side && side.relay) side.relay(d);
     if (board && board.relay) board.relay(d);
   });
@@ -2007,7 +2098,10 @@
   });
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && isOpen) closePanel();
+    if (e.key !== "Escape" || !isOpen) return;
+    // Step back rather than closing outright, so Escape mid-game is recoverable.
+    if (view.name === "game" || view.name === "solo") backToFloor();
+    else closePanel();
   });
 
   window.TalkomaticGames = {

@@ -729,6 +729,53 @@
 .gm-kick-voted { color: var(--tk-error, #ff5252); }
 .gm-kick-n { font-size: 10px; font-weight: bold; }
 
+/* Who is watching */
+
+.gm-watch-head { border-top: 1px solid var(--tk-border); }
+.gm-watch-head i { color: var(--tk-detail); }
+
+.gm-watchers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 8px;
+  max-height: 84px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.gm-watcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--tk-tile);
+  border-radius: 4px;
+  padding: 4px 9px;
+  font-size: 12px;
+  color: var(--tk-text);
+  max-width: 100%;
+}
+
+.gm-watcher-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gm-watcher-more { color: var(--tk-muted); font-style: italic; }
+
+.gm-watchpill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--tk-detail);
+  background: var(--tk-tile);
+  border-radius: 4px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
 .gm-chat-log {
   flex: 1;
   min-height: 0;

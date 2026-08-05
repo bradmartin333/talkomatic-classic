@@ -195,6 +195,24 @@ function tableSummary(t) {
   };
 }
 
+const WATCHERS_SHOWN = 24;
+
+function watcherList(t) {
+  const out = [];
+  for (const uid of t.spectators) {
+    if (out.length >= WATCHERS_SHOWN) break;
+    const u = deps.userInfo(t.roomId, uid);
+    if (!u) continue;
+    out.push({
+      userId: uid,
+      username: u.username,
+      role: u.role || null,
+      avatar: u.avatar || null,
+    });
+  }
+  return out;
+}
+
 function tableDetail(t, userId) {
   const rules = rulesFor(t.type);
   const seated = t.seats.some((s) => s.userId === userId);
@@ -205,6 +223,7 @@ function tableDetail(t, userId) {
     ...tableSummary(t),
     seated,
     spectating: t.spectators.has(userId),
+    watchers: watcherList(t),
     turnDeadline: t.turnDeadline,
     rotateAt: t.rotateAt || null,
     rematch: [...t.rematch],
@@ -709,8 +728,15 @@ function chat(roomId, user, tableId, text) {
   const f = floorFor(roomId);
   const t = f.tables.get(tableId);
   if (!t) return { err: "That game has finished." };
-  if (!audienceOf(t).has(user.userId))
-    return { err: "Open the game first." };
+  // A reconnect hands you a new socket, and the panel can be showing a game
+  // you are no longer formally watching. Rather than refusing the message,
+  // enrol them: anybody in the room is entitled to watch and talk.
+  if (!audienceOf(t).has(user.userId)) {
+    if (!deps.userInfo(t.roomId, user.userId))
+      return { err: "You are not in this room." };
+    t.spectators.add(user.userId);
+    emitFloor(t.roomId);
+  }
 
   let body = String(text || "").replace(/\s+/g, " ").trim().slice(0, CHAT_LEN);
   if (!body) return { ok: true };
@@ -968,12 +994,20 @@ function spectate(roomId, userId, tableId, on) {
   if (!t) return { err: "That game has finished." };
   if (t.seats.some((s) => s.userId === userId))
     return { err: "You are playing in this one." };
-  if (on) t.spectators.add(userId);
-  else t.spectators.delete(userId);
+  if (on) {
+    if (!t.spectators.has(userId)) {
+      t.spectators.add(userId);
+      const u = deps.userInfo(roomId, userId);
+      if (u) say(t, `${u.username} is watching`);
+    }
+  } else t.spectators.delete(userId);
   if (on) {
     toUser(roomId, userId, "games table", tableDetail(t, userId));
     syncCanvas(roomId, userId, t.id);
   }
+  // Everyone at the game needs the new count and name list, not just the
+  // person who started or stopped watching.
+  emitTable(t);
   emitFloor(roomId);
   return { ok: true };
 }
@@ -1159,6 +1193,13 @@ function tick() {
     for (const t of [...f.tables.values()]) {
       const rules = rulesFor(t.type);
       if (!rules) continue;
+
+      for (const uid of [...t.spectators]) {
+        if (!deps.userInfo(roomId, uid)) {
+          t.spectators.delete(uid);
+          floorChanged = true;
+        }
+      }
 
       for (const s of [...t.seats]) {
         if (deps.userInfo(roomId, s.userId)) {

@@ -246,33 +246,55 @@ your youth
 zeal zebra zero zigzag zinc zone zoo
 `;
 
-// Drawable prompts. Easy ones are shapes a beginner can manage in 80 seconds,
-// hard ones need a bit of storytelling. The drawer is offered one from each
-// tier so there is always a safe option.
+// Drawable prompts. Everything here is a concrete thing you can actually put
+// on a canvas in eighty seconds. No idioms, no abstract nouns: "cold feet" and
+// "social network" read fine in a word list and are miserable to draw.
+// Easy is one recognisable shape, medium needs a bit of care, hard is a small
+// scene. Multi word prompts use hyphens; prettyPrompt turns them back.
+
 const DRAW_EASY = `
-sun moon star cloud tree house car boat fish cat dog bird apple banana
-egg hat shoe sock ball cup key door book chair table bed clock heart
-flower leaf pizza cake candle balloon ladder umbrella snake bee cheese
-crown ghost robot rocket kite bridge camera guitar mountain rainbow snowman
-carrot pencil phone hammer bucket fence bone drum ring worm cactus
+sun moon star cloud rain snowflake tree flower leaf mushroom cactus
+house door window fence ladder bridge tent
+car bus truck boat plane train bicycle rocket
+cat dog fish bird snake bee spider ant frog turtle mouse owl duck pig cow sheep
+apple banana carrot pizza burger cake donut egg icecream cheese lollipop
+cup mug bottle spoon fork knife plate kettle
+hat shoe sock shirt glove scarf crown glasses watch ring
+ball kite balloon drum guitar bell whistle
+book pencil brush scissors hammer key lamp candle clock umbrella
+heart arrow flag box bag gift letter stamp coin dice
+eye hand foot smile ghost robot snowman
+anchor magnet battery wheel bone feather shell
 `;
 
 const DRAW_MEDIUM = `
-lighthouse windmill castle igloo tractor helicopter submarine skateboard
+lighthouse windmill castle igloo barn treehouse skyscraper church
+tractor helicopter submarine motorbike skateboard scooter ambulance fire-engine
+hot-air-balloon parachute sailboat canoe surfboard
 elephant giraffe penguin octopus butterfly dinosaur dolphin squirrel hedgehog
-scarecrow campfire treasure telescope microscope typewriter accordion
-volcano waterfall island desert jungle beehive anchor compass hourglass
-wheelbarrow trampoline lawnmower toaster blender vacuum backpack telescope
-sandcastle popcorn cupcake pretzel spaghetti sunflower mushroom lantern
+kangaroo camel flamingo peacock crab lobster snail jellyfish seahorse
+whale shark tiger lion monkey panda fox wolf horse rabbit
+campfire scarecrow telescope microscope typewriter lantern hourglass compass
+wheelbarrow trampoline lawnmower toaster blender backpack suitcase
+volcano waterfall island desert beehive cave rainbow tornado
+sandcastle popcorn pretzel spaghetti sunflower cupcake birthday-cake
+piano violin trumpet accordion drum-kit microphone headphones
+treasure-chest pirate-ship satellite planet comet
+traffic-light postbox park-bench street-lamp swing-set slide
 `;
 
 const DRAW_HARD = `
-traffic-jam brain-freeze time-travel food-fight snow-day roller-coaster
-haunted-house sleep-walking treasure-map alien-invasion pillow-fight
-double-rainbow first-date paper-jam social-network stage-fright
-message-in-a-bottle needle-in-a-haystack walking-the-dog burning-the-midnight-oil
-raining-cats-and-dogs breaking-the-ice piece-of-cake couch-potato
-early-bird night-owl cold-feet green-thumb bookworm daydream
+roller-coaster ferris-wheel haunted-house space-station lighthouse-in-a-storm
+birthday-party football-match traffic-jam snowman-melting cat-chasing-a-mouse
+dog-walking-a-person tug-of-war hot-dog-stand ice-cream-van vending-machine
+washing-machine escalator revolving-door chess-board bowling-alley
+cinema-screen art-gallery greenhouse aquarium zoo playground skate-park
+campsite farmyard marching-band orchestra juggler tightrope-walker magician
+knight-and-dragon wizard mermaid unicorn phoenix loch-ness-monster
+astronaut-on-the-moon diver-and-shark chef-in-a-kitchen barber-shop
+fishing-boat-at-sunset train-going-into-a-tunnel car-wash
+snowball-fight sandcastle-competition kite-festival hot-air-balloon-race
+robot-walking-a-dog alien-spaceship-landing dragon-breathing-fire
 `;
 
 function split(text) {
