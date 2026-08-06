@@ -204,6 +204,57 @@ function pruneArchived() {
   desk.threads = desk.threads.filter((t) => !drop.has(t.id));
 }
 
+// ── Mentions ────────────────────────────────────────────────────────────────
+// A mention is "@" followed by a staff label, matched against the real list of
+// labels rather than a word pattern: labels are free text and can carry spaces
+// and punctuation, so anything-after-an-@ would guess wrong constantly. Longest
+// label first, so "@Sam" never eats the mention of "@Sam T".
+function staffLabels() {
+  const out = new Set();
+  try {
+    for (const k of ctx.roles.listModKeys()) if (k.label) out.add(k.label);
+    for (const d of ctx.roles.listDevKeys()) if (d.label) out.add(d.label);
+  } catch (_) {}
+  if (io())
+    for (const [, s] of io().sockets.sockets)
+      if (s.connected && isStaff(s) && s.staffLabel) out.add(s.staffLabel);
+  return [...out].sort((a, b) => b.length - a.length);
+}
+
+function extractMentions(text) {
+  if (typeof text !== "string" || text.indexOf("@") === -1) return [];
+  const hit = [];
+  const low = text.toLowerCase();
+  for (const label of staffLabels()) {
+    const needle = "@" + label.toLowerCase();
+    let from = 0;
+    for (;;) {
+      const at = low.indexOf(needle, from);
+      if (at === -1) break;
+      from = at + needle.length;
+      const before = at > 0 ? text[at - 1] : "";
+      const after = text[from] || "";
+      // Not part of a word, an email address, or a longer name.
+      if (/[\w@#]/.test(before) || /\w/.test(after)) continue;
+      if (!hit.includes(label)) hit.push(label);
+      break;
+    }
+  }
+  return hit;
+}
+
+// Was this socket's holder named? Messages written before mentions were stored
+// fall back to the old substring test so old highlights do not disappear.
+function mentions(msg, socket) {
+  if (!socket.staffLabel) return false;
+  const mine = socket.staffLabel.toLowerCase();
+  if (Array.isArray(msg.mentions))
+    return msg.mentions.some((l) => String(l).toLowerCase() === mine);
+  return (
+    typeof msg.text === "string" && msg.text.toLowerCase().includes("@" + mine)
+  );
+}
+
 // ── Fan-out ─────────────────────────────────────────────────────────────────
 // Messages go to every eligible STAFF socket whether the Desk is open or not,
 // so the dock badge is always right. Volume is tiny: staff only.
@@ -211,10 +262,7 @@ function outbound(msg, socket) {
   const copy = { ...msg };
   // Edit and delete history is a dev-only view; a mod sees the tombstone.
   if (!socket.isDev) delete copy.history;
-  copy.mention =
-    !!socket.staffLabel &&
-    typeof msg.text === "string" &&
-    msg.text.toLowerCase().includes("@" + socket.staffLabel.toLowerCase());
+  copy.mention = mentions(msg, socket);
   return copy;
 }
 
@@ -410,19 +458,15 @@ function unreadFor(socket) {
     if (!canRead(socket, c.key)) continue;
     const since = read[c.key] || 0;
     let n = 0;
-    let mentions = 0;
+    let named = 0;
     for (let i = desk.channels[c.key].length - 1; i >= 0; i--) {
       const m = desk.channels[c.key][i];
       if (m.ts <= since) break;
       if (!canSeeMessage(socket, c.key, m)) continue;
       n++;
-      if (
-        m.text &&
-        m.text.toLowerCase().includes("@" + w.label.toLowerCase())
-      )
-        mentions++;
+      if (mentions(m, socket)) named++;
     }
-    out[c.key] = { n, mentions };
+    out[c.key] = { n, mentions: named };
   }
   for (const t of desk.threads) {
     const since = read[t.id] || 0;
@@ -434,6 +478,61 @@ function unreadFor(socket) {
     if (n) out[t.id] = { n, mentions: 0 };
   }
   return out;
+}
+
+// ── The team ────────────────────────────────────────────────────────────────
+// Everyone holding a key, on or off. It backs both the team view and the "@"
+// list, so it has to be right the moment a key is granted or pulled - hence
+// rosterDirty, which pushes it rather than waiting to be asked.
+function rosterFor(socket) {
+  const live = buildPresence(socket).staff;
+  const online = new Map(live.map((s) => [s.role + ":" + s.label, s]));
+
+  // Last time each staff label did anything, from the action log.
+  const lastBy = new Map();
+  try {
+    for (const s of ctx.audit.leaderboard())
+      lastBy.set((s.role || "mod") + ":" + s.label, s.last || null);
+  } catch (_) {}
+
+  const out = [...live];
+  try {
+    for (const k of ctx.roles.listModKeys()) {
+      const key = "mod:" + k.label;
+      if (online.has(key)) continue;
+      out.push({
+        label: k.label,
+        role: "mod",
+        level: k.level || 2,
+        offline: true,
+        lastActive: lastBy.get(key) || null,
+        grantedAt: k.grantedAt || null,
+        locations: [],
+      });
+    }
+    for (const d of ctx.roles.listDevKeys()) {
+      const key = "dev:" + d.label;
+      if (online.has(key)) continue;
+      out.push({
+        label: d.label,
+        role: "dev",
+        level: 0,
+        offline: true,
+        lastActive: lastBy.get(key) || null,
+        locations: [],
+      });
+    }
+  } catch (_) {}
+  return out;
+}
+
+// Somebody was granted a key, promoted, or removed: everybody's team list and
+// "@" list is now wrong until they are told.
+function rosterDirty() {
+  if (!io()) return;
+  for (const [, s] of io().sockets.sockets)
+    if (s.connected && s.deskHello && isStaff(s))
+      s.emit("desk roster", { staff: rosterFor(s) });
 }
 
 // ── Presence ────────────────────────────────────────────────────────────────
@@ -740,14 +839,45 @@ function register(socket, safe) {
             text: String(ref.msg.text || "").slice(0, 120),
           };
       }
+      // Who was named, worked out once here rather than by every reader.
+      const named = extractMentions(text);
       const msg = pushMessage(key, {
         ts: Date.now(),
         kind: "chat",
         author: w,
         text,
+        ...(named.length ? { mentions: named } : {}),
         ...(reply ? { reply } : {}),
       });
-      if (msg) broadcast(key, msg);
+      if (!msg) return;
+      broadcast(key, msg);
+      if (!named.length) return;
+
+      // Naming somebody is a ping. Whoever is on gets it now; whoever is off
+      // is not lost - it counts as an unread mention and is waiting for them
+      // the moment they sign back in. The sender is told which is which so
+      // they know whether to expect an answer.
+      const on = new Set();
+      const mine = idKeyOf(w);
+      for (const [, s] of io().sockets.sockets) {
+        if (!s.connected || !isStaff(s) || !s.staffLabel) continue;
+        const label = named.find(
+          (l) => l.toLowerCase() === s.staffLabel.toLowerCase(),
+        );
+        if (!label) continue;
+        on.add(label);
+        if (idKeyOf(who(s)) === mine) continue; // naming yourself pings nobody
+        if (!canSeeMessage(s, key, msg)) continue;
+        s.emit("desk mention", { key, id: msg.id, by: w.label });
+      }
+      socket.emit("desk mention receipt", {
+        key,
+        id: msg.id,
+        pinged: named,
+        offline: named.filter(
+          (l) => !on.has(l) && l.toLowerCase() !== w.label.toLowerCase(),
+        ),
+      });
     }),
   );
 
@@ -816,6 +946,11 @@ function register(socket, safe) {
       });
       ref.msg.text = text;
       ref.msg.editedAt = Date.now();
+      // An edit can add or drop a name. It re-marks the message, but it never
+      // re-pings: an edit is not a way to poke somebody twice.
+      const named = extractMentions(text);
+      if (named.length) ref.msg.mentions = named;
+      else delete ref.msg.mentions;
       scheduleSave();
       broadcast(ref.key, ref.msg, true);
     }),
@@ -932,46 +1067,7 @@ function register(socket, safe) {
     "desk roster",
     safe(async () => {
       if (!isStaff(socket)) return;
-      const live = buildPresence(socket).staff;
-      const online = new Map(live.map((s) => [s.role + ":" + s.label, s]));
-
-      // Last time each staff label did anything, from the action log.
-      const lastBy = new Map();
-      try {
-        for (const s of ctx.audit.leaderboard())
-          lastBy.set((s.role || "mod") + ":" + s.label, s.last || null);
-      } catch (_) { }
-
-      const out = [...live];
-      try {
-        for (const k of ctx.roles.listModKeys()) {
-          const key = "mod:" + k.label;
-          if (online.has(key)) continue;
-          out.push({
-            label: k.label,
-            role: "mod",
-            level: k.level || 2,
-            offline: true,
-            lastActive: lastBy.get(key) || null,
-            grantedAt: k.grantedAt || null,
-            locations: [],
-          });
-        }
-        for (const d of ctx.roles.listDevKeys()) {
-          const key = "dev:" + d.label;
-          if (online.has(key)) continue;
-          out.push({
-            label: d.label,
-            role: "dev",
-            level: 0,
-            offline: true,
-            lastActive: lastBy.get(key) || null,
-            locations: [],
-          });
-        }
-      } catch (_) { }
-
-      socket.emit("desk roster", { staff: out });
+      socket.emit("desk roster", { staff: rosterFor(socket) });
     }),
   );
 
@@ -1095,5 +1191,6 @@ module.exports = {
   systemQueues,
   noteEvent,
   presenceDirty,
+  rosterDirty,
   flushSync,
 };

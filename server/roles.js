@@ -17,9 +17,16 @@ const { DATA_DIR } = require("./datadir");
 const MOD_KEYS_PATH = path.join(DATA_DIR, "mod-keys.json");
 const MODLOG_PATH = path.join(DATA_DIR, "modlog.txt");
 const KEY_ACTIVITY_PATH = path.join(DATA_DIR, "key-activity.json");
+const FORMER_MODS_PATH = path.join(DATA_DIR, "former-mods.json");
 
 // In-memory mirror of mod-keys.json: [{ hash, label, level, grantedBy, grantedAt }]
 let modKeys = [];
+
+// Everyone whose key has been revoked, newest last. A removed moderator drops
+// out of the roster and off the leaderboard, but the fact that they were one -
+// and why they stopped being one - is kept.
+let formerMods = [];
+const FORMER_CAP = 300;
 
 // Which IPs each staff key has ever connected from, persisted so a leaked key
 // being used from a brand-new IP can be flagged even across restarts.
@@ -73,6 +80,37 @@ async function saveModKeys() {
   const tmp = MOD_KEYS_PATH + ".tmp";
   await fsp.writeFile(tmp, JSON.stringify(modKeys, null, 2), "utf8");
   await fsp.rename(tmp, MOD_KEYS_PATH);
+}
+
+function loadFormerMods() {
+  try {
+    const arr = JSON.parse(fs.readFileSync(FORMER_MODS_PATH, "utf8"));
+    formerMods = Array.isArray(arr)
+      ? arr
+          .filter((f) => f && typeof f.label === "string")
+          .map((f) => ({
+            hash: f.hash ? String(f.hash) : null,
+            label: String(f.label),
+            level: normalizeLevel(f.level),
+            grantedBy: f.grantedBy ? String(f.grantedBy) : null,
+            grantedAt: typeof f.grantedAt === "number" ? f.grantedAt : null,
+            removedAt: typeof f.removedAt === "number" ? f.removedAt : null,
+            removedBy: f.removedBy ? String(f.removedBy) : null,
+            reason: f.reason ? String(f.reason) : null,
+          }))
+      : [];
+  } catch (err) {
+    if (err.code !== "ENOENT")
+      console.error("Error loading former-mods.json:", err);
+    formerMods = [];
+  }
+  return formerMods;
+}
+
+async function saveFormerMods() {
+  const tmp = FORMER_MODS_PATH + ".tmp";
+  await fsp.writeFile(tmp, JSON.stringify(formerMods, null, 2), "utf8");
+  await fsp.rename(tmp, FORMER_MODS_PATH);
 }
 
 // Dev keys live in .env as DEV_KEY_HASH - a comma-separated list of
@@ -158,12 +196,68 @@ async function grantModKey(label, level, grantedBy) {
   return { key, hash: entry.hash, label: entry.label, level: entry.level };
 }
 
-async function revokeModKey(hash) {
-  const before = modKeys.length;
+// Removing a moderator writes a former-staff record: who they were, when the
+// key was minted, who pulled it and why. `reason` is what the panel asks the
+// developer for, and it is the only part of the record a human writes.
+async function revokeModKey(hash, opts) {
+  const gone = modKeys.find((k) => k.hash === hash);
+  if (!gone) return false;
   modKeys = modKeys.filter((k) => k.hash !== hash);
-  if (modKeys.length === before) return false;
   await saveModKeys();
+  formerMods.push({
+    hash: gone.hash,
+    label: gone.label,
+    level: normalizeLevel(gone.level),
+    grantedBy: gone.grantedBy || null,
+    grantedAt: gone.grantedAt || null,
+    removedAt: Date.now(),
+    removedBy: opts && opts.by ? String(opts.by).trim().slice(0, 60) : null,
+    reason:
+      opts && opts.reason
+        ? String(opts.reason).trim().slice(0, 300) || null
+        : null,
+  });
+  if (formerMods.length > FORMER_CAP)
+    formerMods = formerMods.slice(formerMods.length - FORMER_CAP);
+  try {
+    await saveFormerMods();
+  } catch (e) {
+    console.error("former-mods save failed:", e);
+  }
   return true;
+}
+
+// Former staff, newest first. `returned` marks somebody who has since been
+// given a key again - they are back on the live roster, so the panel does not
+// list them as gone.
+function listFormerMods() {
+  const active = new Set(modKeys.map((k) => k.label));
+  return formerMods
+    .slice()
+    .reverse()
+    .map((f) => ({
+      hash: f.hash,
+      label: f.label,
+      level: normalizeLevel(f.level),
+      grantedBy: f.grantedBy || null,
+      grantedAt: f.grantedAt || null,
+      removedAt: f.removedAt || null,
+      removedBy: f.removedBy || null,
+      reason: f.reason || null,
+      lastSeen: f.hash ? lastSeenForHash(f.hash) : null,
+      returned: active.has(f.label),
+    }));
+}
+
+// Labels that belong to nobody on staff any more. The leaderboard is a picture
+// of the current team, so these come off it - the work stays in the audit log
+// and in that person's record, which is what accountability needs.
+function formerLabels() {
+  const active = new Set(modKeys.map((k) => k.label));
+  for (const d of devKeys) active.add(d.label);
+  const out = new Set();
+  for (const f of formerMods) if (!active.has(f.label)) out.add(f.label);
+  return out;
 }
 
 // Changes a mod key's level in place (dev-only promote/demote). Returns the new
@@ -280,6 +374,7 @@ function getKeyActivity() {
 loadModKeys();
 loadDevKeys();
 loadKeyActivity();
+loadFormerMods();
 
 module.exports = {
   hashKey,
@@ -295,6 +390,8 @@ module.exports = {
   revokeModKey,
   setModLevel,
   listModKeys,
+  listFormerMods,
+  formerLabels,
   modLog,
   recordKeyUse,
   getKeyActivity,

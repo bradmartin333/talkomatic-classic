@@ -1451,7 +1451,11 @@
 
   // ── Moderators tab (dev only) ──
   let modKeys = [];
-  let modsFilter = "all"; // all | dev | l2 | l1 | active | inactive
+  // People whose key has been pulled. They are not staff any more, so they are
+  // kept out of the roster and off the leaderboard, and shown in their own
+  // list with the reason they stopped.
+  let formerMods = [];
+  let modsFilter = "all"; // all | dev | l2 | l1 | active | inactive | former
   // Turn a last-connected timestamp into a label + freshness colour, so a stale
   // (long-inactive) mod stands out at a glance.
   function lastSeenMeta(ts) {
@@ -1633,22 +1637,38 @@
       const revoke = document.createElement("button");
       revoke.className = "btn sm danger";
       revoke.appendChild(icon("fa-user-xmark"));
-      revoke.appendChild(document.createTextNode(" Revoke"));
+      revoke.appendChild(document.createTextNode(" Remove from staff"));
       revoke.addEventListener("click", async () => {
-        if (!window.StaffUI) {
-          socket.emit("dev revoke mod", { hash: k.hash });
-          return;
-        }
-        const ok = await StaffUI.confirm({
-          title: "Revoke mod",
+        if (!window.StaffUI) return;
+        // The reason is not optional: it is what the former-staff record says
+        // about this person from here on, and the server rejects an empty one.
+        const r = await StaffUI.prompt({
+          title: "Remove " + (k.label || "mod") + " from staff",
+          icon: '<i class="fas fa-user-xmark"></i>',
           message:
-            'Revoke "' +
+            'Their key stops working at once and "' +
             (k.label || "mod") +
-            '" immediately? Their access is removed at once.',
+            '" drops off the roster and the leaderboard. They stay in the ' +
+            "list below as a former moderator, with this reason attached.",
+          fields: [
+            {
+              name: "reason",
+              label: "Why are they no longer a moderator?",
+              type: "textarea",
+              placeholder:
+                "e.g. Stepped down. / Inactive for months. / Banned users out of a grudge.",
+              required: true,
+              maxLength: 300,
+            },
+          ],
           danger: true,
-          confirmText: "Revoke",
+          confirmText: "Remove from staff",
         });
-        if (ok) socket.emit("dev revoke mod", { hash: k.hash });
+        if (r && r.reason && r.reason.trim())
+          socket.emit("dev revoke mod", {
+            hash: k.hash,
+            reason: r.reason.trim(),
+          });
       });
       actions.appendChild(revoke);
     }
@@ -2473,95 +2493,230 @@
       wrap.appendChild(banner);
     }
 
-    // Ranked on work done to users, so a total padded with room renames and
-    // notes does not climb the board.
-    const top = leaderboard[0].onUsers || 1;
-    const table = divc("board");
-    leaderboard.slice(0, 12).forEach((s, i) => {
-      const rank = s.role === "dev" ? "dev" : s.modLevel === 1 ? "l1" : "l2";
-      const row = divc("board-row rank-" + rank);
-      row.appendChild(span("board-pos", "#" + (i + 1)));
-      const av = divc("avatar board-av");
-      av.style.background =
-        rank === "dev"
-          ? "var(--red)"
-          : rank === "l1"
-            ? "var(--purple)"
-            : "var(--blue)";
-      av.textContent = initialOf(s.label);
-      row.appendChild(av);
+    // One number decides the order: actions that landed on a person. It is
+    // said in words under the podium so nobody has to guess what is being
+    // ranked, and it is the same number the promotion bar uses.
+    const rankOf = (s) =>
+      s.role === "dev" ? "dev" : s.modLevel === 1 ? "l1" : "l2";
+    const rankName = (r) => (r === "dev" ? "DEV" : r === "l1" ? "MOD L1" : "MOD L2");
+    const rankColor = (r) =>
+      r === "dev" ? "var(--red)" : r === "l1" ? "var(--purple)" : "var(--blue)";
+    const countTitle = (s) =>
+      s.useful +
+      " actions that were not passive, " +
+      s.total +
+      " logged in total. Only work that landed on a person is ranked here.";
+    const recentLine = (s) =>
+      s.recentOnUsers
+        ? s.recentOnUsers + " in the last 30 days"
+        : s.recentUseful
+          ? "Nothing on users in 30 days"
+          : "Quiet for 30 days";
 
-      const who = divc("board-who");
-      who.appendChild(span("board-name", s.label));
-      const meta = divc("board-meta");
-      meta.appendChild(
-        span(
-          "chip " + (rank === "dev" ? "dev" : rank),
-          rank === "dev" ? "DEV" : rank === "l1" ? "MOD L1" : "MOD L2",
-        ),
-      );
-      if (s.recentOnUsers)
-        meta.appendChild(
-          span("board-recent", s.recentOnUsers + " on users in 30 days"),
+    const board = divc("lb");
+
+    // ── Podium: the top three, tallest in the middle ──
+    const top3 = leaderboard.slice(0, 3);
+    if (top3.length) {
+      const podium = divc("lb-podium");
+      // Second, first, third - the shape a podium actually has.
+      const order = top3.length >= 3 ? [1, 0, 2] : top3.length === 2 ? [1, 0] : [0];
+      order.forEach((idx) => {
+        const s = top3[idx];
+        if (!s) return;
+        const place = idx + 1;
+        const rank = rankOf(s);
+        const col = divc("pod p" + place + " rank-" + rank);
+
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "pod-card";
+        card.title = countTitle(s);
+
+        const medal = divc("pod-medal");
+        medal.appendChild(icon(place === 1 ? "fa-crown" : "fa-medal"));
+        card.appendChild(medal);
+
+        const av = divc("avatar pod-av");
+        av.style.background = rankColor(rank);
+        av.textContent = initialOf(s.label);
+        card.appendChild(av);
+
+        card.appendChild(span("pod-name", s.label));
+        card.appendChild(span("chip " + rank, rankName(rank)));
+
+        const n = divc("pod-n");
+        n.appendChild(span("pod-num", String(s.onUsers || 0)));
+        n.appendChild(span("pod-unit", "actions on users"));
+        card.appendChild(n);
+        card.appendChild(span("pod-recent", recentLine(s)));
+
+        card.addEventListener("click", () =>
+          openModHistory({ label: s.label, rank }),
         );
-      else if (s.recentUseful)
-        meta.appendChild(
-          span("board-recent", s.recentUseful + " in 30 days, none on users"),
+        col.appendChild(card);
+
+        // The block under the card: taller for first, and it carries the place.
+        const base = divc("pod-base");
+        base.appendChild(span("pod-place", String(place)));
+        col.appendChild(base);
+        podium.appendChild(col);
+      });
+      board.appendChild(podium);
+    }
+
+    const note = divc("lb-note");
+    note.textContent =
+      "Ranked by actions that landed on a person - kicks, warns, bans, " +
+      "unbans. Tidying rooms, reading queues and writing notes are counted " +
+      "separately and never move anybody up. Click anyone to read their record.";
+    board.appendChild(note);
+
+    // ── Fourth place down: a plain list, biggest number on the right ──
+    const rest = leaderboard.slice(3, 20);
+    if (rest.length) {
+      const list = divc("lb-list");
+      rest.forEach((s, i) => {
+        const place = i + 4;
+        const rank = rankOf(s);
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "lb-row rank-" + rank;
+        row.title = countTitle(s);
+
+        row.appendChild(span("lb-place", String(place)));
+
+        const av = divc("avatar lb-av");
+        av.style.background = rankColor(rank);
+        av.textContent = initialOf(s.label);
+        row.appendChild(av);
+
+        const who = divc("lb-who");
+        const line = divc("lb-line");
+        line.appendChild(span("lb-name", s.label));
+        line.appendChild(span("chip " + rank, rankName(rank)));
+        who.appendChild(line);
+        who.appendChild(span("lb-recent", recentLine(s)));
+        row.appendChild(who);
+
+        const n = divc("lb-n");
+        n.appendChild(span("lb-num", String(s.onUsers || 0)));
+        n.appendChild(span("lb-unit", "on users"));
+        row.appendChild(n);
+
+        row.addEventListener("click", () =>
+          openModHistory({ label: s.label, rank }),
         );
-      who.appendChild(meta);
-      row.appendChild(who);
+        list.appendChild(row);
+      });
+      board.appendChild(list);
+    }
 
-      // A bar makes the gap between a busy mod and a quiet one obvious.
-      const barWrap = divc("board-barwrap");
-      const bar = divc("board-bar");
-      const fill = divc("board-fill");
-      fill.style.width = Math.max(2, Math.round((s.onUsers / top) * 100)) + "%";
-      bar.appendChild(fill);
-      barWrap.appendChild(bar);
-      const split = divc("board-split");
-      const bit = (n, label, cls) => {
-        if (!n) return;
-        const b = span("board-bit " + cls, n + " " + label);
-        split.appendChild(b);
-      };
-      bit(s.onUsers, "on users", "b-enf");
-      bit(s.queues, "queues", "b-rev");
-      bit(s.rooms, "rooms", "b-room");
-      bit(s.records, "notes", "b-rec");
-      barWrap.appendChild(split);
-      row.appendChild(barWrap);
-
-      const n = divc("board-n");
-      n.appendChild(span("board-useful", String(s.onUsers || 0)));
-      n.appendChild(span("board-unit", "on users"));
-      n.title =
-        s.useful +
-        " actions that were not passive, " +
-        s.total +
-        " logged in total. Only work that landed on a person is ranked here.";
-      row.appendChild(n);
-
-      row.addEventListener("click", () =>
-        openModHistory({ label: s.label, rank }),
-      );
-      table.appendChild(row);
-    });
-    wrap.appendChild(table);
+    wrap.appendChild(board);
   }
+
+  // A former moderator's card. No actions on it: there is no key left to act
+  // on, and the record is the point.
+  function buildFormerCard(f) {
+    const card = divc("modcard former");
+
+    const top = divc("mc-top");
+    const av = divc("avatar");
+    av.style.background = "var(--dim2)";
+    av.textContent = initialOf(f.label);
+    top.appendChild(av);
+    const title = divc("mc-title");
+    title.appendChild(span("nm", f.label || "staff"));
+    title.appendChild(
+      span("chip former", f.level === 1 ? "WAS MOD L1" : "WAS MOD L2"),
+    );
+    top.appendChild(title);
+    top.appendChild(span("former-tag", "No longer a moderator"));
+    card.appendChild(top);
+
+    const why = divc("former-why");
+    why.appendChild(span("former-why-k", "Why"));
+    why.appendChild(
+      span("former-why-v" + (f.reason ? "" : " dim"), f.reason || "Not given"),
+    );
+    card.appendChild(why);
+
+    const grid = divc("mc-grid");
+    grid.appendChild(
+      modStat(
+        "Removed",
+        f.removedAt ? relTime(f.removedAt) : "Unknown",
+        f.removedAt ? null : "dim",
+        f.removedAt ? fmtTime(f.removedAt) : null,
+      ),
+    );
+    grid.appendChild(
+      modStat("Removed by", f.removedBy || "Unknown", f.removedBy ? null : "dim"),
+    );
+    grid.appendChild(
+      modStat("Was granted by", f.grantedBy || "Unknown", f.grantedBy ? null : "dim"),
+    );
+    grid.appendChild(
+      modStat(
+        "Held the key",
+        f.grantedAt && f.removedAt
+          ? Math.max(1, Math.round((f.removedAt - f.grantedAt) / 86400000)) +
+              " days"
+          : "Unknown",
+        f.grantedAt && f.removedAt ? null : "dim",
+      ),
+    );
+    card.appendChild(grid);
+
+    // Their record outlives the key: what they did while they held it is still
+    // readable, which is the whole point of keeping the name.
+    const actions = divc("mc-actions");
+    const histBtn = document.createElement("button");
+    histBtn.className = "btn sm";
+    histBtn.appendChild(icon("fa-clock-rotate-left"));
+    histBtn.appendChild(document.createTextNode(" Their record"));
+    histBtn.title = "Everything " + (f.label || "this person") + " did as staff";
+    histBtn.addEventListener("click", () =>
+      openModHistory({ label: f.label, rank: f.level === 1 ? "l1" : "l2" }),
+    );
+    actions.appendChild(histBtn);
+    card.appendChild(actions);
+    return card;
+  }
+
+  // Former staff, minus anybody who has since been given a key again - they
+  // are back on the live roster, so listing them as gone would be a lie.
+  const goneStaff = () => formerMods.filter((f) => !f.returned);
 
   function renderMods() {
     const wrap = $("modsList");
     if (!wrap) return;
     wrap.textContent = "";
     const roster = buildStaffRoster();
+    const gone = goneStaff();
     $("modsBadge").textContent = String(modKeys.length);
     const onlineCount = roster.filter((m) => m.online).length;
     $("modsSub").textContent = roster.length
       ? roster.length +
         " staff  ·  " +
         onlineCount +
-        " online now"
+        " online now" +
+        (gone.length ? "  ·  " + gone.length + " former" : "")
       : "No staff yet";
+
+    // Former staff are not on the roster at all, so this filter renders its
+    // own list rather than a subset of one.
+    if (modsFilter === "former") {
+      if (!gone.length) {
+        wrap.appendChild(
+          emptyBox("fa-user-xmark", "Nobody has been removed from staff."),
+        );
+        return;
+      }
+      gone.forEach((f) => wrap.appendChild(buildFormerCard(f)));
+      return;
+    }
+
     let list = roster;
     if (modsFilter === "dev" || modsFilter === "l2" || modsFilter === "l1")
       list = roster.filter((m) => m.rank === modsFilter);
@@ -2589,6 +2744,22 @@
       return;
     }
     list.forEach((m) => wrap.appendChild(buildModCard(m)));
+
+    // On "Everyone", the people who used to hold a key follow the team, below
+    // a line, so nobody mistakes them for current staff.
+    if (modsFilter === "all" && gone.length) {
+      const div = divc("mods-divider");
+      div.appendChild(icon("fa-user-xmark"));
+      div.appendChild(span("md-t", "No longer moderators"));
+      div.appendChild(
+        span(
+          "md-s",
+          "Off the roster and off the leaderboard. Their record stays readable.",
+        ),
+      );
+      wrap.appendChild(div);
+      gone.forEach((f) => wrap.appendChild(buildFormerCard(f)));
+    }
   }
   async function grantMod() {
     if (!window.StaffUI) return;
@@ -4461,6 +4632,14 @@
   socket.on("dev mod keys", (list) => {
     modKeys = Array.isArray(list) ? list : [];
     renderMods();
+  });
+
+  socket.on("dev former mods", (list) => {
+    formerMods = Array.isArray(list) ? list : [];
+    renderMods();
+    // Somebody coming off staff comes off the board too; ask for it again so
+    // the two panels cannot disagree.
+    socket.emit("staff get mod leaderboard");
   });
 
   socket.on("mod applications", (list) => {

@@ -5958,6 +5958,9 @@ function registerSocketHandlers(opts) {
           level: granted.level,
         });
         socket.emit("dev mod keys", roles.listModKeys());
+        // A new name has to show up in everyone's team list and "@" list now,
+        // not whenever they next open the Desk.
+        staffchat.rosterDirty();
       }),
     );
 
@@ -5971,7 +5974,21 @@ function registerSocketHandlers(opts) {
             "error",
             createErrorResponse(ERROR_CODES.BAD_REQUEST, "hash required."),
           );
-        const ok = await roles.revokeModKey(hash);
+        // Why somebody stopped being a moderator is part of the record, so the
+        // panel asks for it and the server insists on it.
+        const reason = String(data?.reason || "").trim().slice(0, 300);
+        if (!reason)
+          return socket.emit(
+            "error",
+            createErrorResponse(
+              ERROR_CODES.BAD_REQUEST,
+              "Say why this moderator is being removed.",
+            ),
+          );
+        const ok = await roles.revokeModKey(hash, {
+          reason,
+          by: socket.staffLabel || "dev",
+        });
         if (ok) {
           // Live-downgrade any connected socket using this key
           for (const [, s] of io().sockets.sockets) {
@@ -5996,6 +6013,8 @@ function registerSocketHandlers(opts) {
         }
         logStaff(socket, "revoke mod", hash.slice(0, 8), "-");
         socket.emit("dev mod keys", roles.listModKeys());
+        socket.emit("dev former mods", roles.listFormerMods());
+        staffchat.rosterDirty();
         socket.emit("staff action result", {
           action: "revoke mod",
           ok,
@@ -6016,6 +6035,18 @@ function registerSocketHandlers(opts) {
           socket.isDev
             ? keys
             : keys.map((k) => ({ ...k, hash: String(k.hash || "").slice(0, 8) })),
+        );
+        // Who used to be staff rides along with the roster - the panel shows
+        // them apart from it, marked as no longer moderators.
+        const former = roles.listFormerMods();
+        socket.emit(
+          "dev former mods",
+          socket.isDev
+            ? former
+            : former.map((f) => ({
+                ...f,
+                hash: String(f.hash || "").slice(0, 8),
+              })),
         );
       }),
     );
@@ -6060,6 +6091,7 @@ function registerSocketHandlers(opts) {
         }
         logStaff(socket, `set mod level L${newLevel}`, hash.slice(0, 8), "-");
         socket.emit("dev mod keys", roles.listModKeys());
+        staffchat.rosterDirty();
         socket.emit("staff action result", {
           action: "set mod level",
           ok: true,
@@ -6130,6 +6162,7 @@ function registerSocketHandlers(opts) {
           room || "-",
         );
         socket.emit("dev mod keys", roles.listModKeys());
+        staffchat.rosterDirty();
         socket.emit("staff action result", {
           action: "set mod level",
           ok: applied > 0,
@@ -6250,7 +6283,11 @@ function registerSocketHandlers(opts) {
       "staff get mod leaderboard",
       safe(async () => {
         if (!requireStaff(socket)) return;
-        const board = audit.leaderboard();
+        // Somebody who is no longer on staff comes off the board entirely.
+        // Their work is still in the audit log and in their record; the board
+        // is only ever a picture of the team as it stands today.
+        const former = roles.formerLabels();
+        const board = audit.leaderboard().filter((s) => !former.has(s.label));
         // Attach the live rank so the board can colour rows and tell juniors
         // apart from full mods without a second lookup.
         const levelByLabel = new Map(
@@ -7315,6 +7352,7 @@ function registerSocketHandlers(opts) {
         });
         // Only devs receive the full key roster (hashes/labels/levels).
         if (socket.isDev) socket.emit("dev mod keys", roles.listModKeys());
+        staffchat.rosterDirty();
       }),
     );
 
@@ -7347,11 +7385,25 @@ function registerSocketHandlers(opts) {
               "That user is not a moderator.",
             ),
           );
+        // Same rule as the Moderators tab: nobody comes off staff without a
+        // reason on the record.
+        const reason = String(data?.reason || "").trim().slice(0, 300);
+        if (!reason)
+          return socket.emit(
+            "error",
+            createErrorResponse(
+              ERROR_CODES.BAD_REQUEST,
+              "Say why this moderator is being removed.",
+            ),
+          );
         const roomId = getUserCurrentRoom(targetUserId);
         const room = roomId ? state.rooms.get(roomId) : null;
         const targetUser = room?.users.find((u) => u.id === targetUserId);
         for (const hash of hashes) {
-          await roles.revokeModKey(hash);
+          await roles.revokeModKey(hash, {
+            reason,
+            by: socket.staffLabel || "dev",
+          });
           // Live-downgrade every socket using this key
           for (const [, s] of io().sockets.sockets) {
             if (s.isMod && s.modKeyHash === hash) {
@@ -7380,6 +7432,8 @@ function registerSocketHandlers(opts) {
           room || "-",
         );
         socket.emit("dev mod keys", roles.listModKeys());
+        socket.emit("dev former mods", roles.listFormerMods());
+        staffchat.rosterDirty();
         socket.emit("staff action result", {
           action: "remove mod",
           ok: true,

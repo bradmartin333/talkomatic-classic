@@ -1811,6 +1811,80 @@
         border-top: 1px solid var(--line-soft);
       }
 
+      /* ── No longer moderators ──
+         Deliberately drained of colour: a former mod must never read like a
+         current one at a glance. The reason sits above the stats because it is
+         the thing anyone opening this list came to find out. */
+      .mods-divider {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-top: 0.5rem;
+        padding-top: 0.875rem;
+        border-top: 1px solid var(--line);
+        color: var(--dim);
+        font-size: 0.8125rem;
+        font-weight: bold;
+      }
+      .mods-divider .md-s {
+        font-weight: normal;
+        font-size: 0.75rem;
+        color: var(--dim2);
+      }
+      .modcard.former {
+        border-left-color: var(--dim2);
+        opacity: 0.92;
+      }
+      .modcard.former:hover {
+        border-color: var(--dim);
+        border-left-color: var(--dim);
+      }
+      .modcard.former .mc-title .nm {
+        color: var(--dim);
+        text-decoration: line-through;
+        text-decoration-color: var(--dim2);
+      }
+      .chip.former {
+        background: transparent;
+        border: 1px solid var(--line);
+        color: var(--dim2);
+      }
+      .former-tag {
+        font-size: 0.6875rem;
+        font-weight: bold;
+        letter-spacing: 0.3px;
+        color: var(--red);
+        white-space: nowrap;
+      }
+      .former-why {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1875rem;
+        margin-top: 0.75rem;
+        padding: 0.5rem 0.625rem;
+        background: var(--tile);
+        border-left: 2px solid var(--red);
+        border-radius: 0 0.25rem 0.25rem 0;
+      }
+      .former-why-k {
+        font-size: 0.6563rem;
+        font-weight: bold;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: var(--dim2);
+      }
+      .former-why-v {
+        font-size: 0.8438rem;
+        color: var(--txt);
+        line-height: 1.5;
+        word-break: break-word;
+      }
+      .former-why-v.dim {
+        color: var(--dim2);
+      }
+
       /* ── Team workload board ── */
       .promo-banner {
         display: flex;
@@ -1839,136 +1913,286 @@
         line-height: 1.55;
         margin-top: 0.125rem;
       }
-      .board {
+      /* The board is a podium plus a list. There is exactly one number on it -
+         actions that landed on a person - and it is written out in full under
+         the podium. Nothing here is a bar or a percentage: a bar invites the
+         question "out of what?", and the honest answer was "the person above
+         you", which told nobody anything. */
+      .lb {
+        display: flex;
+        flex-direction: column;
+        gap: 0.875rem;
+      }
+      .lb-podium {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        align-items: end;
+        gap: 0.625rem;
+      }
+      .pod {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .pod-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.3125rem;
+        width: 100%;
+        text-align: center;
+        font: inherit;
+        color: var(--txt);
+        background: var(--card);
+        border: 1px solid var(--line-soft);
+        border-bottom: none;
+        border-radius: 0.375rem 0.375rem 0 0;
+        padding: 0.875rem 0.625rem 0.75rem;
+        cursor: pointer;
+        transition:
+          background-color 0.12s ease,
+          border-color 0.12s ease;
+      }
+      .pod-card:hover {
+        background: var(--tile);
+        border-color: var(--orange);
+      }
+      .pod-medal {
+        font-size: 0.9375rem;
+        line-height: 1;
+        color: var(--dim2);
+      }
+      .p1 .pod-medal {
+        color: #ffc107;
+        font-size: 1.125rem;
+      }
+      .p2 .pod-medal {
+        color: #cfd8dc;
+      }
+      .p3 .pod-medal {
+        color: #d09a6a;
+      }
+      .pod-av {
+        width: 2.75rem;
+        height: 2.75rem;
+        font-size: 1.125rem;
+        border-radius: 0.375rem;
+      }
+      .p1 .pod-av {
+        width: 3.25rem;
+        height: 3.25rem;
+        font-size: 1.375rem;
+      }
+      .pod-name {
+        font-weight: bold;
+        font-size: 0.9375rem;
+        max-width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .pod .pod-n {
+        margin-top: 0.25rem;
+      }
+      .pod-num {
+        display: block;
+        font-size: 1.5rem;
+        font-weight: bold;
+        line-height: 1.1;
+        color: var(--orange);
+        font-variant-numeric: tabular-nums;
+      }
+      .p1 .pod-num {
+        font-size: 1.875rem;
+      }
+      .pod-unit {
+        display: block;
+        font-size: 0.6563rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--dim2);
+      }
+      .pod-recent {
+        font-size: 0.6875rem;
+        color: var(--dim2);
+      }
+      /* The block under the card. Its height is the only thing that says who
+         came first at a glance. */
+      .pod-base {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--line-soft);
+        border-radius: 0 0 0.25rem 0.25rem;
+        background: var(--tile);
+      }
+      .p1 .pod-base {
+        height: 3.25rem;
+        background: rgba(255, 152, 0, 0.16);
+        border-color: rgba(255, 152, 0, 0.4);
+      }
+      .p2 .pod-base {
+        height: 2.25rem;
+      }
+      .p3 .pod-base {
+        height: 1.625rem;
+      }
+      .pod-place {
+        font-size: 1.125rem;
+        font-weight: bold;
+        color: var(--dim2);
+        font-variant-numeric: tabular-nums;
+      }
+      .p1 .pod-place {
+        color: var(--orange);
+        font-size: 1.375rem;
+      }
+      .lb-note {
+        font-size: 0.75rem;
+        color: var(--dim2);
+        line-height: 1.6;
+      }
+      .lb-list {
         border: 1px solid var(--line-soft);
         border-radius: 0.3125rem;
         overflow: hidden;
       }
-      .board-row {
+      .lb-row {
         display: grid;
-        grid-template-columns: 2.125rem 2.125rem minmax(0, 1fr) minmax(0, 2fr) 4.625rem;
+        grid-template-columns: 1.75rem 2rem minmax(0, 1fr) 4.5rem;
         align-items: center;
-        gap: 0.6875rem;
+        gap: 0.75rem;
+        width: 100%;
+        text-align: left;
+        font: inherit;
+        color: var(--txt);
         padding: 0.5625rem 0.8125rem;
         background: var(--card);
+        border: none;
         border-top: 1px solid var(--line-soft);
         border-left: 3px solid var(--line);
         cursor: pointer;
         transition: background-color 0.12s ease;
       }
-      .board-row:first-child {
+      .lb-row:first-child {
         border-top: none;
       }
-      .board-row:hover {
+      .lb-row:hover {
         background: var(--tile);
       }
-      .board-row.rank-dev {
+      .lb-row.rank-dev {
         border-left-color: var(--red);
       }
-      .board-row.rank-l2 {
+      .lb-row.rank-l2 {
         border-left-color: var(--blue);
       }
-      .board-row.rank-l1 {
+      .lb-row.rank-l1 {
         border-left-color: var(--purple);
       }
-      .board-pos {
-        font-size: 0.7813rem;
+      .lb-place {
+        font-size: 0.875rem;
         font-weight: bold;
         color: var(--dim2);
         font-variant-numeric: tabular-nums;
+        text-align: center;
       }
-      .board-av {
-        width: 1.875rem;
-        height: 1.875rem;
-        font-size: 0.8125rem;
+      .lb-av {
+        width: 2rem;
+        height: 2rem;
+        font-size: 0.875rem;
         border-radius: 0.3125rem;
       }
-      .board-who {
+      .lb-who {
         min-width: 0;
       }
-      .board-name {
-        display: block;
+      .lb-line {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        min-width: 0;
+      }
+      .lb-name {
         font-weight: bold;
         font-size: 0.875rem;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      .board-meta {
-        display: flex;
-        align-items: center;
-        gap: 0.4375rem;
-        margin-top: 0.125rem;
-        flex-wrap: wrap;
-      }
-      .board-recent {
+      .lb-recent {
+        display: block;
         font-size: 0.6875rem;
         color: var(--dim2);
+        margin-top: 0.0625rem;
       }
-      .board-barwrap {
-        min-width: 0;
-      }
-      .board-bar {
-        height: 0.4375rem;
-        background: var(--tile);
-        border-radius: 0.25rem;
-        overflow: hidden;
-      }
-      .board-fill {
-        height: 100%;
-        background: var(--orange);
-      }
-      .rank-dev .board-fill {
-        background: var(--red);
-      }
-      .rank-l2 .board-fill {
-        background: var(--blue);
-      }
-      .rank-l1 .board-fill {
-        background: var(--purple);
-      }
-      .board-split {
-        display: flex;
-        gap: 0.5rem;
-        flex-wrap: wrap;
-        margin-top: 0.25rem;
-      }
-      .board-bit {
-        font-size: 0.6563rem;
-        color: var(--dim2);
-      }
-      .board-bit.b-enf {
-        color: var(--amber);
-      }
-      .board-bit.b-rev {
-        color: var(--green);
-      }
-      .board-bit.b-room {
-        color: var(--blue);
-      }
-      .board-n {
+      .lb-n {
         text-align: right;
       }
-      .board-useful {
+      .lb-num {
         display: block;
         font-size: 1rem;
         font-weight: bold;
         color: var(--txt);
         font-variant-numeric: tabular-nums;
       }
-      .board-unit {
+      .lb-unit {
         display: block;
         font-size: 0.625rem;
         color: var(--dim2);
         text-transform: uppercase;
         letter-spacing: 0.4px;
       }
+      /* On a narrow panel the podium stops being a podium: three even cards,
+         first at the top, still numbered. */
       @media (max-width: 51.25rem) {
-        .board-row {
-          grid-template-columns: 1.75rem 1.875rem minmax(0, 1fr) 4.125rem;
+        .lb-podium {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 0.5rem;
         }
-        .board-barwrap {
+        .pod-card {
+          flex-direction: row;
+          align-items: center;
+          text-align: left;
+          gap: 0.625rem;
+          border-bottom: 1px solid var(--line-soft);
+          border-radius: 0.375rem 0.375rem 0 0;
+          padding: 0.625rem 0.75rem;
+        }
+        .pod-card .pod-name {
+          flex: 1;
+        }
+        .p1 .pod-av,
+        .pod-av {
+          width: 2.25rem;
+          height: 2.25rem;
+          font-size: 1rem;
+        }
+        .pod .pod-n {
+          margin-top: 0;
+          text-align: right;
+        }
+        .p1 .pod-num,
+        .pod-num {
+          font-size: 1.25rem;
+        }
+        .pod-recent {
           display: none;
+        }
+        .p1 .pod-base,
+        .p2 .pod-base,
+        .p3 .pod-base {
+          height: 1.375rem;
+        }
+        .pod.p1 {
+          order: 1;
+        }
+        .pod.p2 {
+          order: 2;
+        }
+        .pod.p3 {
+          order: 3;
+        }
+        .lb-row {
+          grid-template-columns: 1.5rem 1.875rem minmax(0, 1fr) 4rem;
         }
       }
 
@@ -3713,8 +3937,8 @@
             <i class="fas fa-ranking-star lead" style="color: #ffc107"></i>
             Who is doing the work
             <span class="sub">
-              Passive things like spectating are not counted. Click a row to
-              open that person's record.
+              One number: actions that landed on a person. Watching a room is
+              not work and is not counted.
             </span>
           </div>
           <div id="modBoard"></div>
@@ -3731,6 +3955,7 @@
               <button data-m="l1">Junior mods</button>
               <button data-m="active">Active</button>
               <button data-m="inactive">Inactive</button>
+              <button data-m="former">No longer mods</button>
             </div>
           </div>
           <div id="modsList" class="grid3"></div>

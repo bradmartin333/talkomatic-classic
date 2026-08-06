@@ -4319,15 +4319,30 @@ function openUserStaffMenu(user) {
         desc: "Revoke this user's mod key now",
         danger: true,
         onClick: async () => {
-          if (
-            await StaffUI.confirm({
-              title: "Remove mod",
-              message: `Demote ${name} back to a normal user? Their mod key is revoked immediately.`,
-              danger: true,
-              confirmText: "Remove mod",
-            })
-          )
-            socket.emit("dev revoke mod from user", { targetUserId: user.id });
+          // The reason goes on their former-staff record in the dashboard, so
+          // it is asked for here too rather than only in the Moderators tab.
+          const r = await StaffUI.prompt({
+            title: "Remove mod",
+            icon: '<i class="fas fa-user-xmark"></i>',
+            message: `Demote ${name} back to a normal user? Their mod key is revoked immediately.`,
+            fields: [
+              {
+                name: "reason",
+                label: "Why are they no longer a moderator?",
+                type: "textarea",
+                placeholder: "e.g. Stepped down, inactive, abused the role",
+                required: true,
+                maxLength: 300,
+              },
+            ],
+            danger: true,
+            confirmText: "Remove mod",
+          });
+          if (r && r.reason && r.reason.trim())
+            socket.emit("dev revoke mod from user", {
+              targetUserId: user.id,
+              reason: r.reason.trim(),
+            });
         },
       });
     }

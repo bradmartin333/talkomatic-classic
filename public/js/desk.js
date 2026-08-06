@@ -101,7 +101,8 @@
 
   const rankOf = (a) =>
     !a ? null : a.role === "dev" ? "dev" : (a.level || 2) >= 2 ? "l2" : "l1";
-  const rankName = (r) => (r === "dev" ? "DEV" : r === "l2" ? "MOD L2" : "MOD L1");
+  const rankName = (r) =>
+    r === "dev" ? "DEV" : r === "l2" ? "MOD L2" : "MOD L1";
 
   // First visible character of a name, without splitting a surrogate pair -
   // charAt(0) turns fancy unicode names into broken squares.
@@ -118,15 +119,22 @@
     if (!av || !PFP_ID_RE.test(av.id || "") || !PFP_HASH_RE.test(av.hash || ""))
       return null;
     return (
-      "https://cdn.discordapp.com/avatars/" + av.id + "/" + av.hash +
-      ".webp?size=" + (size || 64)
+      "https://cdn.discordapp.com/avatars/" +
+      av.id +
+      "/" +
+      av.hash +
+      ".webp?size=" +
+      (size || 64)
     );
   }
 
   // The round face next to a message or presence row: their picture when they
   // have one, their initial when they do not.
   function faceEl(author, cls) {
-    const wrap = el("span", "dk-av " + (cls || "") + " " + (rankOf(author) || ""));
+    const wrap = el(
+      "span",
+      "dk-av " + (cls || "") + " " + (rankOf(author) || ""),
+    );
     const url = author && avatarUrl(author.avatar, 64);
     if (url) {
       const img = document.createElement("img");
@@ -145,13 +153,151 @@
     return wrap;
   }
 
+  // ── Names: #channels and @people ──────────────────────────────────────────
+  // Both are written the same way you write them anywhere else, and both are
+  // matched against a known list rather than a pattern - staff labels can have
+  // spaces and punctuation in them, so "anything after an @" would guess wrong
+  // more often than it guessed right.
+  let nameIndex = null; // { re, people: Map(lowercase label -> person) }
+
+  function forgetNames() {
+    nameIndex = null;
+  }
+
+  function channelLabel(key) {
+    const c = channels.find((x) => x.key === key);
+    if (c) return "#" + c.name;
+    const t = threads.find((x) => x.id === key);
+    return t ? t.title : "the Desk";
+  }
+
+  // Everyone who can be mentioned: the whole team from the roster, with
+  // whoever is on right now folded in so the list is right even before the
+  // roster lands.
+  function mentionPeople() {
+    const by = new Map();
+    const add = (s, online) => {
+      if (!s || !s.label) return;
+      const k = s.label.toLowerCase();
+      const row = by.get(k);
+      if (row) {
+        if (online) row.online = true;
+        if (!row.avatar && s.avatar) row.avatar = s.avatar;
+        return;
+      }
+      by.set(k, {
+        label: s.label,
+        role: s.role || "mod",
+        level: s.level,
+        avatar: s.avatar || null,
+        online: !!online,
+      });
+    };
+    for (const s of roster || []) add(s, !s.offline);
+    for (const s of (presence && presence.staff) || []) add(s, true);
+    return [...by.values()].sort(
+      (a, b) =>
+        (b.online ? 1 : 0) - (a.online ? 1 : 0) ||
+        a.label.localeCompare(b.label),
+    );
+  }
+
+  const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  function names() {
+    if (nameIndex) return nameIndex;
+    const people = mentionPeople();
+    const alt = (arr, sigil) => {
+      const list = arr.filter(Boolean);
+      if (!list.length) return null;
+      // Longest first, so "#floorplan" is never matched as "#floor".
+      return (
+        sigil +
+        "(?:" +
+        list
+          .slice()
+          .sort((a, b) => b.length - a.length)
+          .map(escRe)
+          .join("|") +
+        ")"
+      );
+    };
+    const parts = [
+      alt(channels.map((c) => c.name), "#"),
+      alt(people.map((p) => p.label), "@"),
+    ].filter(Boolean);
+    nameIndex = {
+      re: parts.length ? new RegExp(parts.join("|"), "gi") : null,
+      people: new Map(people.map((p) => [p.label.toLowerCase(), p])),
+    };
+    return nameIndex;
+  }
+
+  function chanLink(token) {
+    const nm = token.slice(1);
+    const ch = channels.find((c) => c.name.toLowerCase() === nm.toLowerCase());
+    const b = el("button", "dk-chanlink", "#" + (ch ? ch.name : nm));
+    b.type = "button";
+    if (!ch) return b;
+    b.title = ch.desc ? "#" + ch.name + " - " + ch.desc : "Open #" + ch.name;
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openView({ kind: "channel", key: ch.key });
+    });
+    return b;
+  }
+
+  function mentionChip(token) {
+    const nm = token.slice(1);
+    const self = !!me && nm.toLowerCase() === String(me.label).toLowerCase();
+    const p = names().people.get(nm.toLowerCase());
+    const s = el("span", "dk-ment" + (self ? " self" : ""), "@" + nm);
+    s.title = self
+      ? "This one is you"
+      : p && p.online
+        ? nm + " is on now"
+        : nm + " is off - it is waiting for them";
+    return s;
+  }
+
+  // Message text with #channels and @names picked out. Everything that is not
+  // a known name stays a plain text node, so nothing user-authored is ever
+  // parsed as markup.
+  function textEl(text, cls) {
+    const wrap = el("span", cls || "dk-mtext");
+    const re = names().re;
+    if (!re || !text) {
+      wrap.textContent = text || "";
+      return wrap;
+    }
+    re.lastIndex = 0;
+    let last = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      const at = m.index;
+      const tok = m[0];
+      const before = at > 0 ? text[at - 1] : "";
+      const after = text[at + tok.length] || "";
+      // Not a name in the middle of a word, an email, or another token.
+      if (/[\w@#]/.test(before) || /[\w]/.test(after)) continue;
+      if (at > last)
+        wrap.appendChild(document.createTextNode(text.slice(last, at)));
+      wrap.appendChild(tok[0] === "#" ? chanLink(tok) : mentionChip(tok));
+      last = at + tok.length;
+    }
+    if (last < text.length)
+      wrap.appendChild(document.createTextNode(text.slice(last)));
+    return wrap;
+  }
+
   // ── Sounds and toasts ─────────────────────────────────────────────────────
   // The beep only ever fires after the user has interacted with the Desk, so
   // it can never hit an autoplay block or surprise a fresh page.
   function beep() {
     if (!soundOn) return;
     try {
-      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      audioCtx =
+        audioCtx || new (window.AudioContext || window.webkitAudioContext)();
       const o = audioCtx.createOscillator();
       const g = audioCtx.createGain();
       o.frequency.value = 740;
@@ -160,7 +306,7 @@
       o.connect(g).connect(audioCtx.destination);
       o.start();
       o.stop(audioCtx.currentTime + 0.2);
-    } catch (_) { }
+    } catch (_) {}
   }
 
   // One question, one answer. Uses the themed StaffUI prompt when the page
@@ -168,24 +314,22 @@
   // so the Desk never depends on another script being healthy.
   function ask(opts, cb) {
     if (window.StaffUI && window.StaffUI.prompt) {
-      window.StaffUI
-        .prompt({
-          title: opts.title,
-          icon: opts.icon || '<i class="fas fa-comments"></i>',
-          message: opts.message || "",
-          fields: [
-            {
-              name: "v",
-              label: opts.label || "",
-              placeholder: opts.placeholder || "",
-              value: opts.value || "",
-              maxLength: opts.max || 200,
-            },
-          ],
-        })
-        .then((r) => {
-          if (r && typeof r.v === "string") cb(r.v);
-        });
+      window.StaffUI.prompt({
+        title: opts.title,
+        icon: opts.icon || '<i class="fas fa-comments"></i>',
+        message: opts.message || "",
+        fields: [
+          {
+            name: "v",
+            label: opts.label || "",
+            placeholder: opts.placeholder || "",
+            value: opts.value || "",
+            maxLength: opts.max || 200,
+          },
+        ],
+      }).then((r) => {
+        if (r && typeof r.v === "string") cb(r.v);
+      });
     } else {
       const v = window.prompt(opts.title, opts.value || "");
       if (v != null) cb(v);
@@ -250,7 +394,8 @@
     renderBadges();
     clearTimeout(readTimer);
     readTimer = setTimeout(() => {
-      if (socket) socket.emit("desk read", { key, ts: last ? last.ts : Date.now() });
+      if (socket)
+        socket.emit("desk read", { key, ts: last ? last.ts : Date.now() });
     }, 400);
   }
   function totals() {
@@ -260,20 +405,27 @@
       n += unread[k].n || 0;
       loud += unread[k].mentions || 0;
     }
-    // An unclaimed call for backup keeps the badge red until somebody takes it.
-    const helpMsgs = cacheFor("help").messages;
-    for (const m of helpMsgs)
+    // Red is reserved for #help. Everything else - ordinary talk, even a
+    // mention - stays the usual orange, so red on the dock button means one
+    // thing only: somebody in a room is waiting for staff.
+    let help = (unread.help && unread.help.n) || 0;
+    // An unclaimed call for backup keeps it red until somebody takes it, even
+    // after the card itself has been read.
+    for (const m of cacheFor("help").messages)
       if (m.ping && (m.ping.status === "open" || m.ping.status === "waiting"))
-        loud++;
-    return { n, loud };
+        help++;
+    return { n, loud, help };
   }
   function renderBadges() {
     const t = totals();
     if (els.badge) {
       els.badge.textContent = t.n > 99 ? "99+" : String(t.n);
       els.badge.style.display = t.n ? "" : "none";
-      els.badge.classList.toggle("loud", t.loud > 0);
+      els.badge.classList.toggle("loud", t.help > 0);
     }
+    // The button itself carries the alarm too: a bare count can be missed on a
+    // busy page, an outlined red button cannot.
+    if (els.pill) els.pill.classList.toggle("urgent", t.help > 0);
     // The lobby parks its Dev Panel button in the same corner, and it can be
     // created after the pill (it waits for the sign-in round trip). Re-check
     // on every badge pass so the two never end up stacked on each other.
@@ -284,7 +436,9 @@
       );
     // The pop-out window has no pill, so the unread count lives in its title.
     if (pageMode)
-      document.title = (t.n ? "(" + (t.n > 99 ? "99+" : t.n) + ") " : "") + "The Desk - Talkomatic";
+      document.title =
+        (t.n ? "(" + (t.n > 99 ? "99+" : t.n) + ") " : "") +
+        "The Desk - Talkomatic";
     if (els.rail) renderRail();
   }
 
@@ -300,10 +454,18 @@
       threads = d.threads || [];
       unread = d.unread || {};
       presence = d.presence || presence;
+      forgetNames();
       if (!channels.some((c) => c.key === viewKey()) && view.kind === "channel")
-        view = { kind: "channel", key: channels[0] ? channels[0].key : "floor" };
+        view = {
+          kind: "channel",
+          key: channels[0] ? channels[0].key : "floor",
+        };
       mount();
       renderBadges();
+      // The whole team, up front: "@" has to be able to offer somebody who is
+      // not on right now, which is exactly when you most need to leave them a
+      // message.
+      socket.emit("desk roster");
       if (pageMode && !panelOpen) setOpen(true);
       else if (panelOpen) {
         renderAll();
@@ -329,7 +491,8 @@
       }
       const mention =
         d.msg.mention ||
-        (me && d.msg.text &&
+        (me &&
+          d.msg.text &&
           d.msg.text.toLowerCase().includes("@" + me.label.toLowerCase()));
       if (change !== "updated" && !viewingNow(d.key)) {
         bumpUnread(d.key, !!mention);
@@ -362,10 +525,7 @@
 
     socket.on("desk threads", (d) => {
       threads = (d && d.threads) || [];
-      if (
-        view.kind === "thread" &&
-        !threads.some((t) => t.id === view.key)
-      ) {
+      if (view.kind === "thread" && !threads.some((t) => t.id === view.key)) {
         view = { kind: "channel", key: "floor" }; // it was deleted under us
         if (panelOpen) loadView(true);
       }
@@ -407,6 +567,7 @@
     socket.on("desk presence", (p) => {
       if (p) {
         presence = p;
+        forgetNames();
         if (panelOpen) renderSide();
       }
     });
@@ -425,13 +586,37 @@
 
     socket.on("desk roster", (d) => {
       roster = (d && d.staff) || [];
+      forgetNames();
       if (panelOpen && mode === "team") renderTeam();
     });
 
-    socket.on("desk error", (d) => toast((d && d.message) || "That did not work."));
+    // Somebody wrote your name. The badge and the beep already happened on the
+    // message itself; this is the line that says where to look.
+    socket.on("desk mention", (d) => {
+      if (!d || !panelOpen) return;
+      toast(
+        (d.by || "Someone") + " mentioned you in " + channelLabel(d.key) + ".",
+      );
+    });
+
+    // Sent straight back to whoever wrote the mention: who got it now, and who
+    // is off and will get it when they return. A ping is never silently lost.
+    socket.on("desk mention receipt", (d) => {
+      if (!d || !Array.isArray(d.offline) || !d.offline.length) return;
+      toast(
+        d.offline.join(", ") +
+          (d.offline.length === 1 ? " is offline - they" : " are offline - they") +
+          " will see it when they are back.",
+      );
+    });
+
+    socket.on("desk error", (d) =>
+      toast((d && d.message) || "That did not work."),
+    );
 
     socket.on("desk ping update", (d) => {
-      if (d && d.status === "claimed") toast(d.by + " is on it - they saw your ping.");
+      if (d && d.status === "claimed")
+        toast(d.by + " is on it - they saw your ping.");
     });
 
     socket.on("staff action result", (d) => {
@@ -555,10 +740,20 @@
     head.appendChild(search);
     els.searchInput = search;
 
-    const searchBtn = btn("dk-hbtn dk-msearch", null, "fa-magnifying-glass", "Search");
+    const searchBtn = btn(
+      "dk-hbtn dk-msearch",
+      null,
+      "fa-magnifying-glass",
+      "Search",
+    );
     searchBtn.addEventListener("click", () =>
       ask(
-        { title: "Search staff chat", label: "Looking for", max: 80, icon: '<i class="fas fa-magnifying-glass"></i>' },
+        {
+          title: "Search staff chat",
+          label: "Looking for",
+          max: 80,
+          icon: '<i class="fas fa-magnifying-glass"></i>',
+        },
         (q) => {
           if (q.trim().length < 2) return;
           searchHits = null;
@@ -574,15 +769,28 @@
     people.addEventListener("click", () => panel.classList.toggle("side-open"));
     head.appendChild(people);
 
-    const helpBtn = btn("dk-hbtn", null, "fa-circle-question", "How the Desk works");
+    const helpBtn = btn(
+      "dk-hbtn",
+      null,
+      "fa-circle-question",
+      "How the Desk works",
+    );
     helpBtn.addEventListener("click", openHelp);
     head.appendChild(helpBtn);
 
-    const sound = btn("dk-hbtn", null, soundOn ? "fa-bell" : "fa-bell-slash", "Sound on new pings and mentions");
+    const sound = btn(
+      "dk-hbtn",
+      null,
+      soundOn ? "fa-bell" : "fa-bell-slash",
+      "Sound on new pings and mentions",
+    );
     sound.addEventListener("click", () => {
       soundOn = !soundOn;
       localStorage.setItem("talkomatic_deskSound", soundOn ? "1" : "0");
-      sound.replaceChild(icon(soundOn ? "fa-bell" : "fa-bell-slash"), sound.firstChild);
+      sound.replaceChild(
+        icon(soundOn ? "fa-bell" : "fa-bell-slash"),
+        sound.firstChild,
+      );
       if (soundOn) beep();
     });
     head.appendChild(sound);
@@ -590,7 +798,12 @@
     if (!pageMode) {
       // Tear the Desk off into its own window, for a second monitor or just
       // to keep it up while moving between pages.
-      const pop = btn("dk-hbtn dk-popbtn", null, "fa-up-right-from-square", "Open in its own window");
+      const pop = btn(
+        "dk-hbtn dk-popbtn",
+        null,
+        "fa-up-right-from-square",
+        "Open in its own window",
+      );
       pop.addEventListener("click", () => {
         window.open("/desk.html", "talkodesk", "width=1120,height=780");
         setOpen(false);
@@ -678,7 +891,7 @@
         RECT_KEY,
         JSON.stringify({ x: r.left, y: r.top, w: r.width, h: r.height }),
       );
-    } catch (_) { }
+    } catch (_) {}
   }
 
   function applyRect() {
@@ -686,7 +899,7 @@
     let r = null;
     try {
       r = JSON.parse(localStorage.getItem(RECT_KEY) || "null");
-    } catch (_) { }
+    } catch (_) {}
     const W = window.innerWidth;
     const H = window.innerHeight;
     const w = r && r.w ? r.w : Math.min(1060, W - 32);
@@ -713,7 +926,7 @@
       drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
       try {
         head.setPointerCapture(e.pointerId);
-      } catch (_) { }
+      } catch (_) {}
       panel.classList.add("dragging");
     });
     head.addEventListener("pointermove", (e) => {
@@ -745,7 +958,7 @@
         clearTimeout(t);
         t = setTimeout(saveRect, 300);
       }).observe(panel);
-    } catch (_) { }
+    } catch (_) {}
 
     // Crossing the phone breakpoint: inline position must not fight the
     // full-screen layout, so it is dropped and restored on the way back.
@@ -801,18 +1014,30 @@
 
     rail.appendChild(el("div", "dk-rail-h", "Channels"));
     for (const c of channels) {
-      const row = el("button", "dk-chan" + (view.kind === "channel" && viewKey() === c.key && mode === "chat" ? " on" : ""));
+      const row = el(
+        "button",
+        "dk-chan" +
+          (view.kind === "channel" && viewKey() === c.key && mode === "chat"
+            ? " on"
+            : ""),
+      );
       row.type = "button";
       row.appendChild(el("span", "dk-hash", "#"));
       row.appendChild(el("span", "dk-chan-name", c.name));
       if (c.restricted) row.appendChild(icon("fa-lock"));
       const u = unread[c.key];
       if (u && u.n) {
-        const b = el("span", "dk-b" + (u.mentions ? " loud" : ""), u.n > 99 ? "99+" : String(u.n));
+        const b = el(
+          "span",
+          "dk-b" + (u.mentions ? " loud" : ""),
+          u.n > 99 ? "99+" : String(u.n),
+        );
         row.appendChild(b);
       }
       row.title = c.desc || "";
-      row.addEventListener("click", () => openView({ kind: "channel", key: c.key }));
+      row.addEventListener("click", () =>
+        openView({ kind: "channel", key: c.key }),
+      );
       rail.appendChild(row);
     }
 
@@ -826,7 +1051,8 @@
           label: "What is it about?",
           placeholder: "raid in 67room67",
           max: 60,
-          message: "Threads that go quiet for a day drop into the archive but stay readable.",
+          message:
+            "Threads that go quiet for a day drop into the archive but stay readable.",
         },
         (t) => {
           if (t.trim()) socket.emit("desk thread create", { title: t.trim() });
@@ -836,22 +1062,32 @@
     th.appendChild(add);
     rail.appendChild(th);
 
-    const live = threads.filter((t) => !t.archived).sort((a, b) => b.lastTs - a.lastTs);
-    const archived = threads.filter((t) => t.archived).sort((a, b) => b.lastTs - a.lastTs);
-    if (!live.length) rail.appendChild(el("div", "dk-rail-empty", "No open threads."));
+    const live = threads
+      .filter((t) => !t.archived)
+      .sort((a, b) => b.lastTs - a.lastTs);
+    const archived = threads
+      .filter((t) => t.archived)
+      .sort((a, b) => b.lastTs - a.lastTs);
+    if (!live.length)
+      rail.appendChild(el("div", "dk-rail-empty", "No open threads."));
     for (const t of live) rail.appendChild(threadRow(t));
 
     if (archived.length) {
       const tog = el("button", "dk-arch-toggle");
       tog.type = "button";
-      tog.appendChild(icon(showArchived ? "fa-chevron-down" : "fa-chevron-right"));
-      tog.appendChild(document.createTextNode(" Archived (" + archived.length + ")"));
+      tog.appendChild(
+        icon(showArchived ? "fa-chevron-down" : "fa-chevron-right"),
+      );
+      tog.appendChild(
+        document.createTextNode(" Archived (" + archived.length + ")"),
+      );
       tog.addEventListener("click", () => {
         showArchived = !showArchived;
         renderRail();
       });
       rail.appendChild(tog);
-      if (showArchived) for (const t of archived) rail.appendChild(threadRow(t, true));
+      if (showArchived)
+        for (const t of archived) rail.appendChild(threadRow(t, true));
     }
 
     // Not channels: places to look rather than places to talk.
@@ -874,20 +1110,36 @@
 
     // Decision made out loud, not buried: moderators know devs can read it all.
     rail.appendChild(
-      el("div", "dk-rail-foot", "Developers can read every channel and thread, including edits and deletions."),
+      el(
+        "div",
+        "dk-rail-foot",
+        "Developers can read every channel and thread, including edits and deletions.",
+      ),
     );
   }
 
   function threadRow(t, archived) {
-    const row = el("button", "dk-thread" + (view.kind === "thread" && viewKey() === t.id && mode === "chat" ? " on" : "") + (archived ? " arch" : ""));
+    const row = el(
+      "button",
+      "dk-thread" +
+        (view.kind === "thread" && viewKey() === t.id && mode === "chat"
+          ? " on"
+          : "") +
+        (archived ? " arch" : ""),
+    );
     row.type = "button";
     row.appendChild(icon("fa-message"));
     const w = el("span", "dk-thread-t", t.title);
     row.appendChild(w);
     const u = unread[t.id];
     if (u && u.n && !archived) row.appendChild(el("span", "dk-dot"));
-    row.title = "Started by " + t.createdBy + (t.link ? " - about " + t.link.roomName : "");
-    row.addEventListener("click", () => openView({ kind: "thread", key: t.id }));
+    row.title =
+      "Started by " +
+      t.createdBy +
+      (t.link ? " - about " + t.link.roomName : "");
+    row.addEventListener("click", () =>
+      openView({ kind: "thread", key: t.id }),
+    );
     return row;
   }
 
@@ -904,23 +1156,42 @@
     const ch = channels.find((c) => c.key === viewKey());
     const th = threads.find((t) => t.id === viewKey());
     if (els.headSub)
-      els.headSub.textContent = view.kind === "channel" ? "#" + (ch ? ch.name : viewKey()) : th ? th.title : "thread";
+      els.headSub.textContent =
+        view.kind === "channel"
+          ? "#" + (ch ? ch.name : viewKey())
+          : th
+            ? th.title
+            : "thread";
 
     if (view.kind === "thread" && th) {
       const bar = el("div", "dk-threadbar");
       bar.appendChild(el("span", "dk-threadbar-t", th.title));
       bar.appendChild(
-        el("span", "dk-threadbar-s",
+        el(
+          "span",
+          "dk-threadbar-s",
           (th.archived ? "Archived - a reply reopens it. " : "") +
-          "Started by " + th.createdBy),
+            "Started by " +
+            th.createdBy,
+        ),
       );
       if (th.link) {
-        const jump = btn("dk-minib", th.link.roomName, "fa-door-open", "Inspect this room");
+        const jump = btn(
+          "dk-minib",
+          th.link.roomName,
+          "fa-door-open",
+          "Inspect this room",
+        );
         jump.addEventListener("click", () => openInspector(th.link.roomId));
         bar.appendChild(jump);
       }
       if (me && me.role === "dev") {
-        const del = btn("dk-minib danger", "Delete", "fa-trash", "Hard-delete this thread (dev)");
+        const del = btn(
+          "dk-minib danger",
+          "Delete",
+          "fa-trash",
+          "Hard-delete this thread (dev)",
+        );
         armTwice(del, "Delete for good?", () =>
           socket.emit("desk thread delete", { id: th.id }),
         );
@@ -943,8 +1214,13 @@
       els.replyBar = null;
       els.palette = null;
       els.composer = null;
+      els.sizeTa = null;
       main.appendChild(
-        el("div", "dk-readonly", "The server writes this channel. Nothing to add."),
+        el(
+          "div",
+          "dk-readonly",
+          "The server writes this channel. Nothing to add.",
+        ),
       );
       renderMessages();
       return;
@@ -964,7 +1240,9 @@
     ta.rows = 1;
     ta.maxLength = 1200;
     ta.placeholder =
-      view.kind === "channel" ? "Message #" + (ch ? ch.name : "") : "Reply in thread";
+      view.kind === "channel"
+        ? "Message #" + (ch ? ch.name : "")
+        : "Reply in thread";
     ta.setAttribute("aria-label", ta.placeholder);
     const count = el("span", "dk-count");
     const send = btn("dk-send", null, "fa-paper-plane", "Send");
@@ -973,7 +1251,8 @@
     const sizeTa = () => {
       ta.style.height = "auto";
       ta.style.height = Math.max(38, Math.min(ta.scrollHeight, 120)) + "px";
-      count.textContent = ta.value.length > 1000 ? 1200 - ta.value.length + " left" : "";
+      count.textContent =
+        ta.value.length > 1000 ? 1200 - ta.value.length + " left" : "";
     };
     const doSend = () => {
       const text = ta.value.trim();
@@ -997,17 +1276,41 @@
       drafts.delete(viewKey());
       ta.value = "";
       sizeTa();
+      hidePalette();
       ta.focus();
     };
     ta.addEventListener("keydown", (e) => {
+      // While the list above the box is up it owns the arrows, Tab, and - for
+      // names, where there is always something highlighted - Enter.
+      if (paletteOpen()) {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          movePalette(e.key === "ArrowDown" ? 1 : -1);
+          return;
+        }
+        if (e.key === "Tab") {
+          e.preventDefault();
+          choosePalette(Math.max(0, palette.idx));
+          return;
+        }
+        if (e.key === "Enter" && !e.shiftKey && palette.idx >= 0) {
+          e.preventDefault();
+          choosePalette(palette.idx);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          hidePalette();
+          return;
+        }
+      }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         doSend();
       }
-      if (e.key === "Escape" && (replyTo || ta.value.startsWith("/"))) {
+      if (e.key === "Escape" && replyTo) {
         e.stopPropagation();
         clearReply();
-        hidePalette();
       }
     });
     ta.addEventListener("input", () => {
@@ -1016,10 +1319,17 @@
       if (ta.value) drafts.set(viewKey(), ta.value);
       else drafts.delete(viewKey());
       sizeTa();
-      // A slash opens the command palette, filtered as you type.
-      if (ta.value.startsWith("/")) showPalette(ta.value, ta);
-      else hidePalette();
+      updatePalette(ta);
     });
+    // Moving the caret with the mouse or the arrows can land it on a half
+    // typed name, or take it off one.
+    ta.addEventListener("click", () => updatePalette(ta));
+    ta.addEventListener("keyup", (e) => {
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End")
+        updatePalette(ta);
+    });
+    ta.addEventListener("blur", () => setTimeout(hidePalette, 150));
+    els.sizeTa = sizeTa;
     if (drafts.has(viewKey())) {
       ta.value = drafts.get(viewKey());
       requestAnimationFrame(sizeTa);
@@ -1051,7 +1361,10 @@
       const older = btn("dk-older", "Load older", "fa-chevron-up");
       older.addEventListener("click", () => {
         const first = c.messages[0];
-        socket.emit("desk history", { key: viewKey(), before: first ? first.ts : Date.now() });
+        socket.emit("desk history", {
+          key: viewKey(),
+          before: first ? first.ts : Date.now(),
+        });
       });
       list.appendChild(older);
     }
@@ -1079,7 +1392,9 @@
     if (c.detached) {
       const newer = btn(
         "dk-older dk-newer",
-        c.newWhile ? " Back to the latest (" + c.newWhile + " new)" : " Back to the latest",
+        c.newWhile
+          ? " Back to the latest (" + c.newWhile + " new)"
+          : " Back to the latest",
         "fa-chevron-down",
       );
       newer.addEventListener("click", () =>
@@ -1116,7 +1431,8 @@
     if (!list) return renderMessages();
     const c = cacheFor(viewKey());
     const stick = nearBottom();
-    const prev = c.messages.length > 1 ? c.messages[c.messages.length - 2] : null;
+    const prev =
+      c.messages.length > 1 ? c.messages[c.messages.length - 2] : null;
     if (!prev || dayKey(prev.ts) !== dayKey(msg.ts))
       list.appendChild(el("div", "dk-day", dayLabel(msg.ts)));
     list.appendChild(row(msg, prev));
@@ -1161,7 +1477,8 @@
       prev &&
       prev.kind === "chat" &&
       m.kind === "chat" &&
-      prev.author && m.author &&
+      prev.author &&
+      m.author &&
       prev.author.label === m.author.label &&
       prev.author.role === m.author.role &&
       m.ts - prev.ts < 5 * 60 * 1000 &&
@@ -1170,9 +1487,14 @@
 
     const mention =
       m.mention ||
-      (me && m.text && m.text.toLowerCase().includes("@" + me.label.toLowerCase()));
+      (me &&
+        m.text &&
+        m.text.toLowerCase().includes("@" + me.label.toLowerCase()));
 
-    const r = el("div", "dk-msg" + (grouped ? " grouped" : "") + (mention ? " mention" : ""));
+    const r = el(
+      "div",
+      "dk-msg" + (grouped ? " grouped" : "") + (mention ? " mention" : ""),
+    );
     r.dataset.id = m.id;
 
     // The quote above a reply: who it answers and what they said. Clicking it
@@ -1188,7 +1510,9 @@
         const c = cacheFor(viewKey());
         const there = c.messages.some((x) => x.id === m.reply.id);
         if (there) {
-          const node = els.list && els.list.querySelector('[data-id="' + m.reply.id + '"]');
+          const node =
+            els.list &&
+            els.list.querySelector('[data-id="' + m.reply.id + '"]');
           if (node) {
             node.scrollIntoView({ block: "center" });
             node.classList.add("flash");
@@ -1218,9 +1542,11 @@
 
     const body = el("div", "dk-mbody");
     if (m.deletedAt) {
-      body.appendChild(el("span", "dk-tomb", "Message removed by " + (m.deletedBy || "?")));
+      body.appendChild(
+        el("span", "dk-tomb", "Message removed by " + (m.deletedBy || "?")),
+      );
     } else {
-      body.appendChild(el("span", "dk-mtext", m.text));
+      body.appendChild(textEl(m.text));
       if (m.editedAt) {
         const e = el("span", "dk-edited", "(edited)");
         e.title = "Edited " + new Date(m.editedAt).toLocaleString();
@@ -1238,7 +1564,9 @@
         open = el("div", "dk-histbox");
         for (const v of m.history) {
           const line = el("div", "dk-histline");
-          line.appendChild(el("span", "dk-hist-t", new Date(v.ts).toLocaleString()));
+          line.appendChild(
+            el("span", "dk-hist-t", new Date(v.ts).toLocaleString()),
+          );
           line.appendChild(el("span", null, v.text));
           open.appendChild(line);
         }
@@ -1257,7 +1585,11 @@
 
     // Every message can be replied to; your own can be edited for five
     // minutes and deleted; a dev can delete anything.
-    const own = me && m.author && m.author.label === me.label && m.author.role === me.role;
+    const own =
+      me &&
+      m.author &&
+      m.author.label === me.label &&
+      m.author.role === me.role;
     if (!m.deletedAt) {
       const tools = el("div", "dk-mtools");
       const rb = btn("dk-tool", null, "fa-reply", "Reply");
@@ -1269,7 +1601,12 @@
         tools.appendChild(eb);
       }
       if (own || (me && me.role === "dev")) {
-        const db = btn("dk-tool", null, "fa-trash", own ? "Delete" : "Delete (dev)");
+        const db = btn(
+          "dk-tool",
+          null,
+          "fa-trash",
+          own ? "Delete" : "Delete (dev)",
+        );
         armTwice(db, null, () => socket.emit("desk delete", { id: m.id }));
         tools.appendChild(db);
       }
@@ -1303,7 +1640,9 @@
     }
     els.replyBar.style.display = "";
     els.replyBar.appendChild(icon("fa-reply"));
-    els.replyBar.appendChild(el("span", "dk-rb-w", "Replying to " + replyTo.label));
+    els.replyBar.appendChild(
+      el("span", "dk-rb-w", "Replying to " + replyTo.label),
+    );
     els.replyBar.appendChild(el("span", "dk-rb-t", replyTo.text));
     const x = btn("dk-rb-x", null, "fa-xmark", "Cancel the reply");
     x.addEventListener("click", clearReply);
@@ -1367,28 +1706,60 @@
     r.dataset.id = m.id;
 
     const head = el("div", "dk-ping-h");
-    head.appendChild(el("span", "dk-ping-badge", (p.status || "open").toUpperCase()));
-    head.appendChild(el("span", "dk-ping-t", "@" + (p.wants || "mod") + " needed in " + (p.roomName || "?")));
+    head.appendChild(
+      el("span", "dk-ping-badge", (p.status || "open").toUpperCase()),
+    );
+    head.appendChild(
+      el(
+        "span",
+        "dk-ping-t",
+        "@" + (p.wants || "mod") + " needed in " + (p.roomName || "?"),
+      ),
+    );
     const t = el("span", "dk-mtime", relTime(m.ts));
     t.title = new Date(m.ts).toLocaleString();
     head.appendChild(t);
     r.appendChild(head);
 
     const meta = el("div", "dk-ping-m");
-    meta.appendChild(el("span", null, "Asked by " + (p.byLabel || "?") + " - " + (p.count || 0) + " in the room"));
+    meta.appendChild(
+      el(
+        "span",
+        null,
+        "Asked by " +
+          (p.byLabel || "?") +
+          " - " +
+          (p.count || 0) +
+          " in the room",
+      ),
+    );
     if (p.staffThere && p.staffThere.length)
-      meta.appendChild(el("span", "dk-ping-staff", "Staff there: " + p.staffThere.join(", ")));
+      meta.appendChild(
+        el("span", "dk-ping-staff", "Staff there: " + p.staffThere.join(", ")),
+      );
     if (p.status === "claimed" && p.claimedBy)
       meta.appendChild(el("span", "dk-ping-claim", p.claimedBy + " is on it"));
     if (p.status === "resolved")
-      meta.appendChild(el("span", "dk-ping-done", "Resolved by " + (p.resolvedBy || "?") + (p.note ? ' - "' + p.note + '"' : "")));
+      meta.appendChild(
+        el(
+          "span",
+          "dk-ping-done",
+          "Resolved by " +
+            (p.resolvedBy || "?") +
+            (p.note ? ' - "' + p.note + '"' : ""),
+        ),
+      );
     r.appendChild(meta);
 
     if (p.actions && p.actions.length) {
       const acts = el("div", "dk-ping-acts");
       for (const a of p.actions.slice(-6)) {
         acts.appendChild(
-          el("div", "dk-ping-act", a.by + " " + a.action + (a.target ? " on " + a.target : "")),
+          el(
+            "div",
+            "dk-ping-act",
+            a.by + " " + a.action + (a.target ? " on " + a.target : ""),
+          ),
         );
       }
       r.appendChild(acts);
@@ -1397,14 +1768,21 @@
     const bar = el("div", "dk-ping-b");
     if (p.status === "open" || p.status === "waiting") {
       const claim = btn("dk-minib primary", "Claim", "fa-hand");
-      claim.addEventListener("click", () => socket.emit("desk ping claim", { id: m.id }));
+      claim.addEventListener("click", () =>
+        socket.emit("desk ping claim", { id: m.id }),
+      );
       bar.appendChild(claim);
     }
     if (p.status !== "resolved") {
       const res = btn("dk-minib", "Resolve", "fa-check");
       res.addEventListener("click", () =>
         ask(
-          { title: "Resolve this ping", label: "What happened? (optional)", max: 200, icon: '<i class="fas fa-check"></i>' },
+          {
+            title: "Resolve this ping",
+            label: "What happened? (optional)",
+            max: 200,
+            icon: '<i class="fas fa-check"></i>',
+          },
           (note) => socket.emit("desk ping resolve", { id: m.id, note }),
         ),
       );
@@ -1414,10 +1792,20 @@
     insp.addEventListener("click", () => openInspector(p.roomId));
     bar.appendChild(insp);
     const join = btn("dk-minib", "Join", "fa-door-open");
-    join.addEventListener("click", () => window.open("/room.html?roomId=" + encodeURIComponent(p.roomId), "_blank"));
+    join.addEventListener("click", () =>
+      window.open(
+        "/room.html?roomId=" + encodeURIComponent(p.roomId),
+        "_blank",
+      ),
+    );
     bar.appendChild(join);
     const watch = btn("dk-minib", "Watch", "fa-binoculars");
-    watch.addEventListener("click", () => window.open("/room.html?roomId=" + encodeURIComponent(p.roomId) + "&spectate=1", "_blank"));
+    watch.addEventListener("click", () =>
+      window.open(
+        "/room.html?roomId=" + encodeURIComponent(p.roomId) + "&spectate=1",
+        "_blank",
+      ),
+    );
     bar.appendChild(watch);
     r.appendChild(bar);
     return r;
@@ -1429,8 +1817,16 @@
   // Room types, in the same words the lobby uses.
   const ROOM_TYPE = {
     public: { cls: "pub", icon: "fa-globe", label: "Public room" },
-    "semi-private": { cls: "semi", icon: "fa-user-check", label: "Semi-private, needs an access code" },
-    private: { cls: "priv", icon: "fa-lock", label: "Private room, invite only" },
+    "semi-private": {
+      cls: "semi",
+      icon: "fa-user-check",
+      label: "Semi-private, needs an access code",
+    },
+    private: {
+      cls: "priv",
+      icon: "fa-lock",
+      label: "Private room, invite only",
+    },
   };
 
   function locText(l) {
@@ -1466,7 +1862,8 @@
     const nameLine = el("div", "dk-staff-n");
     nameLine.appendChild(el("span", "dk-staff-name", s.label));
     if (s.hidden) nameLine.appendChild(el("span", "dk-chip ghost", "HIDDEN"));
-    if (s.vanished) nameLine.appendChild(el("span", "dk-chip ghost", "VANISHED"));
+    if (s.vanished)
+      nameLine.appendChild(el("span", "dk-chip ghost", "VANISHED"));
     w.appendChild(nameLine);
     const differs =
       s.alias && s.alias.toLowerCase() !== (s.label || "").toLowerCase();
@@ -1490,9 +1887,21 @@
   // only needs saying once.
   function byRank(list) {
     return [
-      { key: "dev", label: "Developers", rows: list.filter((s) => rankKey(s) === "dev") },
-      { key: "l2", label: "Full mods", rows: list.filter((s) => rankKey(s) === "l2") },
-      { key: "l1", label: "Junior mods", rows: list.filter((s) => rankKey(s) === "l1") },
+      {
+        key: "dev",
+        label: "Developers",
+        rows: list.filter((s) => rankKey(s) === "dev"),
+      },
+      {
+        key: "l2",
+        label: "Full mods",
+        rows: list.filter((s) => rankKey(s) === "l2"),
+      },
+      {
+        key: "l1",
+        label: "Junior mods",
+        rows: list.filter((s) => rankKey(s) === "l1"),
+      },
     ].filter((g) => g.rows.length);
   }
 
@@ -1508,7 +1917,9 @@
     const side = els.side;
     side.textContent = "";
 
-    side.appendChild(el("div", "dk-side-h", "On now - " + presence.staff.length));
+    side.appendChild(
+      el("div", "dk-side-h", "On now - " + presence.staff.length),
+    );
     for (const g of byRank(presence.staff)) {
       side.appendChild(groupHead(g));
       for (const s of g.rows) side.appendChild(staffRow(s, false));
@@ -1516,7 +1927,9 @@
     if (!presence.staff.length)
       side.appendChild(el("div", "dk-rail-empty", "Nobody is on."));
 
-    side.appendChild(el("div", "dk-side-h", "Rooms - " + presence.rooms.length));
+    side.appendChild(
+      el("div", "dk-side-h", "Rooms - " + presence.rooms.length),
+    );
     for (const room of presence.rooms.slice(0, 20)) {
       // Two lines: what the room is, then what you can do about it. Squeezing
       // a name, two state icons, a headcount and two buttons onto one line
@@ -1533,7 +1946,10 @@
       const name = el("span", "dk-room-n", room.name || "?");
       name.title =
         (room.name || "?") +
-        " (" + room.id + ")\n" + t.label +
+        " (" +
+        room.id +
+        ")\n" +
+        t.label +
         (room.locked ? ", locked" : "") +
         (room.slow ? ", slow mode" : "") +
         (room.staff && room.staff.length
@@ -1543,7 +1959,8 @@
       if (room.locked) top.appendChild(icon("fa-lock"));
       if (room.slow) top.appendChild(icon("fa-gauge-simple"));
       const count = el("span", "dk-room-c", String(room.n));
-      count.title = room.n === 1 ? "1 person inside" : room.n + " people inside";
+      count.title =
+        room.n === 1 ? "1 person inside" : room.n + " people inside";
       top.appendChild(count);
       card.appendChild(top);
 
@@ -1557,7 +1974,10 @@
       const join = btn("dk-minib", "Join", "fa-door-open");
       join.title = "Open this room in a new tab";
       join.addEventListener("click", () =>
-        window.open("/room.html?roomId=" + encodeURIComponent(room.id), "_blank"),
+        window.open(
+          "/room.html?roomId=" + encodeURIComponent(room.id),
+          "_blank",
+        ),
       );
       bar.appendChild(join);
       card.appendChild(bar);
@@ -1594,20 +2014,30 @@
       renderAll();
     });
     bar.appendChild(back);
-    bar.appendChild(el("span", "dk-threadbar-t", d.name || "Room " + (d.roomId || "")));
+    bar.appendChild(
+      el("span", "dk-threadbar-t", d.name || "Room " + (d.roomId || "")),
+    );
     if (d.locked) bar.appendChild(el("span", "dk-chip ghost", "LOCKED"));
     if (d.slow) bar.appendChild(el("span", "dk-chip ghost", "SLOW"));
     const refresh = btn("dk-minib", null, "fa-rotate", "Refresh");
-    refresh.addEventListener("click", () => socket.emit("desk room info", { roomId: d.roomId }));
+    refresh.addEventListener("click", () =>
+      socket.emit("desk room info", { roomId: d.roomId }),
+    );
     bar.appendChild(refresh);
     const join = btn("dk-minib", "Join", "fa-door-open");
-    join.addEventListener("click", () => window.open("/room.html?roomId=" + encodeURIComponent(d.roomId), "_blank"));
+    join.addEventListener("click", () =>
+      window.open(
+        "/room.html?roomId=" + encodeURIComponent(d.roomId),
+        "_blank",
+      ),
+    );
     bar.appendChild(join);
     main.appendChild(bar);
 
     const list = el("div", "dk-msgs");
     if (d.loading) list.appendChild(el("div", "dk-empty", "Looking..."));
-    else if (d.gone) list.appendChild(el("div", "dk-empty", "That room is gone."));
+    else if (d.gone)
+      list.appendChild(el("div", "dk-empty", "That room is gone."));
     else if (!d.users || !d.users.length)
       list.appendChild(el("div", "dk-empty", "Nobody in the room."));
     else {
@@ -1617,7 +2047,14 @@
         const head = el("div", "dk-occ-h");
         head.appendChild(el("span", "dk-occ-n", u.username || "?"));
         if (u.isDev) head.appendChild(el("span", "dk-chip dev", "DEV"));
-        else if (u.isMod) head.appendChild(el("span", "dk-chip " + ((u.modLevel || 2) >= 2 ? "l2" : "l1"), rankName((u.modLevel || 2) >= 2 ? "l2" : "l1")));
+        else if (u.isMod)
+          head.appendChild(
+            el(
+              "span",
+              "dk-chip " + ((u.modLevel || 2) >= 2 ? "l2" : "l1"),
+              rankName((u.modLevel || 2) >= 2 ? "l2" : "l1"),
+            ),
+          );
         if (u.location) head.appendChild(el("span", "dk-occ-l", u.location));
         row.appendChild(head);
 
@@ -1635,19 +2072,26 @@
                 max: 1000,
                 icon: '<i class="fas fa-triangle-exclamation"></i>',
               },
-              (message) => socket.emit("staff warn", { targetUserId: u.id, message }),
+              (message) =>
+                socket.emit("staff warn", { targetUserId: u.id, message }),
             ),
           );
           acts.appendChild(warn);
           const wipe = btn("dk-minib", "Wipe", "fa-eraser");
-          armTwice(wipe, null, () => socket.emit("staff wipe buffer", { targetUserId: u.id }));
+          armTwice(wipe, null, () =>
+            socket.emit("staff wipe buffer", { targetUserId: u.id }),
+          );
           acts.appendChild(wipe);
           const kick = btn("dk-minib danger", "Kick", "fa-user-slash");
-          armTwice(kick, null, () => socket.emit("staff kick", { targetUserId: u.id, ban: false }));
+          armTwice(kick, null, () =>
+            socket.emit("staff kick", { targetUserId: u.id, ban: false }),
+          );
           acts.appendChild(kick);
           if (canBan) {
             const kb = btn("dk-minib danger", "Kick + ban", "fa-ban");
-            armTwice(kb, null, () => socket.emit("staff kick", { targetUserId: u.id, ban: true }));
+            armTwice(kb, null, () =>
+              socket.emit("staff kick", { targetUserId: u.id, ban: true }),
+            );
             acts.appendChild(kb);
           }
           row.appendChild(acts);
@@ -1696,7 +2140,10 @@
     const on = list.filter((s) => !s.offline);
     const off = list.filter((s) => s.offline);
     main.appendChild(
-      viewBar("The team", roster ? on.length + " on, " + off.length + " off" : ""),
+      viewBar(
+        "The team",
+        roster ? on.length + " on, " + off.length + " off" : "",
+      ),
     );
 
     const body = el("div", "dk-msgs");
@@ -1718,7 +2165,12 @@
           if (!offline) {
             const room = (s.locations || []).find((l) => l.roomId);
             if (room) {
-              const go = btn("dk-ib", null, "fa-eye", "Inspect " + room.roomName);
+              const go = btn(
+                "dk-ib",
+                null,
+                "fa-eye",
+                "Inspect " + room.roomName,
+              );
               go.addEventListener("click", () => openInspector(room.roomId));
               row.appendChild(go);
             }
@@ -1730,7 +2182,8 @@
 
     section("On now", on, false);
     section("Off", off, true);
-    if (!list.length) body.appendChild(el("div", "dk-empty", "No staff keys yet."));
+    if (!list.length)
+      body.appendChild(el("div", "dk-empty", "No staff keys yet."));
     main.appendChild(body);
   }
 
@@ -1753,8 +2206,14 @@
       h: "The channels",
       list: [
         ["#floor", "Day to day talk. Start here."],
-        ["#help", "Calls for backup from rooms. These are cards, not chat."],
-        ["#queues", "Reports, appeals and applications as they arrive. Full mods and devs."],
+        [
+          "#help",
+          "Calls for backup from rooms. These are cards, not chat. Anything unread or unclaimed in here turns the Desk button red - nothing else does.",
+        ],
+        [
+          "#queues",
+          "Reports, appeals and applications as they arrive. Full mods and devs.",
+        ],
         ["#l2", "Bans, blocks and escalations. Full mods and devs."],
         ["#devs", "Keys, promotions, abuse flags. Developers only."],
         ["#stats", "A short summary of each day, written by the server."],
@@ -1769,6 +2228,15 @@
       ],
     },
     {
+      h: "Naming people and channels",
+      p: [
+        'Type "@" in the message box and the team appears - everyone with a key, on or off. Pick one and their name goes in, marked, and they are pinged.',
+        "Someone who is off is not a wasted ping: it waits for them as an unread mention and is the first thing they see when they sign back in. You are told at the time who was off.",
+        'Type "#" the same way to point at a channel. It goes in as a link, and anyone who can read that channel opens it with one click.',
+        'This is not the same as calling for backup: "@mod" typed in a ROOM raises a card in #help. "@" in here just names a person.',
+      ],
+    },
+    {
       h: "Acting without joining",
       p: [
         "Inspect on any room or ping card shows you who is inside. Warn, wipe and kick are right there. Ban and IP block appear if you are a full mod.",
@@ -1780,7 +2248,7 @@
       p: [
         "Type a slash in the message box and the full list appears. Every command does exactly what the matching button does, so your level still decides what goes through.",
         'Names with spaces go in quotes: /warn "sasha here" please stop.',
-        'Stuck? Ask in plain words: /help how do I ban someone.',
+        "Stuck? Ask in plain words: /help how do I ban someone.",
       ],
     },
     {
@@ -1855,17 +2323,23 @@
     main.appendChild(bar);
 
     const list = el("div", "dk-msgs");
-    if (searchHits == null) list.appendChild(el("div", "dk-empty", "Searching..."));
-    else if (!searchHits.length) list.appendChild(el("div", "dk-empty", "Nothing matched."));
+    if (searchHits == null)
+      list.appendChild(el("div", "dk-empty", "Searching..."));
+    else if (!searchHits.length)
+      list.appendChild(el("div", "dk-empty", "Nothing matched."));
     else
       for (const h of searchHits) {
         const row = el("button", "dk-hit");
         row.type = "button";
         const head = el("div", "dk-hit-h");
-        head.appendChild(el("span", "dk-hit-w", h.title ? h.title : "#" + h.key));
+        head.appendChild(
+          el("span", "dk-hit-w", h.title ? h.title : "#" + h.key),
+        );
         head.appendChild(el("span", "dk-mtime", relTime(h.ts) + " ago"));
         row.appendChild(head);
-        row.appendChild(el("div", "dk-hit-t", (h.author ? h.author + ": " : "") + h.text));
+        row.appendChild(
+          el("div", "dk-hit-t", (h.author ? h.author + ": " : "") + h.text),
+        );
         row.addEventListener("click", () => jumpTo(h.key, h.ts));
         list.appendChild(row);
       }
@@ -1891,16 +2365,52 @@
   // event a button would, so the server's permission gates decide everything;
   // the composer only saves the walk to the right screen.
   const COMMANDS = [
-    { name: "warn", usage: '/warn <name or id> <message>', what: "Send them a staff warning" },
-    { name: "kick", usage: "/kick <name or id>", what: "Remove them from their room" },
-    { name: "ban", usage: "/ban <name or id>", what: "Kick with a room ban (full mods)" },
+    {
+      name: "warn",
+      usage: "/warn <name or id> <message>",
+      what: "Send them a staff warning",
+    },
+    {
+      name: "kick",
+      usage: "/kick <name or id>",
+      what: "Remove them from their room",
+    },
+    {
+      name: "ban",
+      usage: "/ban <name or id>",
+      what: "Kick with a room ban (full mods)",
+    },
     { name: "wipe", usage: "/wipe <name or id>", what: "Clear their textbox" },
-    { name: "note", usage: "/note <name or id> <text>", what: "Put a note on their record" },
-    { name: "ipban", usage: "/ipban <ip, client id or name> [1h|24h|7d|permanent] [reason]", what: "Place an IP block (full mods)" },
-    { name: "unban", usage: "/unban <ip>", what: "Lift an IP block (full mods)" },
-    { name: "inspect", usage: "/inspect <room name or id>", what: "See who is in a room" },
-    { name: "join", usage: "/join <room name or id>", what: "Open the room in a new tab" },
-    { name: "watch", usage: "/watch <room name or id>", what: "Spectate in a new tab" },
+    {
+      name: "note",
+      usage: "/note <name or id> <text>",
+      what: "Put a note on their record",
+    },
+    {
+      name: "ipban",
+      usage: "/ipban <ip, client id or name> [1h|24h|7d|permanent] [reason]",
+      what: "Place an IP block (full mods)",
+    },
+    {
+      name: "unban",
+      usage: "/unban <ip>",
+      what: "Lift an IP block (full mods)",
+    },
+    {
+      name: "inspect",
+      usage: "/inspect <room name or id>",
+      what: "See who is in a room",
+    },
+    {
+      name: "join",
+      usage: "/join <room name or id>",
+      what: "Open the room in a new tab",
+    },
+    {
+      name: "watch",
+      usage: "/watch <room name or id>",
+      what: "Spectate in a new tab",
+    },
     { name: "thread", usage: "/thread <title>", what: "Start a thread" },
     { name: "find", usage: "/find <text>", what: "Search staff chat" },
     { name: "help", usage: "/help", what: "Show this list" },
@@ -1956,8 +2466,8 @@
     if (!d.exact && d.matches.length > 1) {
       toast(
         "Which one? " +
-        d.matches.map((m) => m.username).join(", ") +
-        ". Use the exact name in quotes, or the id.",
+          d.matches.map((m) => m.username).join(", ") +
+          ". Use the exact name in quotes, or the id.",
       );
       return null;
     }
@@ -1971,12 +2481,11 @@
     }
     const rooms = presence.rooms || [];
     const ql = q.toLowerCase();
-    const hits =
-      rooms.filter((r) => r.id === q).length
-        ? rooms.filter((r) => r.id === q)
-        : rooms.filter((r) => (r.name || "").toLowerCase() === ql).length
-          ? rooms.filter((r) => (r.name || "").toLowerCase() === ql)
-          : rooms.filter((r) => (r.name || "").toLowerCase().includes(ql));
+    const hits = rooms.filter((r) => r.id === q).length
+      ? rooms.filter((r) => r.id === q)
+      : rooms.filter((r) => (r.name || "").toLowerCase() === ql).length
+        ? rooms.filter((r) => (r.name || "").toLowerCase() === ql)
+        : rooms.filter((r) => (r.name || "").toLowerCase().includes(ql));
     if (!hits.length) {
       toast('No open room matches "' + q + '".');
       return null;
@@ -1984,7 +2493,10 @@
     if (hits.length > 1) {
       toast(
         "Which room? " +
-        hits.slice(0, 4).map((r) => r.name + " (" + r.id + ")").join(", "),
+          hits
+            .slice(0, 4)
+            .map((r) => r.name + " (" + r.id + ")")
+            .join(", "),
       );
       return null;
     }
@@ -1993,7 +2505,8 @@
 
   const looksLikeIp = (s) =>
     /^[0-9a-f.:]+$/i.test(s) && (s.includes(".") || s.includes(":"));
-  const looksLikeClientId = (s) => /^[a-f0-9-]{8,64}$/i.test(s) && s.includes("-");
+  const looksLikeClientId = (s) =>
+    /^[a-f0-9-]{8,64}$/i.test(s) && s.includes("-");
 
   async function runCommand(line) {
     lastCommandAt = Date.now();
@@ -2032,26 +2545,38 @@
         return;
       }
       case "note": {
-        if (!after) return toast("Usage: " + COMMANDS.find((c) => c.name === "note").usage);
+        if (!after)
+          return toast(
+            "Usage: " + COMMANDS.find((c) => c.name === "note").usage,
+          );
         const u = await targetUser(target);
         if (u) socket.emit("staff note", { targetUserId: u.id, note: after });
         return;
       }
       case "ipban": {
         const { target: d0, rest: r0 } = splitTarget(after);
-        const duration = DURATIONS.includes(d0.toLowerCase()) ? d0.toLowerCase() : "24h";
+        const duration = DURATIONS.includes(d0.toLowerCase())
+          ? d0.toLowerCase()
+          : "24h";
         const reason = DURATIONS.includes(d0.toLowerCase()) ? r0 : after;
         if (looksLikeIp(target) || looksLikeClientId(target)) {
           socket.emit("staff ban ip", { ip: target, duration, reason });
           return;
         }
         const u = await targetUser(target);
-        if (u) socket.emit("staff ip block", { targetUserId: u.id, duration, reason });
+        if (u)
+          socket.emit("staff ip block", {
+            targetUserId: u.id,
+            duration,
+            reason,
+          });
         return;
       }
       case "unban": {
         if (!looksLikeIp(target) && !looksLikeClientId(target))
-          return toast("Usage: /unban <ip>. Mods can also lift bans from the dashboard's ban list.");
+          return toast(
+            "Usage: /unban <ip>. Mods can also lift bans from the dashboard's ban list.",
+          );
         socket.emit("dev unblock ip", { ip: target });
         return;
       }
@@ -2062,13 +2587,20 @@
       }
       case "join": {
         const room = findRoom(rest);
-        if (room) window.open("/room.html?roomId=" + encodeURIComponent(room.id), "_blank");
+        if (room)
+          window.open(
+            "/room.html?roomId=" + encodeURIComponent(room.id),
+            "_blank",
+          );
         return;
       }
       case "watch": {
         const room = findRoom(rest);
         if (room)
-          window.open("/room.html?roomId=" + encodeURIComponent(room.id) + "&spectate=1", "_blank");
+          window.open(
+            "/room.html?roomId=" + encodeURIComponent(room.id) + "&spectate=1",
+            "_blank",
+          );
         return;
       }
       case "thread": {
@@ -2218,34 +2750,165 @@
     if (stick) els.list.scrollTop = els.list.scrollHeight;
   }
 
-  // The list above the composer while a slash is being typed. Clicking a row
-  // fills the command in; it never runs anything by itself.
-  function showPalette(value, ta) {
-    if (!els.palette) return;
+  // ── The list above the composer ───────────────────────────────────────────
+  // Three things can fill it and only one is ever up: a slash command, a
+  // channel after "#", or a person after "@". Nothing in here sends anything
+  // or runs anything - it only ever writes into the box.
+  let palette = { rows: [], idx: -1, kind: null };
+
+  const paletteOpen = () =>
+    !!(els.palette && els.palette.style.display !== "none" && palette.rows.length);
+
+  function hidePalette() {
+    palette = { rows: [], idx: -1, kind: null };
+    if (els.palette) {
+      els.palette.textContent = "";
+      els.palette.style.display = "none";
+    }
+  }
+
+  function paintPalette() {
+    palette.rows.forEach((r, i) =>
+      r.node.classList.toggle("on", i === palette.idx),
+    );
+    const active = palette.rows[palette.idx];
+    if (active && active.node.scrollIntoView)
+      active.node.scrollIntoView({ block: "nearest" });
+  }
+
+  function movePalette(step) {
+    if (!palette.rows.length) return;
+    const n = palette.rows.length;
+    palette.idx = (((palette.idx < 0 ? 0 : palette.idx + step) % n) + n) % n;
+    paintPalette();
+  }
+
+  function choosePalette(i) {
+    const row = palette.rows[i];
+    if (row) row.apply();
+  }
+
+  // Swap the half-typed token under the caret for the finished one.
+  function applyToken(ta, start, end, insert) {
+    const v = ta.value;
+    ta.value = v.slice(0, start) + insert + v.slice(end);
+    const at = start + insert.length;
+    ta.focus();
+    try {
+      ta.setSelectionRange(at, at);
+    } catch (_) {}
+    drafts.set(viewKey(), ta.value);
+    if (els.sizeTa) els.sizeTa();
+    hidePalette();
+  }
+
+  function openPalette(kind, rows, startIdx) {
+    if (!els.palette || !rows.length) return hidePalette();
+    els.palette.textContent = "";
+    for (const r of rows) els.palette.appendChild(r.node);
+    palette = { rows, idx: startIdx, kind };
+    els.palette.style.display = "";
+    els.palette.scrollTop = 0;
+    paintPalette();
+  }
+
+  // What is being typed at the caret decides which list appears.
+  function updatePalette(ta) {
+    if (!ta || !els.palette) return;
+    const v = ta.value;
+    const caret = ta.selectionStart == null ? v.length : ta.selectionStart;
+    const head = v.slice(0, caret);
+    // A slash only ever means a command at the very start of the box.
+    if (v.startsWith("/") && !/\s/.test(head)) return showCommands(head, ta);
+    const m = /(^|[\s(])([#@])([^\s#@]{0,40})$/.exec(head);
+    if (!m) return hidePalette();
+    const q = m[3].toLowerCase();
+    const start = caret - q.length - 1;
+    if (m[2] === "#") return showChannels(q, start, caret, ta);
+    return showPeople(q, start, caret, ta);
+  }
+
+  function showCommands(value, ta) {
     const q = value.slice(1).split(" ")[0].toLowerCase();
     const hits = COMMANDS.filter((c) => c.name.startsWith(q));
-    els.palette.textContent = "";
-    if (!hits.length) return hidePalette();
-    for (const c of hits) {
-      const row = el("button", "dk-cmd");
-      row.type = "button";
-      row.appendChild(el("span", "dk-cmd-u", c.usage));
-      row.appendChild(el("span", "dk-cmd-w", c.what));
-      row.addEventListener("click", () => {
+    const rows = hits.map((c) => {
+      const node = el("button", "dk-cmd");
+      node.type = "button";
+      node.appendChild(el("span", "dk-cmd-u", c.usage));
+      node.appendChild(el("span", "dk-cmd-w", c.what));
+      const apply = () => {
         const box = ta || els.composer;
         if (box) {
           box.value = "/" + c.name + " ";
           box.focus();
           drafts.set(viewKey(), box.value);
+          if (els.sizeTa) els.sizeTa();
         }
         hidePalette();
-      });
-      els.palette.appendChild(row);
-    }
-    els.palette.style.display = "";
+      };
+      node.addEventListener("click", apply);
+      return { node, apply };
+    });
+    // Nothing is highlighted, so Enter still runs what has been typed rather
+    // than completing it - the way the palette has always behaved.
+    openPalette("cmd", rows, -1);
   }
-  function hidePalette() {
-    if (els.palette) els.palette.style.display = "none";
+
+  function showChannels(q, start, end, ta) {
+    const score = (c) => (c.name.toLowerCase().startsWith(q) ? 0 : 1);
+    const hits = channels
+      .filter((c) => c.name.toLowerCase().includes(q))
+      .sort((a, b) => score(a) - score(b))
+      .slice(0, 8);
+    if (!hits.length) return hidePalette();
+    const rows = hits.map((c) => {
+      const node = el("button", "dk-pick");
+      node.type = "button";
+      node.appendChild(el("span", "dk-pick-hash", "#"));
+      const mid = el("span", "dk-pick-mid");
+      mid.appendChild(el("span", "dk-pick-n", c.name));
+      if (c.desc) mid.appendChild(el("span", "dk-pick-s", c.desc));
+      node.appendChild(mid);
+      if (c.restricted) node.appendChild(icon("fa-lock"));
+      const apply = () => applyToken(ta, start, end, "#" + c.name + " ");
+      node.addEventListener("click", apply);
+      return { node, apply };
+    });
+    openPalette("chan", rows, 0);
+  }
+
+  function showPeople(q, start, end, ta) {
+    const people = mentionPeople();
+    const score = (p) => (p.label.toLowerCase().startsWith(q) ? 0 : 1);
+    const hits = people
+      .filter((p) => p.label.toLowerCase().includes(q))
+      .sort((a, b) => score(a) - score(b))
+      .slice(0, 8);
+    if (!hits.length) return hidePalette();
+    const rows = hits.map((p) => {
+      const node = el("button", "dk-pick");
+      node.type = "button";
+      node.appendChild(faceEl(p, "sm"));
+      const mid = el("span", "dk-pick-mid");
+      mid.appendChild(el("span", "dk-pick-n", p.label));
+      // Whether they are here changes what the mention does, so it is said
+      // before the name is picked, not after.
+      mid.appendChild(
+        el(
+          "span",
+          "dk-pick-s",
+          p.online ? "On now" : "Off - it waits for them",
+        ),
+      );
+      node.appendChild(mid);
+      const r = rankOf(p);
+      node.appendChild(el("span", "dk-chip " + r, rankName(r)));
+      node.appendChild(el("span", "dk-pick-dot " + (p.online ? "on" : "off")));
+      const apply = () => applyToken(ta, start, end, "@" + p.label + " ");
+      node.addEventListener("click", apply);
+      return { node, apply };
+    });
+    openPalette("ment", rows, 0);
   }
 
   // ── Styles ────────────────────────────────────────────────────────────────
@@ -2269,7 +2932,15 @@
 .dk-pill.raised{bottom:64px;}
 .dk-pill-badge{background:#ff9800;color:#000;border-radius:9px;font-size:11px;line-height:1;
   padding:3px 7px;font-variant-numeric:tabular-nums;}
+/* Red means #help, and only #help: somebody in a room is waiting for staff.
+   Ordinary traffic never turns this red, which is what makes it worth
+   looking at. */
 .dk-pill-badge.loud{background:#ff5468;color:#fff;}
+.dk-pill.urgent{border-color:#ff5468;box-shadow:0 6px 20px rgba(0,0,0,.5),0 0 0 1px rgba(255,84,104,.5);
+  animation:dkUrgent 2.4s ease-in-out infinite;}
+.dk-pill.urgent:hover{background:#ff5468;color:#fff;}
+@keyframes dkUrgent{0%,100%{box-shadow:0 6px 20px rgba(0,0,0,.5),0 0 0 1px rgba(255,84,104,.5);}
+  50%{box-shadow:0 6px 20px rgba(0,0,0,.5),0 0 0 4px rgba(255,84,104,.22);}}
 @keyframes dkNudge{0%,100%{transform:translateY(0)}25%{transform:translateY(-4px)}50%{transform:translateY(0)}75%{transform:translateY(-2px)}}
 .dk-pill.nudge{animation:dkNudge .5s ease;}
 .dk-panel{position:fixed;right:16px;bottom:76px;z-index:99989;display:flex;flex-direction:column;
@@ -2357,7 +3028,7 @@
 .dk-av.l1{background:#6d4b9e;}
 .dk-av img{width:100%;height:100%;object-fit:cover;display:block;}
 .dk-quote{display:flex;align-items:baseline;gap:6px;width:100%;text-align:left;background:none;border:none;
-  font-family:inherit;color:#8d8d8d;font-size:11.5px;padding:0 0 3px 46px;cursor:pointer;min-width:0;}
+  font-family:inherit;color:#8d8d8d;font-size:11.5px;padding:0 0 3px 0;cursor:pointer;min-width:0;}
 .dk-quote .fas{font-size:9px;flex:none;}
 .dk-quote-w{color:#c3c3c3;font-weight:bold;flex:none;}
 .dk-quote-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
@@ -2444,9 +3115,29 @@
   padding:6px;display:flex;flex-direction:column;gap:2px;}
 .dk-cmd{display:flex;align-items:baseline;gap:10px;width:100%;text-align:left;background:none;border:none;
   font-family:inherit;color:#fff;padding:6px 8px;border-radius:4px;cursor:pointer;min-width:0;}
-.dk-cmd:hover{background:#2a2a2a;}
+.dk-cmd:hover,.dk-cmd.on{background:#2a2a2a;}
 .dk-cmd-u{font-weight:bold;font-size:12.5px;color:#ff9800;flex:none;}
 .dk-cmd-w{font-size:11.5px;color:#8d8d8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+/* One row of the # or @ list. The highlighted row is the one Enter takes. */
+.dk-pick{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:none;border:none;
+  font-family:inherit;color:#fff;padding:5px 8px;border-radius:4px;cursor:pointer;min-width:0;}
+.dk-pick:hover,.dk-pick.on{background:#2a2a2a;}
+.dk-pick.on{box-shadow:inset 2px 0 0 #ff9800;}
+.dk-pick-hash{color:#ff9800;font-weight:bold;font-size:14px;width:26px;text-align:center;flex:none;}
+.dk-pick-mid{display:flex;flex-direction:column;min-width:0;flex:1;gap:1px;}
+.dk-pick-n{font-size:13px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dk-pick-s{font-size:11px;color:#8d8d8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dk-pick > .fa-lock{color:#8d8d8d;font-size:11px;flex:none;}
+.dk-pick-dot{width:7px;height:7px;border-radius:50%;flex:none;}
+.dk-pick-dot.on{background:#57d9a3;}
+.dk-pick-dot.off{background:#5a5a5a;}
+/* A name written in a message. A channel opens; a mention is just marked, in
+   your own colour when it is you. */
+.dk-chanlink{background:none;border:none;font-family:inherit;font-size:inherit;padding:0;
+  color:#5aa9ff;font-weight:bold;cursor:pointer;border-radius:3px;}
+.dk-chanlink:hover{background:rgba(90,169,255,.18);text-decoration:underline;}
+.dk-ment{color:#ffb454;font-weight:bold;background:rgba(255,152,0,.14);border-radius:3px;padding:0 3px;}
+.dk-ment.self{color:#000;background:#ff9800;}
 .dk-comp{flex:none;display:flex;align-items:flex-end;gap:8px;padding:10px 14px;border-top:1px solid #333;background:#1b1b1b;}
 .dk-input{flex:1;min-width:0;background:#000;color:#fff;border:1px solid #3a3a3a;border-radius:5px;
   padding:0 11px;font-family:inherit;font-size:13.5px;resize:none;outline:none;
@@ -2569,7 +3260,7 @@ button.dk-chan:focus-visible,button.dk-thread:focus-visible,.dk-minib:focus-visi
   .dk-input,.dk-editbox{font-size:16px;}
 }
 @media (prefers-reduced-motion:reduce){
-  .dk-pill.nudge,.dk-ping-badge,.dk-msg.flash,.dk-sys.flash,.dk-ping.flash{animation:none !important;}
+  .dk-pill.nudge,.dk-pill.urgent,.dk-ping-badge,.dk-msg.flash,.dk-sys.flash,.dk-ping.flash{animation:none !important;}
   .dk-rail,.dk-side,.dk-toast{transition:none !important;}
 }`;
     document.head.appendChild(s);
@@ -2596,5 +3287,10 @@ button.dk-chan:focus-visible,button.dk-thread:focus-visible,.dk-minib:focus-visi
     );
   });
 
-  window.TalkoDesk = { init, open: () => setOpen(true), close: () => setOpen(false), toggle };
+  window.TalkoDesk = {
+    init,
+    open: () => setOpen(true),
+    close: () => setOpen(false),
+    toggle,
+  };
 })();
