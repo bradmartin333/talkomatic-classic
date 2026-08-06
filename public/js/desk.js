@@ -3994,8 +3994,10 @@
 /* ── Queue cards ──
    A tray of things to do, so each one is a card with its own buttons rather
    than a line in a wall of text. The left edge carries the kind's colour. */
+/* Square corners because of the strip: a radius clips it into a tapered
+   sliver, and the strip is what says what kind of card this is. */
 .dk-q{margin-top:10px;background: #1b1b1b;border:1px solid #2a2a2a;border-left:3px solid #616161;
-  border-radius:5px;padding:9px 12px;display:flex;flex-direction:column;gap:8px;}
+  border-radius:0;padding:9px 12px;display:flex;flex-direction:column;gap:8px;}
 .dk-q.q-report{border-left-color: #5aa9ff;}
 .dk-q.q-appeal{border-left-color: #ffb454;}
 .dk-q.q-application{border-left-color: #c08bff;}
@@ -4028,7 +4030,7 @@
 .dk-q-fl{font-size:9.5px;font-weight:bold;letter-spacing:.6px;text-transform:uppercase;color: #6f6f6f;}
 .dk-q-fv{font-size:12.5px;color: #ededed;line-height:1.5;word-break:break-word;
   overflow-wrap:anywhere;white-space:pre-wrap;}
-.dk-q-f.quote .dk-q-fv{background: #000;border-left:2px solid #333;border-radius:0 3px 3px 0;
+.dk-q-f.quote .dk-q-fv{background: #000;border-left:2px solid #333;border-radius:0;
   padding:6px 9px;color: #c3c3c3;max-height:120px;overflow:auto;}
 .dk-q-acts-list{display:flex;flex-direction:column;gap:4px;}
 .dk-q-note{font-size:11px;color: #6f6f6f;line-height:1.5;}

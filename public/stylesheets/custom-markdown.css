@@ -5,7 +5,9 @@
   /* Blockquote styling */
   --mk-blockquote-padding: 1rem 1.5rem;
   --mk-blockquote-border-width: 4px;
-  --mk-blockquote-border-radius: 0.375rem;
+  /* Zero: a blockquote wears a coloured rule down its left edge, and a radius
+     clips that rule into a tapered sliver at both ends. */
+  --mk-blockquote-border-radius: 0;
   --mk-blockquote-icon-size: 1.2rem;
   --mk-blockquote-icon-left: 1.2rem;
   --mk-blockquote-special-padding-left: 3.5rem;

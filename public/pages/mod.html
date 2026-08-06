@@ -852,12 +852,19 @@
         color: var(--orange);
         border-color: var(--orange);
       }
+      /* ── Left accent strips ──────────────────────────────────────────
+         Anything wearing a coloured strip down its left edge has SQUARE
+         corners. A rounded corner clips the strip into a tapered sliver that
+         reads as a rendering fault rather than a colour code, and the strip
+         is doing real work here: it is what tells you the kind of a card at a
+         glance. Square corners, full-height strip. This holds for every
+         element with a border-left accent, on every page. */
       .entry .detail {
         margin: 0 0.8125rem 0.6875rem;
         padding: 0.5625rem 0.75rem;
         background: var(--tile);
         border-left: 3px solid var(--orange);
-        border-radius: 0 0.3125rem 0.3125rem 0;
+        border-radius: 0;
         color: var(--txt);
         font-size: 0.8125rem;
         white-space: pre-wrap;
@@ -1316,7 +1323,7 @@
         padding: 0.6875rem 0.8125rem;
         background: var(--tile);
         border-left: 3px solid var(--orange);
-        border-radius: 0 0.3125rem 0.3125rem 0;
+        border-radius: 0;
       }
       .rc-typed .lbl {
         display: flex;
@@ -1417,7 +1424,7 @@
       }
       .ap-box.contest {
         border-left: 3px solid var(--red);
-        border-radius: 0 0.3125rem 0.3125rem 0;
+        border-radius: 0;
       }
       .ap-box .lbl {
         display: flex;
@@ -1697,7 +1704,7 @@
         background: var(--card);
         border: 1px solid var(--line-soft);
         border-left: 4px solid var(--line);
-        border-radius: 0.3125rem;
+        border-radius: 0;
         padding: 0.875rem 1rem;
         transition: border-color 0.15s ease;
       }
@@ -1866,7 +1873,7 @@
         padding: 0.5rem 0.625rem;
         background: var(--tile);
         border-left: 2px solid var(--red);
-        border-radius: 0 0.25rem 0.25rem 0;
+        border-radius: 0;
       }
       .former-why-k {
         font-size: 0.6563rem;
@@ -2133,9 +2140,11 @@
         color: var(--dim2);
         line-height: 1.6;
       }
+      /* Square, because every row inside wears a rank strip and a rounded
+         container would clip the first and last of them. */
       .lb-list {
         border: 1px solid var(--line-soft);
-        border-radius: 0.3125rem;
+        border-radius: 0;
         overflow: hidden;
       }
       .lb-row {
@@ -2585,7 +2594,7 @@
       }
       .mh-group {
         background: var(--tile);
-        border-radius: 0.3125rem;
+        border-radius: 0;
         padding: 0.625rem 0.75rem;
         border-left: 2px solid transparent;
       }
@@ -2982,9 +2991,10 @@
          One person is one fixed-height row, so somebody with thirty blocks
          takes no more room than somebody with one, and 20+ bans stay
          scannable. Their blocks open in a detail panel underneath. */
+      /* Square: every row wears a duration strip on its left edge. */
       .bantable {
         border: 1px solid var(--line-soft);
-        border-radius: 0.3125rem;
+        border-radius: 0;
         overflow: hidden;
       }
       .banhead,
@@ -3168,7 +3178,7 @@
         background: var(--card);
         border: 1px solid var(--line-soft);
         border-left: 4px solid var(--amber);
-        border-radius: 0.3125rem;
+        border-radius: 0;
         overflow: hidden;
         transition: border-color 0.15s ease;
       }

@@ -107,8 +107,10 @@
   .tk-toasts{position:fixed;top:14px;right:14px;left:auto;z-index:100002;display:flex;flex-direction:column;
     gap:10px;max-width:340px;}
   .tk-toasts.tk-full{left:14px;right:14px;max-width:none;align-items:center;}
+  /* Square: the coloured left edge is what says what kind of message this is,
+     and a rounded corner clips it into a sliver. */
   .tk-toast{position:relative;background:#1b1b1b;border:1px solid #333;border-left:4px solid #ff9800;
-    border-radius:5px;padding:13px 14px 15px;box-shadow:0 10px 30px rgba(0,0,0,.55);
+    border-radius:0;padding:13px 14px 15px;box-shadow:0 10px 30px rgba(0,0,0,.55);
     animation:tkToastIn .18s ease-out;overflow:hidden;
     color:#fff;font-size:14px;line-height:1.5;display:flex;gap:11px;align-items:flex-start;width:100%;}
   @keyframes tkToastIn{from{transform:translateX(14px);opacity:0}to{transform:translateX(0);opacity:1}}
