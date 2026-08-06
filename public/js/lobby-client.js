@@ -1148,7 +1148,7 @@ function showBanScreen(info) {
       closed.className = "ac-closed";
       closed.textContent =
         d.status === "resolved"
-          ? "This appeal is closed. If your ban is still in place after a decision, the Discord link below is the last stop."
+          ? "This appeal is closed. Any moderator can reopen it if they think it deserves another look, and this page will say so. If your ban is still in place, the Discord link below is the next stop."
           : "You cannot send any more messages here. Staff will still read what you have written.";
       wrap.appendChild(closed);
       return;
@@ -1336,8 +1336,10 @@ function showBanScreen(info) {
       })
         .then((r) => r.json().catch(() => ({ ok: false })))
         .then((d) => {
-          // Filed, or one was already open: either way this becomes the chat.
-          if (d && (d.ok || d.code === "already")) return pollIntoChat(true);
+          // Filed, or one is already open or decided for this ban: either way
+          // the conversation is what they should be looking at.
+          if (d && (d.ok || d.code === "already" || d.code === "decided"))
+            return pollIntoChat(true);
           sendBtn.disabled = false;
           sendBtn.innerHTML = prev;
           msgEl.classList.add("err");

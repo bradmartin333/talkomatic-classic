@@ -3467,6 +3467,41 @@
                 ". The ban stays in place.",
         ),
       );
+      // One moderator's call is not the last word. Anybody can put a declined
+      // appeal back on the table, including whoever declined it.
+      if (a.resolution !== "lifted" && viewerIsFullMod()) {
+        const acts = divc("apm-acts");
+        const re = document.createElement("button");
+        re.className = "btn sm";
+        re.appendChild(icon("fa-rotate-left"));
+        re.appendChild(document.createTextNode(" Reopen this appeal"));
+        re.title = "Put it back on the board and give them their reply box back";
+        re.addEventListener("click", async () => {
+          const r = await StaffUI.prompt({
+            title: "Reopen this appeal",
+            icon: '<i class="fas fa-rotate-left"></i>',
+            message:
+              "It goes back on the board and they can write again. Say why, so the next person reading it knows what changed.",
+            fields: [
+              {
+                name: "note",
+                label: "Why (optional, they see this)",
+                type: "textarea",
+                maxLength: 300,
+                placeholder: "e.g. The log does not back up the report.",
+              },
+            ],
+            confirmText: "Reopen",
+          });
+          if (r == null) return;
+          socket.emit("staff appeal reopen", {
+            id: a.id,
+            note: (r.note || "").trim(),
+          });
+        });
+        acts.appendChild(re);
+        foot.appendChild(acts);
+      }
       return;
     }
     if (!viewerIsFullMod()) {
@@ -3640,6 +3675,16 @@
       stb.appendChild(icon(sm.icon));
       stb.appendChild(document.createTextNode(" " + sm.label));
       meta.appendChild(stb);
+      // A second look is worth saying out loud, so nobody wonders why a
+      // decided appeal is open again.
+      if (a.reopenedBy) {
+        const re = span("rbadge warm");
+        re.appendChild(icon("fa-rotate-left"));
+        re.appendChild(
+          document.createTextNode(" reopened by " + a.reopenedBy),
+        );
+        meta.appendChild(re);
+      }
       const blk = span("rbadge " + (a.stillBlocked ? "off" : "on"));
       blk.appendChild(icon(a.stillBlocked ? "fa-ban" : "fa-unlock"));
       blk.appendChild(

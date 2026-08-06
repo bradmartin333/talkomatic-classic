@@ -47,6 +47,7 @@ function load() {
     // Appeals filed before this was a conversation have one note and no
     // thread. Give them one so every appeal reads the same way.
     for (const a of appeals) {
+      if (!a.banKey) a.banKey = banKeyOf(a.ban);
       if (Array.isArray(a.messages)) continue;
       a.messages = a.message
         ? [{ id: 1, ts: a.at || Date.now(), from: "user", text: a.message }]
@@ -94,16 +95,47 @@ function prune(now) {
   if (appeals.length > MAX) appeals = appeals.slice(-MAX);
 }
 
-// The open (unreviewed) appeal for an IP, if any.
-function openForIp(ip) {
-  return appeals.find((a) => a.ip === ip && a.status === "open") || null;
+// An appeal belongs to a BAN, not to a person for the rest of time. Two
+// people were stuck because of that: somebody banned again months later still
+// saw their old dismissed appeal and had no way to file a new one, and anybody
+// with a stale open appeal was told they already had one under review.
+//
+// The key is what identifies the block being contested. A new ban has a new
+// timestamp, so a new ban gets a fresh appeal.
+function banKeyOf(ban) {
+  if (!ban || typeof ban !== "object") return "none";
+  return [ban.ts || 0, ban.expiry || 0, ban.reason || ""].join("|");
+}
+
+// The open (unreviewed) appeal for an IP, if any. Scoped to one ban when a key
+// is given, which is what every caller that matters should be doing.
+function openForIp(ip, banKey) {
+  return (
+    appeals.find(
+      (a) =>
+        a.ip === ip &&
+        a.status === "open" &&
+        (!banKey || (a.banKey || banKeyOf(a.ban)) === banKey),
+    ) || null
+  );
 }
 
 // File a new appeal. Returns { ok, id } or { ok:false, code } so the HTTP
-// route can give the banned user a clear message. One open appeal per IP.
+// route can give the banned user a clear message. One open appeal per ban.
 function submit({ ip, deviceId, userId, name, message, ban }) {
   if (!ip) return { ok: false, code: "no_ip" };
-  if (openForIp(ip)) return { ok: false, code: "already" };
+  const key = banKeyOf(ban);
+  if (openForIp(ip, key)) return { ok: false, code: "already" };
+  // An appeal already decided for THIS ban cannot be re-filed - that is what
+  // "one appeal per ban" means, and a moderator can reopen it if the decision
+  // deserves another look.
+  const decided = appeals.find(
+    (a) =>
+      (a.ip === ip || (deviceId && a.deviceId === deviceId)) &&
+      a.status === "resolved" &&
+      (a.banKey || banKeyOf(a.ban)) === key,
+  );
+  if (decided) return { ok: false, code: "decided" };
   const now = Date.now();
   const a = {
     id: ++seq,
@@ -128,6 +160,8 @@ function submit({ ip, deviceId, userId, name, message, ban }) {
     lockedAt: null,
     // Snapshot of the ban being contested, so staff see the whole story.
     ban: ban || null,
+    // Which ban this is about. A new ban is a new appeal.
+    banKey: key,
   };
   appeals.push(a);
   if (appeals.length > MAX) appeals = appeals.slice(-MAX);
@@ -142,19 +176,54 @@ function get(id) {
 
 // ── The conversation ────────────────────────────────────────────────────────
 
-// The appeal this browser is looking at: their open one if they have it,
-// otherwise the most recent, so a decision is still readable afterwards.
-// Matched on address OR device id, because a range ban and an id ban both
-// leave the exact address off the key.
-function forUser(ip, deviceId) {
+// The appeal this browser is looking at. Matched on address OR device id,
+// because a range ban and an id ban both leave the exact address off the key.
+//
+// When a ban key is given - which it is whenever they are actually banned -
+// only an appeal about THAT ban counts. Anything older is history: it must not
+// be shown as their current appeal, and it must not stop them filing a new
+// one for the ban they are serving now.
+function forUser(ip, deviceId, banKey) {
   const mine = appeals.filter(
     (a) => (ip && a.ip === ip) || (deviceId && a.deviceId === deviceId),
   );
   if (!mine.length) return null;
+  const scoped = banKey
+    ? mine.filter((a) => (a.banKey || banKeyOf(a.ban)) === banKey)
+    : mine;
+  if (!scoped.length) return null;
   return (
-    mine.filter((a) => a.status === "open").sort((x, y) => y.at - x.at)[0] ||
-    mine.sort((x, y) => y.at - x.at)[0]
+    scoped.filter((a) => a.status === "open").sort((x, y) => y.at - x.at)[0] ||
+    scoped.sort((x, y) => y.at - x.at)[0]
   );
+}
+
+// Put a decided appeal back on the table. One moderator's call is not the last
+// word: anybody on the team can ask for it to be looked at again, and the
+// person appealing gets their reply box back.
+function reopen(id, byLabel, note) {
+  const a = get(id);
+  if (!a) return { ok: false, code: "no_appeal" };
+  if (a.status !== "resolved") return { ok: false, code: "not_closed" };
+  // A lifted ban has nothing left to appeal.
+  if (a.resolution === "lifted") return { ok: false, code: "already_lifted" };
+  a.status = "open";
+  a.resolution = null;
+  a.reviewedBy = null;
+  a.reviewedAt = null;
+  a.locked = false;
+  a.lockedBy = null;
+  a.lockedAt = null;
+  a.reopenedBy = byLabel || null;
+  a.reopenedAt = Date.now();
+  systemNote(
+    a,
+    (byLabel ? byLabel + " reopened this appeal." : "This appeal was reopened.") +
+      " Somebody is looking at it again." +
+      (note ? " " + note : ""),
+  );
+  saveSoon();
+  return { ok: true, appeal: a };
 }
 
 function pushMessage(a, msg) {
@@ -342,7 +411,9 @@ load();
 module.exports = {
   submit,
   get,
+  banKeyOf,
   forUser,
+  reopen,
   userReply,
   staffReply,
   systemNote,

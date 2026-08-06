@@ -914,6 +914,10 @@ function buildAppealsList(forDev) {
       // board carries the whole thread rather than just the opening note.
       locked: !!a.locked,
       lockedBy: a.lockedBy || null,
+      // Set when a decision was put back on the table, so the board can say so
+      // rather than looking like it was never decided.
+      reopenedBy: a.reopenedBy || null,
+      reopenedAt: a.reopenedAt || null,
       messages: (a.messages || []).map((m) => ({
         id: m.id,
         ts: m.ts,
@@ -6601,6 +6605,53 @@ function registerSocketHandlers(opts) {
           "-",
           text.slice(0, 120),
         );
+        broadcastAppealsList();
+        broadcastAppeal(id);
+      }),
+    );
+
+    // Put a decided appeal back on the table. One moderator's call is not the
+    // last word - a second opinion is the whole point of having a team - so
+    // any full mod can reopen one, including a decision they made themselves.
+    socket.on(
+      "staff appeal reopen",
+      safe(async (data) => {
+        if (!requireModLevel(socket, 2)) return;
+        const id = Number(data?.id);
+        const note = sanitizeMessage(
+          typeof data?.note === "string" ? data.note : "",
+        ).slice(0, 300);
+        const label = socket.staffLabel || (socket.isDev ? "dev" : "mod");
+        const r = appeals.reopen(id, label, note || null);
+        if (!r.ok)
+          return socket.emit(
+            "error",
+            createErrorResponse(
+              ERROR_CODES.BAD_REQUEST,
+              r.code === "already_lifted"
+                ? "That ban was lifted, so there is nothing left to appeal."
+                : r.code === "not_closed"
+                  ? "That appeal is already open."
+                  : "No such appeal.",
+            ),
+          );
+        const a = r.appeal;
+        logStaff(
+          socket,
+          "reopen appeal",
+          { name: a.name || "?", id: a.userId || a.deviceId || "-" },
+          "-",
+          note || undefined,
+        );
+        // The queue card said "dismissed by someone". It has to stop saying
+        // that, or the next person to look will think it is handled.
+        try {
+          staffchat.stampQueue(
+            (m) => m.qkind === "appeal" && m.card && m.card.itemId === id,
+            { by: label, action: "reopened" },
+            true,
+          );
+        } catch (_) {}
         broadcastAppealsList();
         broadcastAppeal(id);
       }),

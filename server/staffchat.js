@@ -541,12 +541,14 @@ function sanitizeCard(qkind, c) {
 // did it - the dashboard, a room, or the Desk itself. The card stays put with
 // "handled by X" on it rather than vanishing, so two people do not both go
 // looking for the same report.
-function stampQueue(match, done) {
+// `force` overwrites a card that is already stamped. Reopening an appeal is
+// the case for it: the card must stop saying it was dealt with.
+function stampQueue(match, done, force) {
   const list = desk.channels.queues || [];
   let touched = false;
   for (let i = list.length - 1; i >= 0; i--) {
     const m = list[i];
-    if (!m.card || m.done) continue;
+    if (!m.card || (m.done && !force)) continue;
     if (!match(m)) continue;
     m.done = { by: cut(done.by, 60), action: cut(done.action, 60), ts: Date.now() };
     broadcast("queues", m, true);

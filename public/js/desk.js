@@ -3411,6 +3411,31 @@
               ". The ban stays in place.",
         ),
       );
+      // Anybody can ask for a second look, including whoever declined it.
+      if (a.resolution !== "lifted" && isFullMod()) {
+        const acts = el("div", "dk-ap-acts");
+        const re = btn("dk-minib", "Reopen this appeal", "fa-rotate-left");
+        re.title = "Put it back on the board and give them their reply box back";
+        re.addEventListener("click", () =>
+          ask(
+            {
+              title: "Reopen this appeal",
+              message:
+                "It goes back on the board and they can write again. Say why, so the next person reading it knows what changed.",
+              label: "Why (optional, they see this)",
+              max: 300,
+              icon: '<i class="fas fa-rotate-left"></i>',
+            },
+            (note) =>
+              socket.emit("staff appeal reopen", {
+                id: a.id,
+                note: String(note || "").trim(),
+              }),
+          ),
+        );
+        acts.appendChild(re);
+        main.appendChild(acts);
+      }
       return;
     }
 

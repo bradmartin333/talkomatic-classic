@@ -903,11 +903,39 @@ function appealForBrowser(req) {
   const deviceId = /^[a-f0-9-]{8,64}$/i.test(rawDevice)
     ? rawDevice.toLowerCase()
     : null;
-  return { ip, deviceId, appeal: appeals.forUser(ip, deviceId) };
+  // Which ban they are serving right now. The appeal shown is the one about
+  // THIS ban: an old one from a ban they already served is history and must
+  // not stand in the way of appealing the ban they are actually under.
+  const active =
+    ipban.findActiveBlock(ip) ||
+    (deviceId ? ipban.findActiveIdBlock(deviceId) : null);
+  const b = active && typeof active.block === "object" ? active.block : null;
+  const banKey = active
+    ? appeals.banKeyOf({
+        ts: b ? b.ts : null,
+        expiry: b ? b.expiry : active.block,
+        reason: b ? b.reason : null,
+      })
+    : null;
+  return {
+    ip,
+    deviceId,
+    banned: !!active,
+    banKey,
+    appeal: appeals.forUser(ip, deviceId, banKey),
+  };
 }
 
-function appealPayload(a) {
-  if (!a) return { ok: true, has: false };
+function appealPayload(a, ctx) {
+  // No appeal for the ban they are under: the form, not a closed door. This is
+  // the case that was locking people out - a decision on a previous ban used
+  // to answer here and there was no way past it.
+  if (!a)
+    return {
+      ok: true,
+      has: false,
+      canFile: !!(ctx && ctx.banned),
+    };
   return {
     ok: true,
     has: true,
@@ -940,7 +968,8 @@ function appealPayload(a) {
 
 app.get(`${API}/appeal`, (req, res) => {
   try {
-    res.json(appealPayload(appealForBrowser(req).appeal));
+    const ctx = appealForBrowser(req);
+    res.json(appealPayload(ctx.appeal, ctx));
   } catch (e) {
     console.error("appeal read error:", e);
     res.status(500).json({ ok: false, code: "server_error" });
@@ -949,7 +978,8 @@ app.get(`${API}/appeal`, (req, res) => {
 
 app.post(`${API}/appeal/message`, (req, res) => {
   try {
-    const { appeal } = appealForBrowser(req);
+    const ctx = appealForBrowser(req);
+    const { appeal } = ctx;
     if (!appeal) return res.json({ ok: false, code: "no_appeal" });
     const text = sanitizeMessage(
       typeof req.body?.message === "string" ? req.body.message : "",
@@ -962,7 +992,7 @@ app.post(`${API}/appeal/message`, (req, res) => {
     } catch (e) {
       console.error("announceAppealMessage failed:", e);
     }
-    res.json(appealPayload(appeal));
+    res.json(appealPayload(appeal, ctx));
   } catch (e) {
     console.error("appeal message error:", e);
     res.status(500).json({ ok: false, code: "server_error" });
