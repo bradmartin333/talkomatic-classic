@@ -103,6 +103,48 @@
     !a ? null : a.role === "dev" ? "dev" : (a.level || 2) >= 2 ? "l2" : "l1";
   const rankName = (r) => (r === "dev" ? "DEV" : r === "l2" ? "MOD L2" : "MOD L1");
 
+  // First visible character of a name, without splitting a surrogate pair -
+  // charAt(0) turns fancy unicode names into broken squares.
+  function initialOf(name) {
+    const c = Array.from(String(name || "?").trim())[0];
+    return (c || "?").toUpperCase();
+  }
+
+  // Discord avatar URL, rebuilt from the validated snowflake + hash the
+  // server stores - same rule as the rooms, never a raw URL from data.
+  const PFP_ID_RE = /^\d{17,20}$/;
+  const PFP_HASH_RE = /^(?:a_)?[a-f0-9]{32}$/i;
+  function avatarUrl(av, size) {
+    if (!av || !PFP_ID_RE.test(av.id || "") || !PFP_HASH_RE.test(av.hash || ""))
+      return null;
+    return (
+      "https://cdn.discordapp.com/avatars/" + av.id + "/" + av.hash +
+      ".webp?size=" + (size || 64)
+    );
+  }
+
+  // The round face next to a message or presence row: their picture when they
+  // have one, their initial when they do not.
+  function faceEl(author, cls) {
+    const wrap = el("span", "dk-av " + (cls || "") + " " + (rankOf(author) || ""));
+    const url = author && avatarUrl(author.avatar, 64);
+    if (url) {
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = "";
+      img.loading = "lazy";
+      // A dead CDN link falls back to the initial instead of a broken image.
+      img.addEventListener("error", () => {
+        img.remove();
+        wrap.textContent = initialOf(author && author.label);
+      });
+      wrap.appendChild(img);
+    } else {
+      wrap.textContent = initialOf(author && author.label);
+    }
+    return wrap;
+  }
+
   // ── Sounds and toasts ─────────────────────────────────────────────────────
   // The beep only ever fires after the user has interacted with the Desk, so
   // it can never hit an autoplay block or surprise a fresh page.
@@ -381,6 +423,11 @@
       if (panelOpen && mode === "search") renderSearch();
     });
 
+    socket.on("desk roster", (d) => {
+      roster = (d && d.staff) || [];
+      if (panelOpen && mode === "team") renderTeam();
+    });
+
     socket.on("desk error", (d) => toast((d && d.message) || "That did not work."));
 
     socket.on("desk ping update", (d) => {
@@ -395,14 +442,16 @@
         socket.emit("desk room info", { roomId: inspectorRoom.roomId });
     });
 
-    // A failed action must never fail silently. The inspector can be looking
-    // at a snapshot ("kick" on somebody who just left), so say what the
-    // server said and fetch a fresh view of the room.
+    // A failed action must never fail silently - not from the inspector, and
+    // not from a slash command. Say what the server said, and refresh the
+    // room snapshot if one is up.
     socket.on("error", (d) => {
-      if (!panelOpen || mode !== "inspector") return;
+      if (!panelOpen) return;
+      const fromCommand = Date.now() - lastCommandAt < 6000;
+      if (mode !== "inspector" && !fromCommand) return;
       const m = d && d.error && d.error.message;
       if (m) toast(m);
-      if (inspectorRoom)
+      if (mode === "inspector" && inspectorRoom)
         socket.emit("desk room info", { roomId: inspectorRoom.roomId });
     });
 
@@ -525,6 +574,10 @@
     people.addEventListener("click", () => panel.classList.toggle("side-open"));
     head.appendChild(people);
 
+    const helpBtn = btn("dk-hbtn", null, "fa-circle-question", "How the Desk works");
+    helpBtn.addEventListener("click", openHelp);
+    head.appendChild(helpBtn);
+
     const sound = btn("dk-hbtn", null, soundOn ? "fa-bell" : "fa-bell-slash", "Sound on new pings and mentions");
     sound.addEventListener("click", () => {
       soundOn = !soundOn;
@@ -583,6 +636,124 @@
 
     document.body.appendChild(panel);
     els.panel = panel;
+    if (!pageMode) makeMovable(panel, head);
+  }
+
+  // ── Placement: centred by default, then wherever you drag it ─────────────
+  // The panel remembers its spot and size per browser. On a phone it always
+  // fills the screen and none of this applies.
+  const RECT_KEY = "talkomatic_deskRect";
+  const onDesktop = () => window.innerWidth > 760 && !pageMode;
+
+  // Set while the code is positioning the panel itself. The resize observer
+  // fires during that, and during the browser's first layout pass, and a save
+  // from either would store a half built rectangle over the real one.
+  let placing = 0;
+
+  function placePanel(x, y, w, h) {
+    const p = els.panel;
+    if (!p) return;
+    placing = Date.now();
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    w = Math.max(560, Math.min(w || p.offsetWidth, W - 16));
+    h = Math.max(420, Math.min(h || p.offsetHeight, H - 16));
+    x = Math.max(8, Math.min(x, W - w - 8));
+    y = Math.max(8, Math.min(y, H - h - 8));
+    p.style.left = x + "px";
+    p.style.top = y + "px";
+    p.style.right = "auto";
+    p.style.bottom = "auto";
+    p.style.width = w + "px";
+    p.style.height = h + "px";
+  }
+
+  function saveRect() {
+    const p = els.panel;
+    if (!p || !onDesktop() || !panelOpen) return;
+    const r = p.getBoundingClientRect();
+    if (r.width < 200 || r.height < 200) return; // mid layout, not a real size
+    try {
+      localStorage.setItem(
+        RECT_KEY,
+        JSON.stringify({ x: r.left, y: r.top, w: r.width, h: r.height }),
+      );
+    } catch (_) { }
+  }
+
+  function applyRect() {
+    if (!onDesktop()) return;
+    let r = null;
+    try {
+      r = JSON.parse(localStorage.getItem(RECT_KEY) || "null");
+    } catch (_) { }
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const w = r && r.w ? r.w : Math.min(1060, W - 32);
+    const h = r && r.h ? r.h : Math.min(680, H - 64);
+    const x = r && r.x != null ? r.x : (W - Math.min(w, W - 16)) / 2;
+    const y = r && r.y != null ? r.y : (H - Math.min(h, H - 16)) / 2;
+    placePanel(x, y, w, h);
+  }
+
+  function clearInlineRect() {
+    const p = els.panel;
+    if (!p) return;
+    p.style.left = p.style.top = p.style.right = p.style.bottom = "";
+    p.style.width = p.style.height = "";
+  }
+
+  function makeMovable(panel, head) {
+    head.classList.add("dk-drag");
+    let drag = null;
+    head.addEventListener("pointerdown", (e) => {
+      if (!onDesktop()) return;
+      if (e.target.closest("button, input")) return;
+      const r = panel.getBoundingClientRect();
+      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+      try {
+        head.setPointerCapture(e.pointerId);
+      } catch (_) { }
+      panel.classList.add("dragging");
+    });
+    head.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      placePanel(
+        e.clientX - drag.dx,
+        e.clientY - drag.dy,
+        panel.offsetWidth,
+        panel.offsetHeight,
+      );
+    });
+    const done = () => {
+      if (!drag) return;
+      drag = null;
+      panel.classList.remove("dragging");
+      saveRect();
+    };
+    head.addEventListener("pointerup", done);
+    head.addEventListener("pointercancel", done);
+
+    // The native resize handle changes width and height; remember it, but
+    // only when the change came from the user rather than from our own
+    // placement or the browser's first layout pass.
+    let t = null;
+    try {
+      new ResizeObserver(() => {
+        if (!panelOpen || !onDesktop()) return;
+        if (Date.now() - placing < 600) return;
+        clearTimeout(t);
+        t = setTimeout(saveRect, 300);
+      }).observe(panel);
+    } catch (_) { }
+
+    // Crossing the phone breakpoint: inline position must not fight the
+    // full-screen layout, so it is dropped and restored on the way back.
+    window.addEventListener("resize", () => {
+      if (!panelOpen) return;
+      if (window.innerWidth <= 760) clearInlineRect();
+      else applyRect();
+    });
   }
 
   function setOpen(on) {
@@ -592,6 +763,8 @@
     els.panel.style.display = panelOpen ? "" : "none";
     els.panel.classList.remove("rail-open", "side-open");
     if (panelOpen) {
+      if (onDesktop()) applyRect();
+      else clearInlineRect();
       renderAll();
       loadView(true);
       socket.emit("desk presence");
@@ -603,6 +776,7 @@
   function openView(v) {
     view = v;
     mode = "chat";
+    replyTo = null; // a reply armed in one channel must not fire in another
     if (els.panel) els.panel.classList.remove("rail-open", "side-open");
     renderAll();
     loadView();
@@ -680,6 +854,24 @@
       if (showArchived) for (const t of archived) rail.appendChild(threadRow(t, true));
     }
 
+    // Not channels: places to look rather than places to talk.
+    rail.appendChild(el("div", "dk-rail-h", "Look up"));
+    const team = el("button", "dk-chan" + (mode === "team" ? " on" : ""));
+    team.type = "button";
+    team.appendChild(icon("fa-user-group"));
+    team.appendChild(el("span", "dk-chan-name", "The team"));
+    team.title = "Every moderator and developer, on or off";
+    team.addEventListener("click", openTeam);
+    rail.appendChild(team);
+
+    const help = el("button", "dk-chan" + (mode === "help" ? " on" : ""));
+    help.type = "button";
+    help.appendChild(icon("fa-circle-question"));
+    help.appendChild(el("span", "dk-chan-name", "How this works"));
+    help.title = "A short guide to the Desk";
+    help.addEventListener("click", openHelp);
+    rail.appendChild(help);
+
     // Decision made out loud, not buried: moderators know devs can read it all.
     rail.appendChild(
       el("div", "dk-rail-foot", "Developers can read every channel and thread, including edits and deletions."),
@@ -704,6 +896,8 @@
     if (!els.main) return;
     if (mode === "inspector") return renderInspector();
     if (mode === "search") return renderSearch();
+    if (mode === "team") return renderTeam();
+    if (mode === "help") return renderHelp();
     const main = els.main;
     main.textContent = "";
 
@@ -743,6 +937,28 @@
     main.appendChild(els.list);
 
     // ── Composer ──
+    // Some channels are written by the server. Rather than show a box that
+    // refuses everything typed into it, say so and stop.
+    if (ch && ch.readonly) {
+      els.replyBar = null;
+      els.palette = null;
+      els.composer = null;
+      main.appendChild(
+        el("div", "dk-readonly", "The server writes this channel. Nothing to add."),
+      );
+      renderMessages();
+      return;
+    }
+
+    els.replyBar = el("div", "dk-replybar");
+    els.replyBar.style.display = "none";
+    main.appendChild(els.replyBar);
+    renderReplyBar();
+
+    els.palette = el("div", "dk-palette");
+    els.palette.style.display = "none";
+    main.appendChild(els.palette);
+
     const comp = el("div", "dk-comp");
     const ta = el("textarea", "dk-input");
     ta.rows = 1;
@@ -752,15 +968,32 @@
     ta.setAttribute("aria-label", ta.placeholder);
     const count = el("span", "dk-count");
     const send = btn("dk-send", null, "fa-paper-plane", "Send");
+    // One line tall until the text needs more, then it grows to a cap. The
+    // reset to "auto" first is what lets it shrink again on delete.
     const sizeTa = () => {
-      ta.style.height = "";
-      ta.style.height = Math.min(ta.scrollHeight, 110) + "px";
+      ta.style.height = "auto";
+      ta.style.height = Math.max(38, Math.min(ta.scrollHeight, 120)) + "px";
       count.textContent = ta.value.length > 1000 ? 1200 - ta.value.length + " left" : "";
     };
     const doSend = () => {
       const text = ta.value.trim();
       if (!text) return;
-      socket.emit("desk send", { key: viewKey(), text });
+      // A leading slash is a command, not a message.
+      if (text.startsWith("/")) {
+        drafts.delete(viewKey());
+        ta.value = "";
+        sizeTa();
+        hidePalette();
+        runCommand(text);
+        ta.focus();
+        return;
+      }
+      socket.emit("desk send", {
+        key: viewKey(),
+        text,
+        ...(replyTo ? { replyTo: replyTo.id } : {}),
+      });
+      clearReply();
       drafts.delete(viewKey());
       ta.value = "";
       sizeTa();
@@ -771,6 +1004,11 @@
         e.preventDefault();
         doSend();
       }
+      if (e.key === "Escape" && (replyTo || ta.value.startsWith("/"))) {
+        e.stopPropagation();
+        clearReply();
+        hidePalette();
+      }
     });
     ta.addEventListener("input", () => {
       // Half-typed messages follow you between channels and page loads within
@@ -778,6 +1016,9 @@
       if (ta.value) drafts.set(viewKey(), ta.value);
       else drafts.delete(viewKey());
       sizeTa();
+      // A slash opens the command palette, filtered as you type.
+      if (ta.value.startsWith("/")) showPalette(ta.value, ta);
+      else hidePalette();
     });
     if (drafts.has(viewKey())) {
       ta.value = drafts.get(viewKey());
@@ -906,6 +1147,7 @@
         suggestion: "fa-lightbulb",
         invite: "fa-user-plus",
         abuse: "fa-triangle-exclamation",
+        stats: "fa-chart-simple",
       };
       const r = el("div", "dk-sys" + (m.qkind ? " card q-" + m.qkind : ""));
       r.dataset.id = m.id;
@@ -923,7 +1165,8 @@
       prev.author.label === m.author.label &&
       prev.author.role === m.author.role &&
       m.ts - prev.ts < 5 * 60 * 1000 &&
-      !prev.deletedAt;
+      !prev.deletedAt &&
+      !m.reply; // a reply always shows who is answering whom
 
     const mention =
       m.mention ||
@@ -932,10 +1175,36 @@
     const r = el("div", "dk-msg" + (grouped ? " grouped" : "") + (mention ? " mention" : ""));
     r.dataset.id = m.id;
 
+    // The quote above a reply: who it answers and what they said. Clicking it
+    // walks up the chain to the original.
+    if (m.reply) {
+      const q = el("button", "dk-quote");
+      q.type = "button";
+      q.title = "Go to the original message";
+      q.appendChild(icon("fa-reply"));
+      q.appendChild(el("span", "dk-quote-w", m.reply.label));
+      q.appendChild(el("span", "dk-quote-t", m.reply.text || "(removed)"));
+      q.addEventListener("click", () => {
+        const c = cacheFor(viewKey());
+        const there = c.messages.some((x) => x.id === m.reply.id);
+        if (there) {
+          const node = els.list && els.list.querySelector('[data-id="' + m.reply.id + '"]');
+          if (node) {
+            node.scrollIntoView({ block: "center" });
+            node.classList.add("flash");
+            setTimeout(() => node.classList.remove("flash"), 1800);
+            return;
+          }
+        }
+        // The original scrolled out of the loaded window: fetch around it.
+        socket.emit("desk history", { key: viewKey(), around: m.reply.ts });
+      });
+      r.appendChild(q);
+    }
+
     if (!grouped) {
       const rank = rankOf(m.author);
-      const av = el("span", "dk-av " + rank, (m.author.label || "?").charAt(0).toUpperCase());
-      r.appendChild(av);
+      r.appendChild(faceEl(m.author));
       const head = el("div", "dk-mhead");
       head.appendChild(el("span", "dk-mname", m.author.label));
       head.appendChild(el("span", "dk-chip " + rank, rankName(rank)));
@@ -986,21 +1255,59 @@
       r.classList.toggle("tools");
     });
 
-    // Own messages get edit and delete; devs get delete on anything.
+    // Every message can be replied to; your own can be edited for five
+    // minutes and deleted; a dev can delete anything.
     const own = me && m.author && m.author.label === me.label && m.author.role === me.role;
-    if (!m.deletedAt && (own || (me && me.role === "dev"))) {
+    if (!m.deletedAt) {
       const tools = el("div", "dk-mtools");
+      const rb = btn("dk-tool", null, "fa-reply", "Reply");
+      rb.addEventListener("click", () => startReply(m));
+      tools.appendChild(rb);
       if (own && Date.now() - m.ts < 5 * 60 * 1000) {
         const eb = btn("dk-tool", null, "fa-pen", "Edit");
         eb.addEventListener("click", () => startEdit(r, m));
         tools.appendChild(eb);
       }
-      const db = btn("dk-tool", null, "fa-trash", own ? "Delete" : "Delete (dev)");
-      armTwice(db, null, () => socket.emit("desk delete", { id: m.id }));
-      tools.appendChild(db);
+      if (own || (me && me.role === "dev")) {
+        const db = btn("dk-tool", null, "fa-trash", own ? "Delete" : "Delete (dev)");
+        armTwice(db, null, () => socket.emit("desk delete", { id: m.id }));
+        tools.appendChild(db);
+      }
       r.appendChild(tools);
     }
     return r;
+  }
+
+  // Arm the composer to answer a specific message. The bar above the box says
+  // so, and sending carries the link.
+  let replyTo = null; // { id, label, text }
+  function startReply(m) {
+    replyTo = {
+      id: m.id,
+      label: m.author ? m.author.label : "system",
+      text: String(m.text || "").slice(0, 90),
+    };
+    renderReplyBar();
+    if (els.composer) els.composer.focus();
+  }
+  function clearReply() {
+    replyTo = null;
+    renderReplyBar();
+  }
+  function renderReplyBar() {
+    if (!els.replyBar) return;
+    els.replyBar.textContent = "";
+    if (!replyTo) {
+      els.replyBar.style.display = "none";
+      return;
+    }
+    els.replyBar.style.display = "";
+    els.replyBar.appendChild(icon("fa-reply"));
+    els.replyBar.appendChild(el("span", "dk-rb-w", "Replying to " + replyTo.label));
+    els.replyBar.appendChild(el("span", "dk-rb-t", replyTo.text));
+    const x = btn("dk-rb-x", null, "fa-xmark", "Cancel the reply");
+    x.addEventListener("click", clearReply);
+    els.replyBar.appendChild(x);
   }
 
   function startEdit(node, m) {
@@ -1117,6 +1424,36 @@
   }
 
   // ── Side pane: who is on, and the room map ────────────────────────────────
+  // Two lines per person, one line per room. The detail lives in tooltips,
+  // so the pane reads at a glance instead of scrolling forever.
+  // Room types, in the same words the lobby uses.
+  const ROOM_TYPE = {
+    public: { cls: "pub", icon: "fa-globe", label: "Public room" },
+    "semi-private": { cls: "semi", icon: "fa-user-check", label: "Semi-private, needs an access code" },
+    private: { cls: "priv", icon: "fa-lock", label: "Private room, invite only" },
+  };
+
+  function locText(l) {
+    if (l.kind === "room") return 'in "' + (l.roomName || "?") + '"';
+    if (l.kind === "watch") return 'watching "' + (l.roomName || "?") + '"';
+    if (l.kind === "dashboard") return "on the dashboard";
+    if (l.kind === "desk") return "at the Desk";
+    return "in the lobby";
+  }
+
+  function locLine(s) {
+    const parts = [];
+    for (const l of s.locations || []) {
+      const t = locText(l);
+      if (!parts.includes(t)) parts.push(t);
+    }
+    if (!parts.length) return "around";
+    const extra = parts.length - 2;
+    return extra > 0
+      ? parts.slice(0, 2).join(", ") + " +" + extra + " more"
+      : parts.join(", ");
+  }
+
   function renderSide() {
     if (!els.side || !me) return;
     const side = els.side;
@@ -1126,25 +1463,23 @@
     for (const s of presence.staff) {
       const rank = s.role === "dev" ? "dev" : (s.level || 2) >= 2 ? "l2" : "l1";
       const row = el("div", "dk-staff");
-      row.appendChild(el("span", "dk-av sm " + rank, (s.label || "?").charAt(0).toUpperCase()));
+      row.appendChild(faceEl(s, "sm"));
       const w = el("div", "dk-staff-w");
       const nameLine = el("div", "dk-staff-n");
-      nameLine.appendChild(el("span", null, s.label));
+      nameLine.appendChild(el("span", "dk-staff-name", s.label));
       nameLine.appendChild(el("span", "dk-chip " + rank, rankName(rank)));
       if (s.hidden) nameLine.appendChild(el("span", "dk-chip ghost", "HIDDEN"));
       if (s.vanished) nameLine.appendChild(el("span", "dk-chip ghost", "VANISHED"));
       w.appendChild(nameLine);
-      if (s.alias && s.alias !== s.label)
-        w.appendChild(el("div", "dk-staff-a", 'as "' + s.alias + '"'));
-      const locs = (s.locations || [])
-        .map((l) =>
-          l.kind === "room" ? "in " + l.roomName
-            : l.kind === "watch" ? "watching " + l.roomName
-              : l.kind === "dashboard" ? "on the dashboard"
-                : "in the lobby",
-        )
-        .join(" - ");
-      w.appendChild(el("div", "dk-staff-l", locs || "around"));
+      const differs =
+        s.alias && s.alias.toLowerCase() !== (s.label || "").toLowerCase();
+      const sub = (differs ? 'as "' + s.alias + '", ' : "") + locLine(s);
+      const subEl = el("div", "dk-staff-l", sub);
+      // The full story on hover, however many tabs they have open.
+      subEl.title =
+        (s.alias ? 'Appearing as "' + s.alias + '"\n' : "") +
+        (s.locations || []).map(locText).join("\n");
+      w.appendChild(subEl);
       row.appendChild(w);
       side.appendChild(row);
     }
@@ -1154,25 +1489,38 @@
     side.appendChild(el("div", "dk-side-h", "Rooms - " + presence.rooms.length));
     for (const room of presence.rooms.slice(0, 20)) {
       const row = el("div", "dk-room");
-      const top = el("div", "dk-room-t");
-      top.appendChild(el("span", "dk-room-n", room.name || "?"));
-      if (room.locked) top.appendChild(icon("fa-lock"));
-      if (room.slow) top.appendChild(icon("fa-gauge-simple"));
-      top.appendChild(el("span", "dk-room-c", String(room.n)));
-      row.appendChild(top);
-      const meta = el("div", "dk-room-m");
-      meta.appendChild(
-        el("span", null, room.staff && room.staff.length ? "staff: " + room.staff.join(", ") : "no staff inside"),
-      );
-      row.appendChild(meta);
-      const bar = el("div", "dk-room-b");
-      const insp = btn("dk-minib", "Inspect", "fa-eye");
+      // Who can walk in: the first thing you want to know about a room you
+      // are about to step into.
+      const t = ROOM_TYPE[room.type] || ROOM_TYPE.public;
+      const dot = el("span", "dk-rtype " + t.cls);
+      dot.appendChild(icon(t.icon));
+      dot.title = t.label;
+      row.appendChild(dot);
+
+      const name = el("span", "dk-room-n", room.name || "?");
+      name.title =
+        (room.name || "?") +
+        " (" + room.id + ")\n" + t.label +
+        (room.locked ? ", locked" : "") +
+        (room.slow ? ", slow mode" : "") +
+        (room.staff && room.staff.length
+          ? "\nStaff inside: " + room.staff.join(", ")
+          : "\nNo staff inside");
+      row.appendChild(name);
+      if (room.locked) row.appendChild(icon("fa-lock"));
+      if (room.slow) row.appendChild(icon("fa-gauge-simple"));
+      // The one flag that matters at a glance: people with no staff around.
+      if (room.n > 0 && (!room.staff || !room.staff.length))
+        row.appendChild(el("span", "dk-nostaff", "no staff"));
+      row.appendChild(el("span", "dk-room-c", String(room.n)));
+      const insp = btn("dk-ib", null, "fa-eye", "Inspect");
       insp.addEventListener("click", () => openInspector(room.id));
-      bar.appendChild(insp);
-      const join = btn("dk-minib", "Join", "fa-door-open");
-      join.addEventListener("click", () => window.open("/room.html?roomId=" + encodeURIComponent(room.id), "_blank"));
-      bar.appendChild(join);
-      row.appendChild(bar);
+      row.appendChild(insp);
+      const join = btn("dk-ib", null, "fa-door-open", "Join in a new tab");
+      join.addEventListener("click", () =>
+        window.open("/room.html?roomId=" + encodeURIComponent(room.id), "_blank"),
+      );
+      row.appendChild(join);
       side.appendChild(row);
     }
     if (!presence.rooms.length)
@@ -1270,6 +1618,199 @@
     main.appendChild(list);
   }
 
+  // ── The team ──────────────────────────────────────────────────────────────
+  // Everyone who holds a key, on or off, so you can see at a glance whether
+  // there is anybody to hand something to.
+  let roster = null;
+
+  function openTeam() {
+    mode = "team";
+    roster = null;
+    if (els.panel) els.panel.classList.remove("rail-open", "side-open");
+    socket.emit("desk roster");
+    renderAll();
+  }
+
+  function backToChat() {
+    mode = "chat";
+    renderAll();
+  }
+
+  function viewBar(title, extra) {
+    const bar = el("div", "dk-threadbar");
+    const back = btn("dk-minib", "Back", "fa-arrow-left");
+    back.addEventListener("click", backToChat);
+    bar.appendChild(back);
+    bar.appendChild(el("span", "dk-threadbar-t", title));
+    if (extra) bar.appendChild(el("span", "dk-threadbar-s", extra));
+    return bar;
+  }
+
+  function renderTeam() {
+    const main = els.main;
+    if (!main) return;
+    main.textContent = "";
+    if (els.headSub) els.headSub.textContent = "the team";
+
+    const list = roster || [];
+    const on = list.filter((s) => !s.offline);
+    const off = list.filter((s) => s.offline);
+    main.appendChild(
+      viewBar("The team", roster ? on.length + " on, " + off.length + " off" : ""),
+    );
+
+    const body = el("div", "dk-msgs");
+    if (!roster) {
+      body.appendChild(el("div", "dk-empty", "Looking..."));
+      main.appendChild(body);
+      return;
+    }
+
+    const section = (label, rows, offline) => {
+      if (!rows.length) return;
+      body.appendChild(el("div", "dk-side-h", label));
+      for (const s of rows) {
+        const rank = s.role === "dev" ? "dev" : (s.level || 2) >= 2 ? "l2" : "l1";
+        const row = el("div", "dk-staff" + (offline ? " off" : ""));
+        row.appendChild(faceEl(s, "sm"));
+        const w = el("div", "dk-staff-w");
+        const nameLine = el("div", "dk-staff-n");
+        nameLine.appendChild(el("span", "dk-staff-name", s.label));
+        nameLine.appendChild(el("span", "dk-chip " + rank, rankName(rank)));
+        if (s.hidden) nameLine.appendChild(el("span", "dk-chip ghost", "HIDDEN"));
+        if (s.vanished) nameLine.appendChild(el("span", "dk-chip ghost", "VANISHED"));
+        w.appendChild(nameLine);
+        // Who is who matters most on this screen, so the public name they are
+        // wearing right now sits next to where they are.
+        const differs =
+          s.alias && s.alias.toLowerCase() !== (s.label || "").toLowerCase();
+        const sub = offline
+          ? s.lastActive
+            ? "last did something " + relTime(s.lastActive) + " ago"
+            : "nothing on record yet"
+          : (differs ? 'as "' + s.alias + '", ' : "") + locLine(s);
+        w.appendChild(el("div", "dk-staff-l", sub));
+        row.appendChild(w);
+        if (!offline) {
+          const room = (s.locations || []).find((l) => l.roomId);
+          if (room) {
+            const go = btn("dk-ib", null, "fa-eye", "Inspect " + room.roomName);
+            go.addEventListener("click", () => openInspector(room.roomId));
+            row.appendChild(go);
+          }
+        }
+        body.appendChild(row);
+      }
+    };
+
+    section("On now", on, false);
+    section("Off", off, true);
+    if (!list.length) body.appendChild(el("div", "dk-empty", "No staff keys yet."));
+    main.appendChild(body);
+  }
+
+  // ── How this works ────────────────────────────────────────────────────────
+  function openHelp() {
+    mode = "help";
+    if (els.panel) els.panel.classList.remove("rail-open", "side-open");
+    renderAll();
+  }
+
+  const HELP = [
+    {
+      h: "What the Desk is",
+      p: [
+        "The staff room. It rides along on every page, so you never have to leave a room to talk to the team or to act on somebody.",
+        "Only people holding a staff key can see it. Regular users cannot tell it exists.",
+      ],
+    },
+    {
+      h: "The channels",
+      list: [
+        ["#floor", "Day to day talk. Start here."],
+        ["#help", "Calls for backup from rooms. These are cards, not chat."],
+        ["#queues", "Reports, appeals and applications as they arrive. Full mods and devs."],
+        ["#l2", "Bans, blocks and escalations. Full mods and devs."],
+        ["#devs", "Keys, promotions, abuse flags. Developers only."],
+        ["#stats", "A short summary of each day, written by the server."],
+      ],
+    },
+    {
+      h: "Calling for backup",
+      p: [
+        'Type "@mod" or "@dev" in your normal room textbox. A card appears in #help with the room, how many people are in it, and who asked.',
+        "Tap Claim before you act. Everyone sees who took it, including the person who asked, so two of you never land on the same user.",
+        "Anything you do in that room while the card is open is attached to it, so the card ends up being the record of what happened.",
+      ],
+    },
+    {
+      h: "Acting without joining",
+      p: [
+        "Inspect on any room or ping card shows you who is inside. Warn, wipe and kick are right there. Ban and IP block appear if you are a full mod.",
+        "Join and Watch open the room in a new tab. Staff can be in several rooms at once.",
+      ],
+    },
+    {
+      h: "Commands",
+      p: [
+        "Type a slash in the message box and the full list appears. Every command does exactly what the matching button does, so your level still decides what goes through.",
+        'Names with spaces go in quotes: /warn "sasha here" please stop.',
+        'Stuck? Ask in plain words: /help how do I ban someone.',
+      ],
+    },
+    {
+      h: "Replies and threads",
+      p: [
+        "Hover a message and hit reply to answer it directly. The quote above your message links back to the original.",
+        "Threads are for side discussions. A thread that goes quiet for a day drops into the archive, but it is never deleted and stays searchable.",
+      ],
+    },
+    {
+      h: "Things worth knowing",
+      p: [
+        "Developers can read every channel and thread, including edits and deleted messages. That is deliberate and it is said out loud here rather than hidden.",
+        "Hiding your flair hides you from users, never from the team. Your Desk name is always your staff name.",
+        "Nothing you say here counts as moderation work. The leaderboard only counts what you do to actual users.",
+        "Drag the header to move this panel, and pull the bottom right corner to resize it. It remembers where you left it.",
+      ],
+    },
+  ];
+
+  function renderHelp() {
+    const main = els.main;
+    if (!main) return;
+    main.textContent = "";
+    if (els.headSub) els.headSub.textContent = "how this works";
+    main.appendChild(viewBar("How the Desk works"));
+
+    const body = el("div", "dk-msgs dk-help");
+    for (const s of HELP) {
+      body.appendChild(el("h3", "dk-help-h", s.h));
+      for (const p of s.p || []) body.appendChild(el("p", "dk-help-p", p));
+      if (s.list) {
+        const dl = el("div", "dk-help-list");
+        for (const [k, v] of s.list) {
+          const row = el("div", "dk-help-row");
+          row.appendChild(el("span", "dk-help-k", k));
+          row.appendChild(el("span", "dk-help-v", v));
+          dl.appendChild(row);
+        }
+        body.appendChild(dl);
+      }
+    }
+
+    body.appendChild(el("h3", "dk-help-h", "Every command"));
+    const dl = el("div", "dk-help-list");
+    for (const c of COMMANDS) {
+      const row = el("div", "dk-help-row");
+      row.appendChild(el("span", "dk-help-k mono", c.usage));
+      row.appendChild(el("span", "dk-help-v", c.what));
+      dl.appendChild(row);
+    }
+    body.appendChild(dl);
+    main.appendChild(body);
+  }
+
   // ── Search results ────────────────────────────────────────────────────────
   function renderSearch() {
     const main = els.main;
@@ -1313,10 +1854,373 @@
       ? { kind: "thread", key }
       : { kind: "channel", key };
     mode = "chat";
+    replyTo = null;
     if (els.searchInput) els.searchInput.value = "";
     if (els.panel) els.panel.classList.remove("rail-open", "side-open");
     renderAll();
     socket.emit("desk history", { key, around: ts });
+  }
+
+  // ── Slash commands ────────────────────────────────────────────────────────
+  // Typed straight into the composer. Every command fires the same staff
+  // event a button would, so the server's permission gates decide everything;
+  // the composer only saves the walk to the right screen.
+  const COMMANDS = [
+    { name: "warn", usage: '/warn <name or id> <message>', what: "Send them a staff warning" },
+    { name: "kick", usage: "/kick <name or id>", what: "Remove them from their room" },
+    { name: "ban", usage: "/ban <name or id>", what: "Kick with a room ban (full mods)" },
+    { name: "wipe", usage: "/wipe <name or id>", what: "Clear their textbox" },
+    { name: "note", usage: "/note <name or id> <text>", what: "Put a note on their record" },
+    { name: "ipban", usage: "/ipban <ip, client id or name> [1h|24h|7d|permanent] [reason]", what: "Place an IP block (full mods)" },
+    { name: "unban", usage: "/unban <ip>", what: "Lift an IP block (full mods)" },
+    { name: "inspect", usage: "/inspect <room name or id>", what: "See who is in a room" },
+    { name: "join", usage: "/join <room name or id>", what: "Open the room in a new tab" },
+    { name: "watch", usage: "/watch <room name or id>", what: "Spectate in a new tab" },
+    { name: "thread", usage: "/thread <title>", what: "Start a thread" },
+    { name: "find", usage: "/find <text>", what: "Search staff chat" },
+    { name: "help", usage: "/help", what: "Show this list" },
+  ];
+  const DURATIONS = ["1h", "24h", "7d", "permanent"];
+  let lastCommandAt = 0;
+
+  // Multi-word names go in quotes: /warn "sasha was here" stop that.
+  function splitTarget(rest) {
+    rest = rest.trim();
+    if (rest.startsWith('"')) {
+      const end = rest.indexOf('"', 1);
+      if (end > 0)
+        return { target: rest.slice(1, end), rest: rest.slice(end + 1).trim() };
+    }
+    const sp = rest.indexOf(" ");
+    if (sp === -1) return { target: rest, rest: "" };
+    return { target: rest.slice(0, sp), rest: rest.slice(sp + 1).trim() };
+  }
+
+  function resolveUser(q) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        socket.off("desk resolve", fn);
+        resolve(null);
+      }, 2500);
+      const fn = (d) => {
+        if (!d || d.q !== q) return;
+        clearTimeout(timer);
+        socket.off("desk resolve", fn);
+        resolve(d);
+      };
+      socket.on("desk resolve", fn);
+      socket.emit("desk resolve", { q });
+    });
+  }
+
+  // Turn what they typed into one connected user, or say plainly why not.
+  async function targetUser(q) {
+    if (!q) {
+      toast("Say who: a name, or a user id. Quotes for names with spaces.");
+      return null;
+    }
+    const d = await resolveUser(q);
+    if (!d) {
+      toast("No answer from the server. Try again.");
+      return null;
+    }
+    if (!d.matches.length) {
+      toast('Nobody connected matches "' + q + '".');
+      return null;
+    }
+    if (!d.exact && d.matches.length > 1) {
+      toast(
+        "Which one? " +
+        d.matches.map((m) => m.username).join(", ") +
+        ". Use the exact name in quotes, or the id.",
+      );
+      return null;
+    }
+    return d.matches[0];
+  }
+
+  function findRoom(q) {
+    if (!q) {
+      toast("Say which room: its name or its number.");
+      return null;
+    }
+    const rooms = presence.rooms || [];
+    const ql = q.toLowerCase();
+    const hits =
+      rooms.filter((r) => r.id === q).length
+        ? rooms.filter((r) => r.id === q)
+        : rooms.filter((r) => (r.name || "").toLowerCase() === ql).length
+          ? rooms.filter((r) => (r.name || "").toLowerCase() === ql)
+          : rooms.filter((r) => (r.name || "").toLowerCase().includes(ql));
+    if (!hits.length) {
+      toast('No open room matches "' + q + '".');
+      return null;
+    }
+    if (hits.length > 1) {
+      toast(
+        "Which room? " +
+        hits.slice(0, 4).map((r) => r.name + " (" + r.id + ")").join(", "),
+      );
+      return null;
+    }
+    return hits[0];
+  }
+
+  const looksLikeIp = (s) =>
+    /^[0-9a-f.:]+$/i.test(s) && (s.includes(".") || s.includes(":"));
+  const looksLikeClientId = (s) => /^[a-f0-9-]{8,64}$/i.test(s) && s.includes("-");
+
+  async function runCommand(line) {
+    lastCommandAt = Date.now();
+    const sp = line.indexOf(" ");
+    const name = (sp === -1 ? line.slice(1) : line.slice(1, sp)).toLowerCase();
+    const rest = sp === -1 ? "" : line.slice(sp + 1).trim();
+    const { target, rest: after } = splitTarget(rest);
+
+    switch (name) {
+      case "help":
+        if (rest) askBot(rest);
+        else openHelp();
+        return;
+      case "warn": {
+        const u = await targetUser(target);
+        if (!u) return;
+        socket.emit("staff warn", {
+          targetUserId: u.id,
+          message: after || "Please follow the room rules.",
+        });
+        return;
+      }
+      case "kick": {
+        const u = await targetUser(target);
+        if (u) socket.emit("staff kick", { targetUserId: u.id, ban: false });
+        return;
+      }
+      case "ban": {
+        const u = await targetUser(target);
+        if (u) socket.emit("staff kick", { targetUserId: u.id, ban: true });
+        return;
+      }
+      case "wipe": {
+        const u = await targetUser(target);
+        if (u) socket.emit("staff wipe buffer", { targetUserId: u.id });
+        return;
+      }
+      case "note": {
+        if (!after) return toast("Usage: " + COMMANDS.find((c) => c.name === "note").usage);
+        const u = await targetUser(target);
+        if (u) socket.emit("staff note", { targetUserId: u.id, note: after });
+        return;
+      }
+      case "ipban": {
+        const { target: d0, rest: r0 } = splitTarget(after);
+        const duration = DURATIONS.includes(d0.toLowerCase()) ? d0.toLowerCase() : "24h";
+        const reason = DURATIONS.includes(d0.toLowerCase()) ? r0 : after;
+        if (looksLikeIp(target) || looksLikeClientId(target)) {
+          socket.emit("staff ban ip", { ip: target, duration, reason });
+          return;
+        }
+        const u = await targetUser(target);
+        if (u) socket.emit("staff ip block", { targetUserId: u.id, duration, reason });
+        return;
+      }
+      case "unban": {
+        if (!looksLikeIp(target) && !looksLikeClientId(target))
+          return toast("Usage: /unban <ip>. Mods can also lift bans from the dashboard's ban list.");
+        socket.emit("dev unblock ip", { ip: target });
+        return;
+      }
+      case "inspect": {
+        const room = findRoom(rest);
+        if (room) openInspector(room.id);
+        return;
+      }
+      case "join": {
+        const room = findRoom(rest);
+        if (room) window.open("/room.html?roomId=" + encodeURIComponent(room.id), "_blank");
+        return;
+      }
+      case "watch": {
+        const room = findRoom(rest);
+        if (room)
+          window.open("/room.html?roomId=" + encodeURIComponent(room.id) + "&spectate=1", "_blank");
+        return;
+      }
+      case "thread": {
+        if (!rest) return toast("Usage: /thread <title>");
+        socket.emit("desk thread create", { title: rest.slice(0, 60) });
+        return;
+      }
+      case "find": {
+        if (rest.length < 2) return toast("Usage: /find <text>");
+        searchHits = null;
+        mode = "search";
+        socket.emit("desk search", { q: rest });
+        renderMain();
+        return;
+      }
+      default:
+        toast("No command called /" + name + ". Type /help for the list.");
+    }
+  }
+
+  // ── The help bot ──────────────────────────────────────────────────────────
+  // Ask in plain words and it points at the command. It answers only to you,
+  // in the channel you are looking at, and is never sent to anybody else or
+  // saved: it is a hint, not a message.
+  const BOT_TOPICS = [
+    {
+      words: ["ban", "block", "ip", "blacklist", "banned"],
+      say: "To block a connection, use /ipban. It takes a name, a raw IP, or a client id, so it works whether they are online or you only have the address off a report.",
+      cmds: ["ipban", "unban", "ban"],
+    },
+    {
+      words: ["kick", "remove", "boot", "eject", "throw"],
+      say: "/kick removes them from their room. /ban does the same and stops them coming back to that room, if you are a full mod.",
+      cmds: ["kick", "ban"],
+    },
+    {
+      words: ["warn", "warning", "tell", "message"],
+      say: "/warn sends them a private staff warning. Whatever you type after their name is what they read.",
+      cmds: ["warn"],
+    },
+    {
+      words: ["wipe", "clear", "textbox", "buffer", "erase"],
+      say: "/wipe clears what somebody has typed into their box, without removing them from the room.",
+      cmds: ["wipe"],
+    },
+    {
+      words: ["note", "record", "remember", "history"],
+      say: "/note puts a line on their record that every staff member sees next time they come up.",
+      cmds: ["note"],
+    },
+    {
+      words: ["room", "inspect", "watch", "spectate", "join", "see", "look"],
+      say: "/inspect shows you who is in a room without joining it, and the buttons to act are right there. /watch opens it read only, /join walks in properly.",
+      cmds: ["inspect", "watch", "join"],
+    },
+    {
+      words: ["search", "find", "said", "earlier", "history", "past"],
+      say: "/find searches everything you are allowed to read. Clicking a result drops you at that exact moment in the conversation.",
+      cmds: ["find"],
+    },
+    {
+      words: ["thread", "discussion", "side", "topic"],
+      say: "/thread starts a side discussion. It archives after a quiet day but is never deleted.",
+      cmds: ["thread"],
+    },
+    {
+      words: ["ping", "backup", "help", "call", "mod", "dev", "@"],
+      say: 'Type "@mod" or "@dev" in your room textbox, not here. A card appears in #help with the room and who asked, and somebody claims it.',
+      cmds: [],
+    },
+    {
+      words: ["reply", "quote", "answer", "respond"],
+      say: "Hover a message and hit the reply arrow. Your message then carries a quote of theirs that links back to it.",
+      cmds: [],
+    },
+    {
+      words: ["hide", "hidden", "flair", "badge", "incognito"],
+      say: "Hiding your flair hides you from users, never from the team. You still show here, marked HIDDEN, and you can be disliked in rooms while you are passing as a normal user.",
+      cmds: [],
+    },
+    {
+      words: ["stats", "numbers", "yesterday", "daily", "how many"],
+      say: "#stats gets a short summary of each day from the server: how many people came by, how many rooms opened, how busy it got.",
+      cmds: [],
+    },
+  ];
+
+  function askBot(question) {
+    const q = question.toLowerCase();
+    let best = null;
+    let bestScore = 0;
+    for (const t of BOT_TOPICS) {
+      let score = 0;
+      for (const w of t.words) if (q.includes(w)) score++;
+      if (score > bestScore) {
+        bestScore = score;
+        best = t;
+      }
+    }
+    if (!best) {
+      botSay(
+        'Not sure about that one. Type a slash on its own to see every command, or open "How this works" in the left column.',
+        [],
+      );
+      return;
+    }
+    botSay(best.say, best.cmds);
+  }
+
+  // A message only you can see, in the channel you are in.
+  function botSay(text, cmdNames) {
+    if (!els.list) return;
+    const r = el("div", "dk-bot");
+    const head = el("div", "dk-bot-h");
+    head.appendChild(icon("fa-robot"));
+    head.appendChild(el("span", "dk-bot-n", "Desk help"));
+    head.appendChild(el("span", "dk-bot-only", "only you can see this"));
+    r.appendChild(head);
+    r.appendChild(el("div", "dk-bot-t", text));
+    const cmds = (cmdNames || [])
+      .map((n) => COMMANDS.find((c) => c.name === n))
+      .filter(Boolean);
+    if (cmds.length) {
+      const bar = el("div", "dk-bot-b");
+      for (const c of cmds) {
+        const b = el("button", "dk-bot-cmd");
+        b.type = "button";
+        b.textContent = c.usage;
+        b.title = c.what + ". Click to fill it in.";
+        b.addEventListener("click", () => {
+          const box = els.composer;
+          if (!box) return;
+          box.value = "/" + c.name + " ";
+          box.focus();
+          drafts.set(viewKey(), box.value);
+        });
+        bar.appendChild(b);
+      }
+      r.appendChild(bar);
+    }
+    const close = btn("dk-bot-x", null, "fa-xmark", "Dismiss");
+    close.addEventListener("click", () => r.remove());
+    r.appendChild(close);
+
+    const stick = nearBottom();
+    els.list.appendChild(r);
+    if (stick) els.list.scrollTop = els.list.scrollHeight;
+  }
+
+  // The list above the composer while a slash is being typed. Clicking a row
+  // fills the command in; it never runs anything by itself.
+  function showPalette(value, ta) {
+    if (!els.palette) return;
+    const q = value.slice(1).split(" ")[0].toLowerCase();
+    const hits = COMMANDS.filter((c) => c.name.startsWith(q));
+    els.palette.textContent = "";
+    if (!hits.length) return hidePalette();
+    for (const c of hits) {
+      const row = el("button", "dk-cmd");
+      row.type = "button";
+      row.appendChild(el("span", "dk-cmd-u", c.usage));
+      row.appendChild(el("span", "dk-cmd-w", c.what));
+      row.addEventListener("click", () => {
+        const box = ta || els.composer;
+        if (box) {
+          box.value = "/" + c.name + " ";
+          box.focus();
+          drafts.set(viewKey(), box.value);
+        }
+        hidePalette();
+      });
+      els.palette.appendChild(row);
+    }
+    els.palette.style.display = "";
+  }
+  function hidePalette() {
+    if (els.palette) els.palette.style.display = "none";
   }
 
   // ── Styles ────────────────────────────────────────────────────────────────
@@ -1328,6 +2232,10 @@
     const s = document.createElement("style");
     s.id = "dk-css";
     s.textContent = `
+/* The Desk sizes itself, whatever the host page's global box model is. The
+   composer in particular grows to its own scrollHeight, which is wrong by
+   exactly the padding under content-box. */
+.dk-panel,.dk-panel *,.dk-pill,.dk-pill *{box-sizing:border-box;}
 .dk-pill{position:fixed;bottom:16px;right:16px;z-index:99988;background:#000;color:#fff;
   border:1px solid #ff9800;border-radius:4px;padding:10px 16px;font-size:13px;font-weight:bold;
   font-family:inherit;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.5);display:inline-flex;
@@ -1343,6 +2251,13 @@
   width:min(1060px,calc(100vw - 32px));height:min(680px,calc(100vh - 108px));
   background:#202020;border:1px solid #616161;border-radius:8px;overflow:hidden;
   box-shadow:0 18px 55px rgba(0,0,0,.65);color:#fff;font-family:inherit;font-size:14px;}
+.dk-panel.dragging{user-select:none;}
+.dk-head.dk-drag{cursor:grab;}
+.dk-panel.dragging .dk-head{cursor:grabbing;}
+@media (min-width:761px){
+  .dk-panel{resize:both;min-width:560px;min-height:420px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);}
+  .dk-panel.dk-fullpage{resize:none;min-width:0;min-height:0;}
+}
 .dk-panel.dk-offline .dk-head{opacity:.55;}
 .dk-panel.dk-offline .dk-head .dk-title-sub::after{content:" - reconnecting";color:#ff5468;}
 .dk-head{flex:none;display:flex;align-items:center;gap:8px;padding:9px 12px;
@@ -1409,11 +2324,19 @@
 @keyframes dkFlash{0%,55%{background:rgba(255,152,0,.22)}100%{background:transparent}}
 .dk-msg.flash,.dk-sys.flash,.dk-ping.flash{animation:dkFlash 1.8s ease;}
 .dk-av{position:absolute;left:4px;top:2px;width:32px;height:32px;border-radius:50%;display:flex;
-  align-items:center;justify-content:center;font-weight:bold;font-size:14px;color:#fff;background:#616161;}
-.dk-av.sm{position:static;width:26px;height:26px;font-size:12px;flex:none;}
+  align-items:center;justify-content:center;font-weight:bold;font-size:14px;color:#fff;background:#616161;
+  overflow:hidden;flex:none;}
+.dk-av.sm{position:static;width:26px;height:26px;font-size:12px;}
 .dk-av.dev{background:#a3323f;}
 .dk-av.l2{background:#2b5e9e;}
 .dk-av.l1{background:#6d4b9e;}
+.dk-av img{width:100%;height:100%;object-fit:cover;display:block;}
+.dk-quote{display:flex;align-items:baseline;gap:6px;width:100%;text-align:left;background:none;border:none;
+  font-family:inherit;color:#8d8d8d;font-size:11.5px;padding:0 0 3px 46px;cursor:pointer;min-width:0;}
+.dk-quote .fas{font-size:9px;flex:none;}
+.dk-quote-w{color:#c3c3c3;font-weight:bold;flex:none;}
+.dk-quote-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.dk-quote:hover .dk-quote-t,.dk-quote:hover{color:#fff;}
 .dk-mhead{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap;}
 .dk-mname{font-weight:bold;}
 .dk-chip{font-size:9px;font-weight:bold;letter-spacing:.5px;padding:1px 5px;border-radius:3px;border:1px solid;}
@@ -1480,32 +2403,64 @@
 .dk-minib.danger{color:#ff5468;}
 .dk-minib.danger:hover{background:#ff5468;border-color:#ff5468;color:#fff;}
 .dk-minib.armed{background:#ff5468;border-color:#ff5468;color:#fff;}
+.dk-readonly{flex:none;padding:12px 14px;border-top:1px solid #333;background:#1b1b1b;
+  font-size:12px;color:#6f6f6f;text-align:center;}
+.dk-sys.q-stats .fas{color:#ff9800;}
+.dk-sys.q-stats{font-size:13px;color:#fff;}
+.dk-replybar{flex:none;display:flex;align-items:center;gap:8px;padding:7px 14px;background:#1b1b1b;
+  border-top:1px solid #333;font-size:12px;color:#c3c3c3;min-width:0;}
+.dk-replybar .fas{font-size:10px;color:#8d8d8d;flex:none;}
+.dk-rb-w{font-weight:bold;flex:none;}
+.dk-rb-t{color:#8d8d8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;}
+.dk-rb-x{background:none;border:none;color:#8d8d8d;cursor:pointer;font-size:13px;padding:2px 6px;
+  border-radius:3px;flex:none;}
+.dk-rb-x:hover{color:#000;background:#ff9800;}
+.dk-palette{flex:none;max-height:220px;overflow-y:auto;background:#1b1b1b;border-top:1px solid #333;
+  padding:6px;display:flex;flex-direction:column;gap:2px;}
+.dk-cmd{display:flex;align-items:baseline;gap:10px;width:100%;text-align:left;background:none;border:none;
+  font-family:inherit;color:#fff;padding:6px 8px;border-radius:4px;cursor:pointer;min-width:0;}
+.dk-cmd:hover{background:#2a2a2a;}
+.dk-cmd-u{font-weight:bold;font-size:12.5px;color:#ff9800;flex:none;}
+.dk-cmd-w{font-size:11.5px;color:#8d8d8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
 .dk-comp{flex:none;display:flex;align-items:flex-end;gap:8px;padding:10px 14px;border-top:1px solid #333;background:#1b1b1b;}
-.dk-input{flex:1;min-width:0;background:#000;color:#fff;border:1px solid #616161;border-radius:5px;
-  padding:9px 11px;font-family:inherit;font-size:13.5px;resize:none;outline:none;line-height:1.45;max-height:110px;}
+.dk-input{flex:1;min-width:0;background:#000;color:#fff;border:1px solid #3a3a3a;border-radius:5px;
+  padding:0 11px;font-family:inherit;font-size:13.5px;resize:none;outline:none;
+  line-height:20px;height:38px;min-height:38px;max-height:120px;padding-top:9px;padding-bottom:9px;
+  display:block;overflow-y:auto;}
+.dk-input::placeholder{color:#6f6f6f;}
 .dk-input:focus{border-color:#ff9800;}
 .dk-count{flex:none;font-size:10.5px;color:#ffb454;font-variant-numeric:tabular-nums;}
 .dk-send{flex:none;background:#ff9800;border:1px solid #ff9800;color:#000;border-radius:5px;
-  padding:9px 13px;cursor:pointer;font-size:14px;}
+  width:38px;height:38px;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;font-size:14px;padding:0;}
 .dk-send:hover{background:#ffad33;}
 .dk-side{background:#1b1b1b;border-left:1px solid #333;overflow-y:auto;padding:10px;}
 .dk-side-h{font-size:10.5px;font-weight:bold;letter-spacing:.6px;text-transform:uppercase;color:#8d8d8d;
   padding:10px 4px 6px;}
 .dk-side-h:first-child{padding-top:2px;}
-.dk-staff{display:flex;gap:8px;align-items:flex-start;padding:6px 4px;border-radius:4px;}
+.dk-staff{display:flex;gap:8px;align-items:center;padding:5px 4px;border-radius:4px;}
 .dk-staff:hover{background:#242424;}
 .dk-staff-w{min-width:0;flex:1;}
-.dk-staff-n{display:flex;align-items:baseline;gap:5px;flex-wrap:wrap;font-size:12.5px;font-weight:bold;}
-.dk-staff-a{font-size:11px;color:#8d8d8d;font-style:italic;}
-.dk-staff-l{font-size:11px;color:#c3c3c3;}
-.dk-room{border:1px solid #2a2a2a;border-radius:5px;padding:7px 9px;margin-bottom:6px;background:#202020;}
-.dk-room-t{display:flex;align-items:baseline;gap:6px;font-size:12.5px;}
-.dk-room-t .fas{font-size:9px;color:#8d8d8d;}
-.dk-room-n{font-weight:bold;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.dk-room-c{color:#ff9800;font-weight:bold;font-variant-numeric:tabular-nums;}
-.dk-room-m{font-size:10.5px;color:#8d8d8d;margin:3px 0 6px;}
-.dk-room-b{display:flex;gap:5px;}
-.dk-room-b .dk-minib{padding:4px 8px;font-size:10.5px;}
+.dk-staff-n{display:flex;align-items:center;gap:5px;font-size:12.5px;font-weight:bold;min-width:0;}
+.dk-staff-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.dk-staff-n .dk-chip{flex:none;}
+.dk-staff-l{font-size:11px;color:#8d8d8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dk-staff.off{opacity:.6;}
+.dk-room{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:4px;min-width:0;}
+.dk-room:hover{background:#242424;}
+.dk-room .fas{font-size:9px;color:#8d8d8d;flex:none;}
+.dk-rtype{flex:none;width:16px;display:flex;align-items:center;justify-content:center;}
+.dk-rtype .fas{font-size:10px;}
+.dk-rtype.pub .fas{color:#57d9a3;}
+.dk-rtype.semi .fas{color:#ffb454;}
+.dk-rtype.priv .fas{color:#ff5468;}
+.dk-room-n{font-size:12.5px;font-weight:bold;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dk-room-c{color:#ff9800;font-weight:bold;font-size:12px;font-variant-numeric:tabular-nums;flex:none;}
+.dk-nostaff{flex:none;font-size:9px;font-weight:bold;letter-spacing:.4px;text-transform:uppercase;
+  color:#ffb454;border:1px solid #ffb454;border-radius:3px;padding:1px 4px;}
+.dk-ib{flex:none;background:none;border:1px solid #333;color:#c3c3c3;border-radius:4px;
+  padding:4px 7px;font-size:11px;cursor:pointer;line-height:1;}
+.dk-ib:hover{border-color:#ff9800;color:#fff;}
 .dk-occ{border:1px solid #2a2a2a;border-radius:5px;background:#1b1b1b;padding:9px 11px;margin-bottom:7px;}
 .dk-occ-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
 .dk-occ-n{font-weight:bold;}
@@ -1517,6 +2472,29 @@
 .dk-hit-h{display:flex;align-items:baseline;gap:8px;}
 .dk-hit-w{font-weight:bold;color:#ff9800;font-size:12px;}
 .dk-hit-t{font-size:12.5px;color:#c3c3c3;margin-top:3px;word-break:break-word;}
+.dk-help{padding:16px 18px;display:block;}
+.dk-help-h{font-size:13px;color:#ff9800;margin:20px 0 8px;letter-spacing:.3px;}
+.dk-help-h:first-child{margin-top:0;}
+.dk-help-p{font-size:13px;color:#c3c3c3;line-height:1.65;margin:0 0 9px;max-width:62ch;}
+.dk-help-list{display:flex;flex-direction:column;gap:1px;margin:0 0 10px;}
+.dk-help-row{display:flex;gap:12px;align-items:baseline;padding:6px 9px;border-radius:4px;background:#1b1b1b;}
+.dk-help-k{flex:none;width:15rem;max-width:45%;font-weight:bold;font-size:12px;color:#fff;}
+.dk-help-k.mono{font-family:"Courier New",monospace;color:#ff9800;font-size:11.5px;}
+.dk-help-v{font-size:12px;color:#8d8d8d;line-height:1.5;min-width:0;}
+.dk-bot{position:relative;background:#1b1b1b;border:1px solid #2a2a2a;border-radius:6px;
+  padding:10px 34px 10px 12px;margin:10px 0;display:flex;flex-direction:column;gap:6px;}
+.dk-bot-h{display:flex;align-items:center;gap:7px;}
+.dk-bot-h .fas{font-size:11px;color:#5aa9ff;}
+.dk-bot-n{font-size:12px;font-weight:bold;color:#5aa9ff;}
+.dk-bot-only{font-size:10px;color:#6f6f6f;}
+.dk-bot-t{font-size:13px;color:#c3c3c3;line-height:1.6;}
+.dk-bot-b{display:flex;gap:6px;flex-wrap:wrap;}
+.dk-bot-cmd{background:#000;border:1px solid #3a3a3a;color:#ff9800;font-family:"Courier New",monospace;
+  font-size:11.5px;padding:5px 9px;border-radius:4px;cursor:pointer;text-align:left;}
+.dk-bot-cmd:hover{border-color:#ff9800;}
+.dk-bot-x{position:absolute;top:6px;right:6px;background:none;border:none;color:#6f6f6f;
+  cursor:pointer;font-size:12px;padding:3px 5px;border-radius:3px;}
+.dk-bot-x:hover{color:#fff;background:#2a2a2a;}
 .dk-toast{position:absolute;left:50%;bottom:70px;transform:translate(-50%,12px);background:#000;
   border:1px solid #ff9800;color:#fff;font-size:12.5px;padding:8px 14px;border-radius:5px;
   opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:6;max-width:80%;}

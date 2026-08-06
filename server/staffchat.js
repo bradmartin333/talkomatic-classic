@@ -27,6 +27,8 @@ const CHANNELS = [
   { key: "queues", name: "queues", desc: "Incoming reports, appeals, applications.", access: "l2" },
   { key: "l2", name: "l2", desc: "Bans, blocks, escalations.", access: "l2" },
   { key: "devs", name: "devs", desc: "Keys, promotions, mod abuse.", access: "dev" },
+  // Posted to by the server at the end of each day. Nobody types in here.
+  { key: "stats", name: "stats", desc: "How yesterday went.", readonly: true },
 ];
 
 const MSG_MAX = 1200;
@@ -45,10 +47,16 @@ let desk = {
   channels: {}, // key -> [message]
   threads: [], // { id, title, createdBy, createdAt, lastTs, link, messages }
   lastRead: {}, // "role:label" -> { channelOrThreadId: ts }
+  // Today's running tally, posted to #stats when the day turns over. Kept in
+  // the saved file so a restart at teatime does not lose the morning.
+  day: null,
 };
 for (const c of CHANNELS) desk.channels[c.key] = [];
 
 const byId = new Map(); // message id -> { msg, key }
+// Today's unique visitors. Declared up here because load() runs at require
+// time and rebuilds it from the saved day.
+let visitorSet = new Set();
 let ctx = null; // wired once from rooms.js
 let saveTimer = null;
 let presenceTimer = null;
@@ -66,11 +74,18 @@ function isStaff(socket) {
 }
 
 function who(socket) {
+  // The avatar is the same validated Discord snowflake + hash the rooms use;
+  // the client rebuilds the CDN URL itself and never trusts a raw URL.
+  const av = socket.handshake?.session?.avatar;
   return {
     label: socket.staffLabel || (socket.isDev ? "dev" : "mod"),
     role: socket.isDev ? "dev" : "mod",
     level: socket.isDev ? 0 : socket.modLevel || 2,
     alias: socket.handshake?.session?.username || null,
+    avatar:
+      av && av.id && av.hash
+        ? { id: String(av.id), hash: String(av.hash), animated: !!av.animated }
+        : null,
   };
 }
 
@@ -85,6 +100,11 @@ function canRead(socket, key) {
   if (ch.access === "l2") return socket.isDev || (socket.modLevel || 2) >= 2;
   return true;
 }
+
+const isReadonly = (key) => {
+  const ch = CHANNELS.find((c) => c.key === key);
+  return !!(ch && ch.readonly);
+};
 
 // A queue card keeps the audience it had on the notification feed, so the
 // Desk can never show somebody a card the dashboard would have hidden.
@@ -142,6 +162,12 @@ function load() {
         desk.channels[c.key] = Array.isArray(raw.channels?.[c.key])
           ? raw.channels[c.key]
           : [];
+      if (raw.day && typeof raw.day === "object") {
+        desk.day = raw.day;
+        visitorSet = new Set(
+          Array.isArray(raw.day.visitors) ? raw.day.visitors : [],
+        );
+      }
     }
   } catch (e) {
     if (e.code !== "ENOENT") console.error("staff chat load failed:", e.message);
@@ -251,11 +277,116 @@ function system(key, text, extra) {
 // report, appeal, application, suggestion and abuse flag already passes
 // through. The card keeps the feed's audience level.
 function systemQueues(qkind, text, opts) {
+  if (qkind === "report") noteEvent("report");
   return system("queues", text, {
     qkind: qkind || "notice",
     minLevel: (opts && opts.minLevel) || null,
     devOnly: !!(opts && opts.devOnly),
   });
+}
+
+// ── The daily tally ─────────────────────────────────────────────────────────
+// Counted here rather than mined out of the audit log, because most of it
+// (visitors, rooms opened, how many were on at once) is never written down
+// anywhere. The day boundary is the same Pacific one the dashboard groups its
+// activity feed by, so "yesterday" means the same thing in both places.
+const VISITOR_CAP = 5000;
+
+function freshDay(start) {
+  return {
+    start,
+    visitors: [],
+    rooms: 0,
+    reports: 0,
+    pings: 0,
+    actions: 0,
+    peak: 0,
+    boardStrokes: 0,
+  };
+}
+
+function dayStart(now) {
+  try {
+    const s = ctx && ctx.audit && ctx.audit.startOfPacificDay(now);
+    if (s) return s;
+  } catch (_) { }
+  // No Intl on this build: fall back to UTC midnight rather than never rolling.
+  return Math.floor(now / 86400000) * 86400000;
+}
+
+function ensureDay(now) {
+  const start = dayStart(now || Date.now());
+  if (!desk.day) {
+    desk.day = freshDay(start);
+    visitorSet = new Set();
+    return;
+  }
+  if (desk.day.start === start) return;
+  const finished = desk.day;
+  desk.day = freshDay(start);
+  visitorSet = new Set();
+  postDailyStats(finished);
+}
+
+function noteEvent(kind, id) {
+  ensureDay();
+  const d = desk.day;
+  if (kind === "visitor") {
+    if (!id || visitorSet.has(id)) return;
+    visitorSet.add(id);
+    if (d.visitors.length < VISITOR_CAP) d.visitors.push(id);
+    scheduleSave();
+    return;
+  }
+  if (kind === "room") d.rooms++;
+  else if (kind === "report") d.reports++;
+  else if (kind === "ping") d.pings++;
+  else if (kind === "action") d.actions++;
+  else if (kind === "stroke") d.boardStrokes++;
+  else return;
+  scheduleSave();
+}
+
+const plural = (n, one, many) => n + " " + (n === 1 ? one : many || one + "s");
+
+function postDailyStats(d) {
+  if (!d) return;
+  const visitors = visitorSet.size || d.visitors.length;
+  // A day where literally nothing happened is not worth a post.
+  if (!visitors && !d.rooms && !d.actions) return;
+  const when = new Date(d.start).toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
+  const bits = [
+    plural(visitors, "person", "people") + " stopped by",
+    plural(d.rooms, "room") + " opened",
+  ];
+  if (d.peak) bits.push(d.peak + " online at once at the busiest");
+  if (d.actions) bits.push(plural(d.actions, "staff action"));
+  if (d.reports) bits.push(plural(d.reports, "report"));
+  if (d.pings) bits.push(plural(d.pings, "call") + " for backup");
+  const msg = pushMessage("stats", {
+    ts: Date.now(),
+    kind: "system",
+    author: null,
+    qkind: "stats",
+    text: when + ": " + bits.join(", ") + ".",
+  });
+  if (msg) broadcast("stats", msg);
+}
+
+function samplePeak() {
+  if (!io()) return;
+  ensureDay();
+  let n = 0;
+  for (const [, s] of io().sockets.sockets)
+    if (s.connected && !s.isModLog && s.handshake?.session?.userId) n++;
+  if (n > desk.day.peak) {
+    desk.day.peak = n;
+    scheduleSave();
+  }
 }
 
 // ── Rate limiting ───────────────────────────────────────────────────────────
@@ -326,6 +457,7 @@ function buildPresence(recipient) {
         role: w.role,
         level: w.level,
         alias: w.alias,
+        avatar: w.avatar,
         hidden: false,
         vanished: false,
         locations: [],
@@ -333,6 +465,7 @@ function buildPresence(recipient) {
       staff.set(k, row);
     }
     if (!row.alias && w.alias) row.alias = w.alias;
+    if (!row.avatar && w.avatar) row.avatar = w.avatar;
     if (s.isHidden) row.hidden = true;
     if (s.isVanished) row.vanished = true;
     const room = s.roomId ? ctx.state.rooms.get(s.roomId) : null;
@@ -421,6 +554,7 @@ function onRoomText(socket, roomId, text) {
     .filter((u) => u.isDev || u.isMod)
     .map((u) => u.username);
 
+  noteEvent("ping");
   const msg = pushMessage("help", {
     ts: now,
     kind: "ping",
@@ -494,6 +628,13 @@ function init(context) {
   // A safety-net refresh so presence never sits stale for long even if a hook
   // was missed somewhere.
   setInterval(presenceDirty, 25000).unref();
+  // Watches the clock for the day rolling over, and keeps the busiest-moment
+  // number honest between rollovers.
+  ensureDay();
+  setInterval(() => {
+    ensureDay();
+    samplePeak();
+  }, 60000).unref();
 }
 
 function register(socket, safe) {
@@ -513,6 +654,7 @@ function register(socket, safe) {
           name: c.name,
           desc: c.desc,
           restricted: !!c.access,
+          readonly: !!c.readonly,
         })),
         threads: desk.threads.map(threadSummary),
         unread: unreadFor(socket),
@@ -574,6 +716,10 @@ function register(socket, safe) {
       const key = typeof data?.key === "string" ? data.key : "";
       if (!canRead(socket, key))
         return socket.emit("desk error", { message: "You cannot post there." });
+      if (isReadonly(key))
+        return socket.emit("desk error", {
+          message: "#" + key + " is written by the server. Try #floor.",
+        });
       const w = who(socket);
       if (!allowSend(idKeyOf(w)))
         return socket.emit("desk error", {
@@ -581,13 +727,70 @@ function register(socket, safe) {
         });
       const text = String(data?.text || "").trim().slice(0, MSG_MAX);
       if (!text) return;
+      // Replies carry a snapshot of what they answer, not just an id, so the
+      // quote still reads after the original is pruned or edited.
+      let reply = null;
+      if (typeof data?.replyTo === "string") {
+        const ref = byId.get(data.replyTo);
+        if (ref && ref.key === key && !ref.msg.deletedAt)
+          reply = {
+            id: ref.msg.id,
+            ts: ref.msg.ts,
+            label: ref.msg.author ? ref.msg.author.label : "system",
+            text: String(ref.msg.text || "").slice(0, 120),
+          };
+      }
       const msg = pushMessage(key, {
         ts: Date.now(),
         kind: "chat",
         author: w,
         text,
+        ...(reply ? { reply } : {}),
       });
       if (msg) broadcast(key, msg);
+    }),
+  );
+
+  // Turns a name or user id into someone the staff events can act on. This
+  // is what lets a command like /kick take a username: the client asks here,
+  // then fires the same staff event a button would have.
+  socket.on(
+    "desk resolve",
+    safe(async (data) => {
+      if (!isStaff(socket)) return;
+      const q = String(data?.q || "").trim();
+      if (!q || q.length > 60) return;
+      const ql = q.toLowerCase();
+      const seen = new Map(); // userId -> candidate
+      const consider = (id, username, roomId, exact) => {
+        if (!id || seen.has(id)) return;
+        const room = roomId ? ctx.state.rooms.get(roomId) : null;
+        seen.set(id, {
+          id,
+          username: username || "?",
+          roomId: room ? room.id : null,
+          roomName: room ? room.name : null,
+          exact,
+        });
+      };
+      for (const [, s] of io().sockets.sockets) {
+        if (!s.connected) continue;
+        const id = s.handshake?.session?.userId;
+        const name = s.handshake?.session?.username || "";
+        if (!id) continue;
+        if (id === q) consider(id, name, s.roomId, true);
+        else if (name.toLowerCase() === ql) consider(id, name, s.roomId, true);
+        else if (name.toLowerCase().startsWith(ql))
+          consider(id, name, s.roomId, false);
+      }
+      const matches = [...seen.values()]
+        .sort((a, b) => (b.exact ? 1 : 0) - (a.exact ? 1 : 0))
+        .slice(0, 5);
+      socket.emit("desk resolve", {
+        q,
+        matches: matches.map(({ exact, ...m }) => m),
+        exact: matches.filter((m) => m.exact).length,
+      });
     }),
   );
 
@@ -722,6 +925,56 @@ function register(socket, safe) {
     }),
   );
 
+  // The whole team, not just whoever is on. Offline members carry when they
+  // were last doing something, which is the thing you actually want to know
+  // before deciding whether to wait for them or handle it yourself.
+  socket.on(
+    "desk roster",
+    safe(async () => {
+      if (!isStaff(socket)) return;
+      const live = buildPresence(socket).staff;
+      const online = new Map(live.map((s) => [s.role + ":" + s.label, s]));
+
+      // Last time each staff label did anything, from the action log.
+      const lastBy = new Map();
+      try {
+        for (const s of ctx.audit.leaderboard())
+          lastBy.set((s.role || "mod") + ":" + s.label, s.last || null);
+      } catch (_) { }
+
+      const out = [...live];
+      try {
+        for (const k of ctx.roles.listModKeys()) {
+          const key = "mod:" + k.label;
+          if (online.has(key)) continue;
+          out.push({
+            label: k.label,
+            role: "mod",
+            level: k.level || 2,
+            offline: true,
+            lastActive: lastBy.get(key) || null,
+            grantedAt: k.grantedAt || null,
+            locations: [],
+          });
+        }
+        for (const d of ctx.roles.listDevKeys()) {
+          const key = "dev:" + d.label;
+          if (online.has(key)) continue;
+          out.push({
+            label: d.label,
+            role: "dev",
+            level: 0,
+            offline: true,
+            lastActive: lastBy.get(key) || null,
+            locations: [],
+          });
+        }
+      } catch (_) { }
+
+      socket.emit("desk roster", { staff: out });
+    }),
+  );
+
   socket.on(
     "desk ping claim",
     safe(async (data) => {
@@ -840,6 +1093,7 @@ module.exports = {
   onRoomText,
   noteStaffAction,
   systemQueues,
+  noteEvent,
   presenceDirty,
   flushSync,
 };

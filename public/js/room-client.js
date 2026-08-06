@@ -327,6 +327,24 @@ function toggleMute() {
   localStorage.setItem("soundEnabled", JSON.stringify(soundEnabled));
   updateMuteIcon();
 }
+
+// Somebody typed your name in this room. One nudge per person per minute is
+// enforced server side, so this can just show it.
+socket.on("room mention", (data) => {
+  const by = (data && data.by) || "Someone";
+  playJoinSound();
+  if (window.toastr) toastr.info(by + " mentioned you");
+  // Blink it into the tab title for anyone looking at another window.
+  if (document.hidden) {
+    const original = document.title;
+    document.title = by + " mentioned you";
+    const restore = () => {
+      document.title = original;
+      document.removeEventListener("visibilitychange", restore);
+    };
+    document.addEventListener("visibilitychange", restore);
+  }
+});
 function updateMuteIcon() {
   muteIcon.src = soundEnabled
     ? "images/icons/sound-on.svg"

@@ -662,6 +662,7 @@ function logStaff(socket, action, target, room, details) {
   // way round: nothing in the Desk writes to this log.
   try {
     staffchat.noteStaffAction(label, action, targetStr, roomTag);
+    if (audit.isUsefulAction(action)) staffchat.noteEvent("action");
   } catch (_) { }
   // Watch mods (not devs - dev keys are owner-only) for action-rate abuse.
   if (socket?.isMod && !socket?.isDev)
@@ -1947,6 +1948,49 @@ function getBatchInterval(roomId) {
 
 // Applies queued diffs to the user's message buffer in rate-limited batches,
 // sanitizes the result, and broadcasts a full-replace to the room.
+// ── "@name" mentions inside a room ──────────────────────────────────────────
+// The textbox is live, so a name sitting in the text must nudge its owner
+// once, when it appears, and not again on every keystroke after it. The edge
+// is remembered per speaker, and a cooldown stops a delete-and-retype loop
+// from being used to pester somebody.
+const mentionEdge = new WeakMap(); // socket -> Set of userIds currently named
+const mentionCooldown = new Map(); // "speaker|target" -> ts
+const MENTION_COOLDOWN_MS = 60000;
+
+function notifyRoomMentions(socket, userId, text) {
+  const roomId = socket.roomId;
+  const room = roomId ? state.rooms.get(roomId) : null;
+  if (!room) return;
+  const lower = text.toLowerCase();
+  const speaker = socket.handshake.session?.username || "Someone";
+  const named = new Set();
+  const now = Date.now();
+
+  for (const u of room.users || []) {
+    if (!u || u.id === userId || !u.username) continue;
+    if (!lower.includes("@" + u.username.toLowerCase())) continue;
+    named.add(u.id);
+  }
+
+  const before = mentionEdge.get(socket) || new Set();
+  mentionEdge.set(socket, named);
+
+  for (const targetId of named) {
+    if (before.has(targetId)) continue; // already named a keystroke ago
+    const key = userId + "|" + targetId;
+    if (now - (mentionCooldown.get(key) || 0) < MENTION_COOLDOWN_MS) continue;
+    mentionCooldown.set(key, now);
+    for (const s of findSocketsByUserId(targetId)) {
+      if (s.roomId !== roomId) continue;
+      s.emit("room mention", { by: speaker, roomId });
+    }
+  }
+
+  if (mentionCooldown.size > 800)
+    for (const [k, t] of mentionCooldown)
+      if (now - t > MENTION_COOLDOWN_MS) mentionCooldown.delete(k);
+}
+
 async function processPendingChatUpdates(userId, socket) {
   try {
     if (!state.pendingChatUpdates.has(userId) || !socket || !socket.roomId)
@@ -2001,6 +2045,11 @@ async function processPendingChatUpdates(userId, socket) {
 
     msg = sanitizeMessage(msg);
     state.userMessageBuffers.set(userId, msg);
+
+    // Typing "@someone" in a room nudges that person. Their name may contain
+    // spaces, so this matches against the actual roster rather than trying to
+    // guess where a name ends.
+    if (msg.includes("@")) notifyRoomMentions(socket, userId, msg);
 
     // Staff typing @mod/@dev in their textbox raises a Desk ping. The check
     // is edge-triggered inside staffchat, so a token sitting in the text does
@@ -2419,6 +2468,8 @@ function registerSocketHandlers(opts) {
     state,
     formatUserForSocket,
     findSocketsByUserId,
+    roles,
+    audit,
   });
   // The game floor resolves players through the room roster, so a spectator or
   // a stale socket can never hold a seat.
@@ -2849,6 +2900,11 @@ function registerSocketHandlers(opts) {
           location,
           ip: socket.clientIp || null,
         });
+
+        // One head towards today's count, per device, per day.
+        try {
+          staffchat.noteEvent("visitor", socket.deviceId || userId);
+        } catch (_) { }
 
         // Keep this device's display name + location current so the invite
         // lists and leaderboard show their real name, not an old guest one.
@@ -3739,6 +3795,9 @@ function registerSocketHandlers(opts) {
         }
 
         state.apiCache.delete("public_rooms");
+        try {
+          staffchat.noteEvent("room");
+        } catch (_) { }
         socket.emit("room created", roomId);
         updateLobby();
         await debouncedSaveRooms();
