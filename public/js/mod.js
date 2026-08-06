@@ -2518,7 +2518,12 @@
     // ── Podium: the top three, tallest in the middle ──
     const top3 = leaderboard.slice(0, 3);
     if (top3.length) {
-      const podium = divc("lb-podium");
+      const podium = divc("lb-podium n" + top3.length);
+      // Gold, silver, bronze - the medal is the whole point of a podium, so
+      // it is the thing that carries the colour: the ring around the picture,
+      // the medal disc, the number on the step. Rank colour stays on the chip
+      // where it belongs, and never competes with the metal.
+      const METAL = ["gold", "silver", "bronze"];
       // Second, first, third - the shape a podium actually has.
       const order = top3.length >= 3 ? [1, 0, 2] : top3.length === 2 ? [1, 0] : [0];
       order.forEach((idx) => {
@@ -2526,23 +2531,28 @@
         if (!s) return;
         const place = idx + 1;
         const rank = rankOf(s);
-        const col = divc("pod p" + place + " rank-" + rank);
+        const col = divc("pod p" + place + " m-" + METAL[idx]);
 
         const card = document.createElement("button");
         card.type = "button";
         card.className = "pod-card";
         card.title = countTitle(s);
 
-        const medal = divc("pod-medal");
-        medal.appendChild(icon(place === 1 ? "fa-crown" : "fa-medal"));
-        card.appendChild(medal);
-
+        // The picture, ringed in its metal, with the medal disc on the corner.
+        const face = divc("pod-face");
         const av = divc("avatar pod-av");
         av.style.background = rankColor(rank);
         av.textContent = initialOf(s.label);
-        card.appendChild(av);
+        face.appendChild(av);
+        const medal = divc("pod-medal");
+        if (place === 1) medal.appendChild(icon("fa-crown"));
+        else medal.appendChild(span("pod-medal-n", String(place)));
+        face.appendChild(medal);
+        card.appendChild(face);
 
-        card.appendChild(span("pod-name", s.label));
+        const nm = span("pod-name", s.label);
+        nm.title = s.label;
+        card.appendChild(nm);
         card.appendChild(span("chip " + rank, rankName(rank)));
 
         const n = divc("pod-n");
@@ -2556,9 +2566,12 @@
         );
         col.appendChild(card);
 
-        // The block under the card: taller for first, and it carries the place.
+        // The step under the card: tallest for first, and it carries the place.
         const base = divc("pod-base");
         base.appendChild(span("pod-place", String(place)));
+        base.appendChild(
+          span("pod-metal", place === 1 ? "GOLD" : place === 2 ? "SILVER" : "BRONZE"),
+        );
         col.appendChild(base);
         podium.appendChild(col);
       });

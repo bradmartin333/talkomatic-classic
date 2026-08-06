@@ -6305,16 +6305,22 @@ function registerSocketHandlers(opts) {
       "staff get mod leaderboard",
       safe(async () => {
         if (!requireStaff(socket)) return;
-        // Somebody who is no longer on staff comes off the board entirely.
-        // Their work is still in the audit log and in their record; the board
-        // is only ever a picture of the team as it stands today.
-        const former = roles.formerLabels();
-        const board = audit.leaderboard().filter((s) => !former.has(s.label));
-        // Attach the live rank so the board can colour rows and tell juniors
-        // apart from full mods without a second lookup.
+        // The board is a picture of the team as it stands today, so it is
+        // built from who HOLDS A KEY right now rather than from who has ever
+        // appeared in the log. Filtering by the former-staff list alone was
+        // not enough: anybody removed before that list existed still had a
+        // pile of actions in the audit log and kept their place on the board,
+        // which is how a mod who left months ago was still sitting at number
+        // one. No key, no ranking. Their record is still readable.
         const levelByLabel = new Map(
           roles.listModKeys().map((k) => [k.label, k.level]),
         );
+        const devLabels = new Set(roles.listDevKeys().map((d) => d.label));
+        const board = audit
+          .leaderboard()
+          .filter((s) =>
+            s.role === "dev" ? devLabels.has(s.label) : levelByLabel.has(s.label),
+          );
         socket.emit("staff mod leaderboard", {
           promotionAt: audit.PROMOTION_AT,
           board: board.map((s) => ({

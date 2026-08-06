@@ -172,7 +172,109 @@ function load() {
   } catch (e) {
     if (e.code !== "ENOENT") console.error("staff chat load failed:", e.message);
   }
+  backfillCards();
   indexAll();
+}
+
+// ── Reading the old messages back ───────────────────────────────────────────
+// Everything in #queues and #stats was written by the server from a fixed
+// sentence template, so the sentence can be read back into the fields the
+// cards want. Done once at boot for anything that predates the cards, and it
+// keeps `text` exactly as it was: search still matches it, and a message that
+// does not parse is simply left as the line it always was.
+function parseQueueCard(m) {
+  const t = String(m.text || "");
+  if (m.qkind === "report") {
+    const re =
+      /^(.+?) reported (.+?)( \(staff\))? for ([^:.]+?)(?::\s([\s\S]*?))?\.\s(\d+)\s(?:person has|people have) reported [\s\S]*? recently\.(?:\s+Their chat box read: "([\s\S]*)")?$/;
+    const x = re.exec(t);
+    if (!x) return null;
+    return {
+      by: x[1],
+      target: x[2],
+      targetRole: x[3] ? "mod" : null,
+      category: x[4],
+      reason: x[5] || null,
+      reports: Number(x[6]) || null,
+      quote: x[7] || null,
+    };
+  }
+  if (m.qkind === "application") {
+    const x = /^New mod application from (.+)$/.exec(t);
+    return x ? { by: x[1] } : null;
+  }
+  if (m.qkind === "appeal") {
+    const x = /^(.+?) submitted a ban appeal\.$/.exec(t);
+    return x ? { by: x[1] } : null;
+  }
+  if (m.qkind === "suggestion") {
+    const x = /^(.+?) suggested: ([\s\S]+)$/.exec(t);
+    return x ? { by: x[1], reason: x[2] } : null;
+  }
+  if (m.qkind === "abuse") {
+    const x =
+      /^Possible mod abuse by (.+?): ([\s\S]*?)\.\s*Recent actions:\s*([\s\S]*?)\.?$/.exec(
+        t,
+      );
+    if (!x) return null;
+    return {
+      target: x[1],
+      targetRole: "mod",
+      reason: x[2],
+      lines: x[3]
+        .split(", ")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    };
+  }
+  return null;
+}
+
+function parseStats(m) {
+  const t = String(m.text || "");
+  const at = t.indexOf(": ");
+  if (at === -1) return null;
+  const when = t.slice(0, at);
+  const body = t.slice(at + 2);
+  const num = (re) => {
+    const x = re.exec(body);
+    return x ? Number(x[1]) || 0 : 0;
+  };
+  const visitors = num(/(\d+)\s+(?:person|people)\s+stopped by/);
+  const rooms = num(/(\d+)\s+rooms?\s+opened/);
+  if (!visitors && !rooms) return null;
+  return {
+    when,
+    visitors,
+    rooms,
+    peak: num(/(\d+)\s+online at once/),
+    actions: num(/(\d+)\s+staff actions?/),
+    reports: num(/(\d+)\s+reports?/),
+    pings: num(/(\d+)\s+calls?\s+for backup/),
+    strokes: 0,
+  };
+}
+
+function backfillCards() {
+  let changed = 0;
+  for (const m of desk.channels.queues || []) {
+    if (!m || m.card || m.kind !== "system") continue;
+    const c = parseQueueCard(m);
+    if (!c) continue;
+    // No ids on an old message, so no buttons on the card either: acting on
+    // somebody the server can no longer identify is not something to guess at.
+    m.card = sanitizeCard(m.qkind, c);
+    changed++;
+  }
+  for (const m of desk.channels.stats || []) {
+    if (!m || m.stats || m.kind !== "system") continue;
+    const s = parseStats(m);
+    if (!s) continue;
+    m.stats = s;
+    changed++;
+  }
+  if (changed) scheduleSave();
+  return changed;
 }
 load();
 
@@ -209,47 +311,101 @@ function pruneArchived() {
 // labels rather than a word pattern: labels are free text and can carry spaces
 // and punctuation, so anything-after-an-@ would guess wrong constantly. Longest
 // label first, so "@Sam" never eats the mention of "@Sam T".
-function staffLabels() {
-  const out = new Set();
+// Everyone who holds a key, with the rank that decides which group mentions
+// reach them. Sockets are folded in so somebody signed in on a key that is not
+// in the store yet still resolves.
+function staffDirectory() {
+  const by = new Map(); // lowercase label -> { label, role, level }
+  const add = (label, role, level) => {
+    if (!label) return;
+    const k = label.toLowerCase();
+    if (!by.has(k)) by.set(k, { label, role, level });
+  };
   try {
-    for (const k of ctx.roles.listModKeys()) if (k.label) out.add(k.label);
-    for (const d of ctx.roles.listDevKeys()) if (d.label) out.add(d.label);
+    for (const k of ctx.roles.listModKeys()) add(k.label, "mod", k.level || 2);
+    for (const d of ctx.roles.listDevKeys()) add(d.label, "dev", 0);
   } catch (_) {}
   if (io())
     for (const [, s] of io().sockets.sockets)
-      if (s.connected && isStaff(s) && s.staffLabel) out.add(s.staffLabel);
-  return [...out].sort((a, b) => b.length - a.length);
+      if (s.connected && isStaff(s) && s.staffLabel)
+        add(s.staffLabel, s.isDev ? "dev" : "mod", s.isDev ? 0 : s.modLevel || 2);
+  return [...by.values()];
 }
 
+const staffLabels = () =>
+  staffDirectory()
+    .map((s) => s.label)
+    .sort((a, b) => b.length - a.length);
+
+// Group mentions. "@everyone" and the three ranks, so a call for backup does
+// not mean typing out eight names. The groups are exclusive: "@L2 mods" means
+// the full mods, not the developers as well - somebody reaching for a
+// developer types "@devs", and somebody who wants the lot types "@everyone".
+const MENTION_GROUPS = [
+  { key: "everyone", tokens: ["everyone", "all"] },
+  { key: "dev", tokens: ["devs", "developers"] },
+  { key: "l2", tokens: ["l2 mods", "full mods", "l2"] },
+  { key: "l1", tokens: ["l1 mods", "jr mods", "junior mods", "juniors", "l1"] },
+];
+const GROUP_BY_TOKEN = new Map();
+for (const g of MENTION_GROUPS)
+  for (const t of g.tokens) GROUP_BY_TOKEN.set(t, g.key);
+// Longest first, so "@l2 mods" is never read as "@l2" with "mods" left over.
+const GROUP_TOKENS = [...GROUP_BY_TOKEN.keys()].sort(
+  (a, b) => b.length - a.length,
+);
+
+function inGroup(key, role, level) {
+  if (key === "everyone") return true;
+  if (key === "dev") return role === "dev";
+  if (key === "l2") return role !== "dev" && (level || 2) >= 2;
+  if (key === "l1") return role !== "dev" && (level || 2) === 1;
+  return false;
+}
+
+// Every @token in the text, matched against real names and the group list.
+// Returns the labels named outright and the groups called.
 function extractMentions(text) {
-  if (typeof text !== "string" || text.indexOf("@") === -1) return [];
-  const hit = [];
+  const out = { labels: [], groups: [] };
+  if (typeof text !== "string" || text.indexOf("@") === -1) return out;
   const low = text.toLowerCase();
-  for (const label of staffLabels()) {
-    const needle = "@" + label.toLowerCase();
+  const found = (needle) => {
     let from = 0;
     for (;;) {
       const at = low.indexOf(needle, from);
-      if (at === -1) break;
+      if (at === -1) return false;
       from = at + needle.length;
       const before = at > 0 ? text[at - 1] : "";
       const after = text[from] || "";
       // Not part of a word, an email address, or a longer name.
       if (/[\w@#]/.test(before) || /\w/.test(after)) continue;
-      if (!hit.includes(label)) hit.push(label);
-      break;
+      return true;
     }
-  }
-  return hit;
+  };
+  for (const t of GROUP_TOKENS)
+    if (found("@" + t)) {
+      const key = GROUP_BY_TOKEN.get(t);
+      if (!out.groups.includes(key)) out.groups.push(key);
+    }
+  for (const label of staffLabels())
+    if (found("@" + label.toLowerCase()) && !out.labels.includes(label))
+      out.labels.push(label);
+  return out;
 }
 
-// Was this socket's holder named? Messages written before mentions were stored
-// fall back to the old substring test so old highlights do not disappear.
+// Was this socket's holder named, by name or by group? Messages written before
+// mentions were stored fall back to the old substring test so old highlights
+// do not disappear.
 function mentions(msg, socket) {
   if (!socket.staffLabel) return false;
   const mine = socket.staffLabel.toLowerCase();
+  if (Array.isArray(msg.mentionGroups))
+    for (const g of msg.mentionGroups)
+      if (inGroup(g, socket.isDev ? "dev" : "mod", socket.modLevel || 2))
+        return true;
   if (Array.isArray(msg.mentions))
     return msg.mentions.some((l) => String(l).toLowerCase() === mine);
+  if (Array.isArray(msg.mentionGroups)) return false;
   return (
     typeof msg.text === "string" && msg.text.toLowerCase().includes("@" + mine)
   );
@@ -342,7 +498,12 @@ function systemQueues(qkind, text, opts) {
 // Everything on a card is either a short string or a number, and every string
 // is capped. The client renders all of it with textContent, but a card that
 // can carry unbounded text is a way to blow up the saved file.
-const cut = (v, n) => (v == null ? null : String(v).slice(0, n || 200));
+// A function declaration, not a const: load() runs at require time and calls
+// sanitizeCard through the backfill, which would hit the temporal dead zone of
+// anything declared with let/const further down the file.
+function cut(v, n) {
+  return v == null ? null : String(v).slice(0, n || 200);
+}
 
 function sanitizeCard(qkind, c) {
   const out = {
@@ -981,37 +1142,55 @@ function register(socket, safe) {
         kind: "chat",
         author: w,
         text,
-        ...(named.length ? { mentions: named } : {}),
+        ...(named.labels.length ? { mentions: named.labels } : {}),
+        ...(named.groups.length ? { mentionGroups: named.groups } : {}),
         ...(reply ? { reply } : {}),
       });
       if (!msg) return;
       broadcast(key, msg);
-      if (!named.length) return;
+      if (!named.labels.length && !named.groups.length) return;
 
       // Naming somebody is a ping. Whoever is on gets it now; whoever is off
       // is not lost - it counts as an unread mention and is waiting for them
       // the moment they sign back in. The sender is told which is which so
       // they know whether to expect an answer.
+      //
+      // A group is the same thing said once: it is expanded to the people it
+      // actually reaches, so "@everyone" reports who is off just as a list of
+      // names would have.
+      const dir = staffDirectory();
+      const wanted = new Map(); // lowercase label -> label
+      for (const l of named.labels) wanted.set(l.toLowerCase(), l);
+      for (const g of named.groups)
+        for (const p of dir)
+          if (inGroup(g, p.role, p.level)) wanted.set(p.label.toLowerCase(), p.label);
+      // Pinging yourself is not a ping.
+      wanted.delete(w.label.toLowerCase());
+
       const on = new Set();
       const mine = idKeyOf(w);
       for (const [, s] of io().sockets.sockets) {
         if (!s.connected || !isStaff(s) || !s.staffLabel) continue;
-        const label = named.find(
-          (l) => l.toLowerCase() === s.staffLabel.toLowerCase(),
-        );
+        const label = wanted.get(s.staffLabel.toLowerCase());
         if (!label) continue;
         on.add(label);
-        if (idKeyOf(who(s)) === mine) continue; // naming yourself pings nobody
+        if (idKeyOf(who(s)) === mine) continue;
         if (!canSeeMessage(s, key, msg)) continue;
-        s.emit("desk mention", { key, id: msg.id, by: w.label });
+        s.emit("desk mention", {
+          key,
+          id: msg.id,
+          by: w.label,
+          group: named.groups[0] || null,
+        });
       }
+      const all = [...wanted.values()];
       socket.emit("desk mention receipt", {
         key,
         id: msg.id,
-        pinged: named,
-        offline: named.filter(
-          (l) => !on.has(l) && l.toLowerCase() !== w.label.toLowerCase(),
-        ),
+        groups: named.groups,
+        pinged: all,
+        online: all.filter((l) => on.has(l)),
+        offline: all.filter((l) => !on.has(l)),
       });
     }),
   );
@@ -1084,8 +1263,10 @@ function register(socket, safe) {
       // An edit can add or drop a name. It re-marks the message, but it never
       // re-pings: an edit is not a way to poke somebody twice.
       const named = extractMentions(text);
-      if (named.length) ref.msg.mentions = named;
+      if (named.labels.length) ref.msg.mentions = named.labels;
       else delete ref.msg.mentions;
+      if (named.groups.length) ref.msg.mentionGroups = named.groups;
+      else delete ref.msg.mentionGroups;
       scheduleSave();
       broadcast(ref.key, ref.msg, true);
     }),

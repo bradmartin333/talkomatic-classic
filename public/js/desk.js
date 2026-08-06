@@ -202,6 +202,65 @@
     );
   }
 
+  // Group mentions: one @ instead of eight names. Exclusive by design -
+  // "@L2 mods" is the full mods, not the developers as well; somebody after a
+  // developer says "@devs" and somebody after the lot says "@everyone". The
+  // server keeps the same table and decides who is actually reached.
+  const MENTION_GROUPS = [
+    {
+      key: "everyone",
+      write: "everyone",
+      name: "@everyone",
+      tokens: ["everyone", "all"],
+      desc: "Everybody holding a staff key",
+      icon: "fa-bullhorn",
+    },
+    {
+      key: "l2",
+      write: "L2 mods",
+      name: "@L2 mods",
+      tokens: ["l2 mods", "full mods", "l2"],
+      desc: "Full moderators",
+      icon: "fa-user-shield",
+    },
+    {
+      key: "l1",
+      write: "L1 mods",
+      name: "@L1 mods",
+      tokens: ["l1 mods", "jr mods", "junior mods", "juniors", "l1"],
+      desc: "Junior moderators",
+      icon: "fa-user-plus",
+    },
+    {
+      key: "dev",
+      write: "devs",
+      name: "@devs",
+      tokens: ["devs", "developers"],
+      desc: "Developers only",
+      icon: "fa-screwdriver-wrench",
+    },
+  ];
+  const GROUP_BY_TOKEN = new Map();
+  for (const g of MENTION_GROUPS)
+    for (const t of g.tokens) GROUP_BY_TOKEN.set(t, g);
+
+  const myRole = () => (me && me.role === "dev" ? "dev" : "mod");
+  const myLevel = () => (me && me.role === "dev" ? 0 : (me && me.level) || 2);
+  function inGroup(key, role, level) {
+    if (key === "everyone") return true;
+    if (key === "dev") return role === "dev";
+    if (key === "l2") return role !== "dev" && (level || 2) >= 2;
+    if (key === "l1") return role !== "dev" && (level || 2) === 1;
+    return false;
+  }
+  // How many people a group actually reaches, so the palette can say so
+  // before you send it rather than after.
+  function groupReach(key) {
+    const people = mentionPeople();
+    const hit = people.filter((p) => inGroup(key, p.role, p.level));
+    return { n: hit.length, on: hit.filter((p) => p.online).length };
+  }
+
   const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   function names() {
@@ -210,7 +269,8 @@
     const alt = (arr, sigil) => {
       const list = arr.filter(Boolean);
       if (!list.length) return null;
-      // Longest first, so "#floorplan" is never matched as "#floor".
+      // Longest first, so "#floorplan" is never matched as "#floor", and
+      // "@l2 mods" is never matched as "@l2" with "mods" left dangling.
       return (
         sigil +
         "(?:" +
@@ -228,7 +288,7 @@
         "#",
       ),
       alt(
-        people.map((p) => p.label),
+        people.map((p) => p.label).concat([...GROUP_BY_TOKEN.keys()]),
         "@",
       ),
     ].filter(Boolean);
@@ -255,6 +315,24 @@
 
   function mentionChip(token) {
     const nm = token.slice(1);
+    const g = GROUP_BY_TOKEN.get(nm.toLowerCase());
+    if (g) {
+      // A group reads as a group: it is not one person's name, and whether it
+      // is aimed at you is the first thing you want to know.
+      const hits = inGroup(g.key, myRole(), myLevel());
+      const s = el("span", "dk-ment group" + (hits ? " self" : ""), "@" + nm);
+      const reach = groupReach(g.key);
+      s.title =
+        g.desc +
+        " - " +
+        reach.n +
+        (reach.n === 1 ? " person" : " people") +
+        ", " +
+        reach.on +
+        " on now" +
+        (hits ? ". That includes you." : ". Not aimed at you.");
+      return s;
+    }
     const self = !!me && nm.toLowerCase() === String(me.label).toLowerCase();
     const p = names().people.get(nm.toLowerCase());
     const s = el("span", "dk-ment" + (self ? " self" : ""), "@" + nm);
@@ -748,18 +826,43 @@
     // message itself; this is the line that says where to look.
     socket.on("desk mention", (d) => {
       if (!d || !panelOpen) return;
+      const g = d.group && GROUP_BY_TOKEN.get(d.group);
       toast(
-        (d.by || "Someone") + " mentioned you in " + channelLabel(d.key) + ".",
+        (d.by || "Someone") +
+          (g ? " called " + g.name : " mentioned you") +
+          " in " +
+          channelLabel(d.key) +
+          ".",
       );
     });
 
     // Sent straight back to whoever wrote the mention: who got it now, and who
-    // is off and will get it when they return. A ping is never silently lost.
+    // is off and will get it when they return. A ping is never silently lost,
+    // and a group says how many people it actually reached rather than letting
+    // you assume it woke the whole team.
     socket.on("desk mention receipt", (d) => {
-      if (!d || !Array.isArray(d.offline) || !d.offline.length) return;
+      if (!d) return;
+      const off = Array.isArray(d.offline) ? d.offline : [];
+      const on = Array.isArray(d.online) ? d.online : [];
+      if (d.groups && d.groups.length) {
+        const n = on.length + off.length;
+        if (!n) return toast("There is nobody else in that group.");
+        toast(
+          "Pinged " +
+            n +
+            (n === 1 ? " person: " : " people: ") +
+            on.length +
+            " on now" +
+            (off.length
+              ? ", " + off.length + " will see it when they are back"
+              : ""),
+        );
+        return;
+      }
+      if (!off.length) return;
       toast(
-        d.offline.join(", ") +
-          (d.offline.length === 1
+        off.join(", ") +
+          (off.length === 1
             ? " is offline - they"
             : " are offline - they") +
           " will see it when they are back.",
@@ -2034,12 +2137,34 @@
       c.appendChild(el("div", "dk-st-l", label));
       grid.appendChild(c);
     };
-    tile(s.visitors || 0, "people stopped by", "fa-users", "lead");
+    // "1 calls for backup" reads like a bug in the counting, so the labels
+    // agree with their numbers.
+    const p = (n, one, many) => (n === 1 ? one : many);
+    tile(
+      s.visitors || 0,
+      p(s.visitors, "person stopped by", "people stopped by"),
+      "fa-users",
+      "lead",
+    );
     tile(s.peak || 0, "on at the busiest", "fa-signal");
-    tile(s.rooms || 0, "rooms opened", "fa-door-open");
-    tile(s.actions || 0, "staff actions", "fa-gavel");
-    tile(s.reports || 0, "reports", "fa-flag", s.reports ? "warn" : "");
-    tile(s.pings || 0, "calls for backup", "fa-hand", s.pings ? "warn" : "");
+    tile(s.rooms || 0, p(s.rooms, "room opened", "rooms opened"), "fa-door-open");
+    tile(
+      s.actions || 0,
+      p(s.actions, "staff action", "staff actions"),
+      "fa-gavel",
+    );
+    tile(
+      s.reports || 0,
+      p(s.reports, "report", "reports"),
+      "fa-flag",
+      s.reports ? "warn" : "",
+    );
+    tile(
+      s.pings || 0,
+      p(s.pings, "call for backup", "calls for backup"),
+      "fa-hand",
+      s.pings ? "warn" : "",
+    );
     r.appendChild(grid);
     return r;
   }
@@ -3590,7 +3715,45 @@
       .filter((p) => p.label.toLowerCase().includes(q))
       .sort((a, b) => score(a) - score(b))
       .slice(0, 8);
-    if (!hits.length) return hidePalette();
+
+    // Groups first: they are the shortcut, and burying them under a list of
+    // names is how nobody ever finds them.
+    const groups = MENTION_GROUPS.filter(
+      (g) =>
+        !q ||
+        g.key.startsWith(q) ||
+        g.tokens.some((t) => t.startsWith(q)) ||
+        g.write.toLowerCase().startsWith(q),
+    );
+    const groupRows = groups.map((g) => {
+      const reach = groupReach(g.key);
+      const node = el("button", "dk-pick grp");
+      node.type = "button";
+      const face = el("span", "dk-pick-grp");
+      face.appendChild(icon(g.icon));
+      node.appendChild(face);
+      const mid = el("span", "dk-pick-mid");
+      mid.appendChild(el("span", "dk-pick-n", g.name));
+      mid.appendChild(
+        el(
+          "span",
+          "dk-pick-s",
+          g.desc +
+            " - " +
+            reach.n +
+            (reach.n === 1 ? " person, " : " people, ") +
+            reach.on +
+            " on now",
+        ),
+      );
+      node.appendChild(mid);
+      node.appendChild(el("span", "dk-chip ghost", "GROUP"));
+      const apply = () => applyToken(ta, start, end, "@" + g.write + " ");
+      node.addEventListener("click", apply);
+      return { node, apply };
+    });
+
+    if (!hits.length && !groupRows.length) return hidePalette();
     const rows = hits.map((p) => {
       const node = el("button", "dk-pick");
       node.type = "button";
@@ -3614,7 +3777,7 @@
       node.addEventListener("click", apply);
       return { node, apply };
     });
-    openPalette("ment", rows, 0);
+    openPalette("ment", groupRows.concat(rows), 0);
   }
 
   // ── Styles ────────────────────────────────────────────────────────────────
@@ -3630,6 +3793,14 @@
    composer in particular grows to its own scrollHeight, which is wrong by
    exactly the padding under content-box. */
 .dk-panel,.dk-panel *,.dk-pill,.dk-pill *{box-sizing:border-box;}
+/* Thin black scrollbars everywhere inside the Desk. The browser default is
+   wide, pale, and lands right next to the message text. */
+.dk-panel *{scrollbar-width:thin;scrollbar-color: #3d3d3d transparent;}
+.dk-panel *::-webkit-scrollbar{width:7px;height:7px;}
+.dk-panel *::-webkit-scrollbar-track{background: #000;border-radius:4px;}
+.dk-panel *::-webkit-scrollbar-thumb{background: #3d3d3d;border-radius:4px;border:1px solid #000;}
+.dk-panel *::-webkit-scrollbar-thumb:hover{background: #ff9800;}
+.dk-panel *::-webkit-scrollbar-corner{background: #000;}
 .dk-pill{position:fixed;bottom:16px;right:16px;z-index:99988;background: #000;color: #fff;
   border:1px solid #ff9800;border-radius:4px;padding:10px 16px;font-size:13px;font-weight:bold;
   font-family:inherit;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.5);display:inline-flex;
@@ -3662,7 +3833,13 @@
   /* A notch bigger on a desktop monitor, where it read a little far away.
      Only the body: the header stays in real pixels so dragging and the resize
      handle keep working against the same coordinates the panel is placed in. */
-  .dk-body{zoom:1.08;}
+  /* .dk-panel qualifies these two so they outrank the base .dk-body rule
+     further down the sheet, which would otherwise win on source order. */
+  .dk-panel .dk-body{zoom:1.08;grid-template-columns:214px minmax(0,1fr) 290px;}
+  /* The channel list gets a little more again - it is the thing you aim at
+     most and it was the smallest text on the panel. The column widens to
+     match, so nothing starts wrapping that did not before. */
+  .dk-panel .dk-rail{zoom:1.06;}
 }
 .dk-panel.dk-offline .dk-head{opacity:.55;}
 .dk-panel.dk-offline .dk-head .dk-title-sub::after{content:" - reconnecting";color: #ff5468;}
@@ -3913,6 +4090,11 @@
 .dk-pick-dot{width:7px;height:7px;border-radius:50%;flex:none;}
 .dk-pick-dot.on{background: #57d9a3;}
 .dk-pick-dot.off{background: #5a5a5a;}
+/* Group rows sit above the names and are marked as what they are: one @ that
+   reaches several people. */
+.dk-pick-grp{flex:none;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;
+  justify-content:center;background:rgba(192,139,255,.16);color: #c08bff;font-size:11px;}
+.dk-pick.grp .dk-pick-n{color: #c08bff;}
 /* A name written in a message. A channel opens; a mention is just marked, in
    your own colour when it is you. */
 .dk-chanlink{background:none;border:none;font-family:inherit;font-size:inherit;padding:0;
@@ -3920,6 +4102,10 @@
 .dk-chanlink:hover{background:rgba(90,169,255,.18);text-decoration:underline;}
 .dk-ment{color: #ffb454;font-weight:bold;background:rgba(255,152,0,.14);border-radius:3px;padding:0 3px;}
 .dk-ment.self{color: #000;background: #ff9800;}
+/* A group is not a person, so it does not look like one. It only goes solid
+   when the group actually includes you. */
+.dk-ment.group{color: #c08bff;background:rgba(192,139,255,.14);}
+.dk-ment.group.self{color: #150022;background: #c08bff;}
 /* ── Markdown ──
    Only the half people actually type. Nothing here parses HTML: every leaf is
    a text node, so a message is still exactly what somebody wrote. */
@@ -3959,7 +4145,10 @@
 .dk-staff-n{display:flex;align-items:center;gap:5px;font-size:12.5px;font-weight:bold;min-width:0;}
 .dk-staff-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
 .dk-staff-n .dk-chip{flex:none;}
-.dk-staff-l{font-size:11px;color: #8d8d8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* This line says where somebody is and what name they are wearing, and both
+   of those are the whole point of it - so it wraps rather than being cut off
+   halfway through the answer. */
+.dk-staff-l{font-size:11px;color: #8d8d8d;line-height:1.45;overflow-wrap:anywhere;}
 .dk-staff.off{opacity:.6;}
 /* One heading per rank instead of a chip on every single row. */
 .dk-group{display:flex;align-items:center;gap:6px;padding:9px 5px 3px;}
