@@ -263,6 +263,28 @@
     return { n: hit.length, on: hit.filter((p) => p.online).length };
   }
 
+  // Places that behave like a channel when you write them, but are not on the
+  // server: the guide is a page, not a conversation, and pointing somebody at
+  // it should work the same way as pointing at #floor.
+  const VIRTUAL_CHANNELS = [
+    {
+      key: "$guide",
+      name: "guide",
+      alt: ["how this works"],
+      desc: "How the Desk works - the whole guide",
+      icon: "fa-circle-question",
+      open: () => openHelp(),
+    },
+  ];
+  const virtualChannel = (nm) => {
+    const low = String(nm || "").toLowerCase();
+    return (
+      VIRTUAL_CHANNELS.find(
+        (v) => v.name === low || (v.alt || []).includes(low),
+      ) || null
+    );
+  };
+
   const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   function names() {
@@ -286,7 +308,11 @@
     };
     const parts = [
       alt(
-        channels.map((c) => c.name),
+        channels
+          .map((c) => c.name)
+          .concat(
+            VIRTUAL_CHANNELS.flatMap((v) => [v.name].concat(v.alt || [])),
+          ),
         "#",
       ),
       alt(
@@ -303,6 +329,17 @@
 
   function chanLink(token) {
     const nm = token.slice(1);
+    const v = virtualChannel(nm);
+    if (v) {
+      const b = el("button", "dk-chanlink", "#" + nm);
+      b.type = "button";
+      b.title = v.desc;
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        v.open();
+      });
+      return b;
+    }
     const ch = channels.find((c) => c.name.toLowerCase() === nm.toLowerCase());
     const b = el("button", "dk-chanlink", "#" + (ch ? ch.name : nm));
     b.type = "button";
@@ -947,11 +984,104 @@
     if (pageMode) els.panel.classList.add("dk-fullpage");
   }
 
+  // ── The dock button ───────────────────────────────────────────────────────
+  // Bottom left by default, but hold it and it goes wherever you want. Every
+  // page has something different in its corners, so the only workable answer
+  // is to let whoever is looking at it move it out of the way.
+  const PILL_KEY = "talkomatic_deskPill";
+
+  function clampPill(x, y) {
+    const p = els.pill;
+    const w = (p && p.offsetWidth) || 96;
+    const h = (p && p.offsetHeight) || 38;
+    return {
+      x: Math.max(6, Math.min(x, window.innerWidth - w - 6)),
+      y: Math.max(6, Math.min(y, window.innerHeight - h - 6)),
+    };
+  }
+
+  function placePill(x, y) {
+    const p = els.pill;
+    if (!p) return;
+    const c = clampPill(x, y);
+    p.style.left = c.x + "px";
+    p.style.top = c.y + "px";
+    p.style.right = "auto";
+    p.style.bottom = "auto";
+    return c;
+  }
+
+  function restorePill() {
+    let r = null;
+    try {
+      r = JSON.parse(localStorage.getItem(PILL_KEY) || "null");
+    } catch (_) {}
+    if (!r || typeof r.x !== "number" || typeof r.y !== "number") return;
+    placePill(r.x, r.y);
+  }
+
+  function makePillDraggable(pill) {
+    let drag = null;
+    pill.addEventListener("pointerdown", (e) => {
+      if (e.button != null && e.button !== 0) return;
+      const r = pill.getBoundingClientRect();
+      drag = {
+        dx: e.clientX - r.left,
+        dy: e.clientY - r.top,
+        sx: e.clientX,
+        sy: e.clientY,
+        moved: false,
+      };
+      try {
+        pill.setPointerCapture(e.pointerId);
+      } catch (_) {}
+    });
+    pill.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      // A few pixels of slop, so a shaky click is still a click.
+      if (
+        !drag.moved &&
+        Math.abs(e.clientX - drag.sx) < 4 &&
+        Math.abs(e.clientY - drag.sy) < 4
+      )
+        return;
+      drag.moved = true;
+      pill.classList.add("dragging");
+      placePill(e.clientX - drag.dx, e.clientY - drag.dy);
+    });
+    const done = () => {
+      if (!drag) return;
+      const moved = drag.moved;
+      drag = null;
+      pill.classList.remove("dragging");
+      if (!moved) return;
+      const r = pill.getBoundingClientRect();
+      try {
+        localStorage.setItem(PILL_KEY, JSON.stringify({ x: r.left, y: r.top }));
+      } catch (_) {}
+      // Swallow the click this drag is about to fire, so letting go of the
+      // button does not also open the panel.
+      pill.addEventListener("click", (e) => e.stopImmediatePropagation(), {
+        capture: true,
+        once: true,
+      });
+    };
+    pill.addEventListener("pointerup", done);
+    pill.addEventListener("pointercancel", done);
+    // A smaller window must not strand it off-screen.
+    window.addEventListener("resize", () => {
+      if (!els.pill || !els.pill.style.left) return;
+      const r = els.pill.getBoundingClientRect();
+      placePill(r.left, r.top);
+    });
+  }
+
   function buildPill() {
     const pill = el("button", "dk-pill");
     pill.type = "button";
     pill.id = "deskPill";
     pill.setAttribute("aria-label", "Open the staff Desk");
+    pill.title = "The Desk. Hold and drag to move it anywhere.";
     pill.appendChild(icon("fa-comments"));
     pill.appendChild(document.createTextNode(" Desk"));
     const badge = el("span", "dk-pill-badge");
@@ -961,6 +1091,8 @@
     document.body.appendChild(pill);
     els.pill = pill;
     els.badge = badge;
+    restorePill();
+    makePillDraggable(pill);
     // Quiet pages get no message traffic to trigger a badge pass, so re-check
     // the corner a couple of times while the page finishes signing in.
     setTimeout(renderBadges, 2500);
@@ -1363,7 +1495,7 @@
     help.type = "button";
     help.appendChild(icon("fa-circle-question"));
     help.appendChild(el("span", "dk-chan-name", "How this works"));
-    help.title = "A short guide to the Desk";
+    help.title = "The whole guide. Write #guide to send anybody here.";
     help.addEventListener("click", openHelp);
     rail.appendChild(help);
 
@@ -3230,94 +3362,118 @@
     renderAll();
   }
 
+  // The guide. Written as data so it stays one place to edit, and rendered
+  // through the same message renderer as chat - so every #channel and @name in
+  // it is a real link, and the formatting examples show themselves working.
   const HELP = [
     {
+      icon: "fa-comments",
+      tone: "orange",
       h: "What the Desk is",
       p: [
         "The staff room. It rides along on every page, so you never have to leave a room to talk to the team or to act on somebody.",
         "Only people holding a staff key can see it. Regular users cannot tell it exists.",
+        "Drag the header to move the panel, pull the bottom right corner to resize it, and drag the Desk button itself anywhere on the page. All three are remembered.",
       ],
     },
     {
+      icon: "fa-hashtag",
+      tone: "blue",
       h: "The channels",
       list: [
         ["#floor", "Day to day talk. Start here."],
         [
           "#help",
-          "Calls for backup from rooms. These are cards, not chat. Anything unread or unclaimed in here turns the Desk button red - nothing else does.",
+          "Calls for backup from rooms. Cards, not chat. Anything unread or unclaimed in here turns the Desk button red - nothing else does.",
         ],
         [
           "#queues",
-          "Reports, appeals and applications as they arrive, each one a card you can act on without leaving. Full mods and devs.",
+          "Reports, appeals, applications and suggestions as they arrive, each a card you can act on without leaving. Full mods and devs.",
         ],
         ["#l2", "Bans, blocks and escalations. Full mods and devs."],
         ["#devs", "Keys, promotions, abuse flags. Developers only."],
-        ["#stats", "A short summary of each day, written by the server."],
+        ["#stats", "How each day went, written by the server at midnight."],
+        ["#guide", "This page. Point anybody at it by writing its name."],
       ],
     },
     {
+      icon: "fa-at",
+      tone: "purple",
+      h: "Naming people",
+      p: [
+        'Type "@" and the team appears - everyone with a key, on or off. Pick one and their name goes in marked, and they are pinged.',
+        "Somebody who is off is not a wasted ping: it waits as an unread mention and is the first thing they see when they sign back in. You are told at the time who was off.",
+        "Groups save typing eight names: @everyone, @L2 mods, @L1 mods, @devs. They are exclusive - @L2 mods does not reach developers, and the list tells you how many people each one actually reaches before you send it.",
+        'Not the same as calling for backup: "@mod" typed in a ROOM raises a card in #help. "@" in here just names a person.',
+      ],
+    },
+    {
+      icon: "fa-hand",
+      tone: "amber",
       h: "Calling for backup",
       p: [
         'Type "@mod" or "@dev" in your normal room textbox. A card appears in #help with the room, how many people are in it, and who asked.',
-        "Tap Claim before you act. Everyone sees who took it, including the person who asked, so two of you never land on the same user.",
+        "Claim it before you act. Everyone sees who took it, including the person who asked, so two of you never land on the same user.",
         "Anything you do in that room while the card is open is attached to it, so the card ends up being the record of what happened.",
       ],
     },
     {
-      h: "Naming people and channels",
-      p: [
-        'Type "@" in the message box and the team appears - everyone with a key, on or off. Pick one and their name goes in, marked, and they are pinged.',
-        "Someone who is off is not a wasted ping: it waits for them as an unread mention and is the first thing they see when they sign back in. You are told at the time who was off.",
-        'Type "#" the same way to point at a channel. It goes in as a link, and anyone who can read that channel opens it with one click.',
-        'This is not the same as calling for backup: "@mod" typed in a ROOM raises a card in #help. "@" in here just names a person.',
-      ],
-    },
-    {
+      icon: "fa-inbox",
+      tone: "green",
       h: "Working the queue",
       p: [
-        "Every report, appeal, application and suggestion lands in #queues as a card with the buttons on it. Warn, kick, block and discard a report; approve or decline an application; lift or dismiss an appeal. They are the same buttons as the dashboard, so your level still decides what goes through.",
-        "The moment anybody deals with something - here, in the dashboard, or from a room - the card says who did it and what they did, so two of you never go chasing the same report.",
+        "Every report, appeal, application and suggestion lands in #queues as a card with the buttons on it: warn, kick, block or discard a report, approve or decline an application, open an appeal. Same events the dashboard fires, so your level still decides what goes through.",
+        "The moment anybody deals with something - here, in the dashboard, or from a room - the card says who did it and what they did, so two of you never chase the same report.",
         "Cards clear themselves after a day. #queues is a tray, not an archive: the dashboard feed and the audit log are where things are kept.",
       ],
     },
     {
-      h: "Writing a message",
+      icon: "fa-scale-balanced",
+      tone: "amber",
+      h: "Appeals are a conversation",
       p: [
-        "Links are clickable. **bold**, *italic*, ~~strike~~ and `code` work, ``` on its own line opens a code block, and lines starting with - become a list.",
-        "Shift+Enter starts a new line without sending.",
-        "Scrolled up reading something? New messages stop pulling you down and a bar appears saying how many came in. Click it to go back to the latest.",
+        "A ban appeal is a chat, not a note. Open it from its card in #queues and ask what actually happened - they answer from their ban screen, and you both see the same thread.",
+        "End chat stops them writing without deciding anything, for the one who answers every question with twenty messages. The appeal stays open and you still judge it.",
+        "Declining takes a message. Whatever you write is the last thing they read on their ban screen, so a refusal is never just a closed door. Lifting a ban is a developer call.",
       ],
     },
     {
+      icon: "fa-keyboard",
+      tone: "blue",
+      h: "Writing a message",
+      p: [
+        "Links are clickable. **bold**, *italic*, ~~strike~~ and `code` all work, three backticks on their own line open a code block, and lines starting with - become a list.",
+        "Shift+Enter starts a new line without sending. Hover a message to reply to it; the quote above your reply links back to the original.",
+        "Scrolled up reading something? New messages stop pulling you down and a bar appears saying how many came in. Click it to jump back to the latest.",
+      ],
+    },
+    {
+      icon: "fa-eye",
+      tone: "blue",
       h: "Acting without joining",
       p: [
         "Inspect on any room or ping card shows you who is inside. Warn, wipe and kick are right there. Ban and IP block appear if you are a full mod.",
-        "Join and Watch open the room in a new tab. Staff can be in several rooms at once.",
-        "Joining a full room asks first: staff get in past the limit, but that makes it 6 of 5 for everybody in there. Watching reads it live without taking a seat, which is usually what you actually wanted.",
+        "The room list says what each room is in words, and how full it is. Joining a full room asks first: staff get in past the limit, but that makes it 6 of 5 for everybody in there. Watching reads it live without taking a seat, which is usually what you wanted.",
       ],
     },
     {
-      h: "Commands",
+      icon: "fa-terminal",
+      tone: "orange",
+      h: "Commands and threads",
       p: [
-        "Type a slash in the message box and the full list appears. Every command does exactly what the matching button does, so your level still decides what goes through.",
-        'Names with spaces go in quotes: /warn "sasha here" please stop.',
-        "Stuck? Ask in plain words: /help how do I ban someone.",
+        "Type a slash and the full list appears. Every command does exactly what the matching button does.",
+        'Names with spaces go in quotes: /warn "sasha here" please stop. Stuck? Ask in plain words: /help how do I ban someone.',
+        "Threads are for side discussions. One that goes quiet for a day drops into the archive, but it is never deleted and stays searchable.",
       ],
     },
     {
-      h: "Replies and threads",
-      p: [
-        "Hover a message and hit reply to answer it directly. The quote above your message links back to the original.",
-        "Threads are for side discussions. A thread that goes quiet for a day drops into the archive, but it is never deleted and stays searchable.",
-      ],
-    },
-    {
+      icon: "fa-circle-info",
+      tone: "red",
       h: "Things worth knowing",
       p: [
-        "Developers can read every channel and thread, including edits and deleted messages. That is deliberate and it is said out loud here rather than hidden.",
+        "Developers can read every channel and thread, including edits and deleted messages. That is deliberate, and it is said out loud here rather than hidden.",
         "Hiding your flair hides you from users, never from the team. Your Desk name is always your staff name.",
-        "Nothing you say here counts as moderation work. The leaderboard only counts what you do to actual users.",
-        "Drag the header to move this panel, and pull the bottom right corner to resize it. It remembers where you left it.",
+        "Nothing you say here counts as moderation work. The leaderboard only counts what you do to actual users, and it only lists people who currently hold a key.",
       ],
     },
   ];
@@ -3326,26 +3482,64 @@
     const main = els.main;
     if (!main) return;
     main.textContent = "";
-    if (els.headSub) els.headSub.textContent = "how this works";
-    main.appendChild(viewBar("How the Desk works"));
+    if (els.headSub) els.headSub.textContent = "#guide";
+    main.appendChild(viewBar("How the Desk works", "#guide"));
 
     const body = el("div", "dk-msgs dk-help");
+
+    // One line at the top that says what to do with this page.
+    const hero = el("div", "dk-help-hero");
+    hero.appendChild(icon("fa-book-open"));
+    const ht = el("div", "dk-help-hero-t");
+    ht.appendChild(el("span", "dk-help-hero-h", "Everything the Desk does"));
+    const hp = el("span", "dk-help-hero-p");
+    inlineInto(
+      hp,
+      "Written for somebody who has just been handed a key. Send anybody here by writing #guide in a message.",
+    );
+    ht.appendChild(hp);
+    hero.appendChild(ht);
+    body.appendChild(hero);
+
     for (const s of HELP) {
-      body.appendChild(el("h3", "dk-help-h", s.h));
-      for (const p of s.p || []) body.appendChild(el("p", "dk-help-p", p));
+      const sec = el("section", "dk-help-s" + (s.tone ? " t-" + s.tone : ""));
+      const head = el("div", "dk-help-sh");
+      const ic = el("span", "dk-help-si");
+      ic.appendChild(icon(s.icon || "fa-circle-info"));
+      head.appendChild(ic);
+      head.appendChild(el("h3", "dk-help-h", s.h));
+      sec.appendChild(head);
+      // Through the message renderer, so the channels in the guide are real
+      // links and the formatting examples demonstrate themselves.
+      for (const p of s.p || []) {
+        const para = el("p", "dk-help-p");
+        inlineInto(para, p);
+        sec.appendChild(para);
+      }
       if (s.list) {
         const dl = el("div", "dk-help-list");
         for (const [k, v] of s.list) {
           const row = el("div", "dk-help-row");
-          row.appendChild(el("span", "dk-help-k", k));
-          row.appendChild(el("span", "dk-help-v", v));
+          const key = el("span", "dk-help-k");
+          inlineInto(key, k);
+          row.appendChild(key);
+          const val = el("span", "dk-help-v");
+          inlineInto(val, v);
+          row.appendChild(val);
           dl.appendChild(row);
         }
-        body.appendChild(dl);
+        sec.appendChild(dl);
       }
+      body.appendChild(sec);
     }
 
-    body.appendChild(el("h3", "dk-help-h", "Every command"));
+    const cmds = el("section", "dk-help-s t-green");
+    const ch = el("div", "dk-help-sh");
+    const ci = el("span", "dk-help-si");
+    ci.appendChild(icon("fa-slash"));
+    ch.appendChild(ci);
+    ch.appendChild(el("h3", "dk-help-h", "Every command"));
+    cmds.appendChild(ch);
     const dl = el("div", "dk-help-list");
     for (const c of COMMANDS) {
       const row = el("div", "dk-help-row");
@@ -3353,7 +3547,8 @@
       row.appendChild(el("span", "dk-help-v", c.what));
       dl.appendChild(row);
     }
-    body.appendChild(dl);
+    cmds.appendChild(dl);
+    body.appendChild(cmds);
     main.appendChild(body);
   }
 
@@ -3913,15 +4108,26 @@
 
   function showChannels(q, start, end, ta) {
     const score = (c) => (c.name.toLowerCase().startsWith(q) ? 0 : 1);
-    const hits = channels
-      .filter((c) => c.name.toLowerCase().includes(q))
+    // The guide is written the same way a channel is, so it is offered here
+    // the same way too.
+    const all = channels.concat(VIRTUAL_CHANNELS);
+    const hits = all
+      .filter(
+        (c) =>
+          c.name.toLowerCase().includes(q) ||
+          (c.alt || []).some((a) => a.includes(q)),
+      )
       .sort((a, b) => score(a) - score(b))
       .slice(0, 8);
     if (!hits.length) return hidePalette();
     const rows = hits.map((c) => {
       const node = el("button", "dk-pick");
       node.type = "button";
-      node.appendChild(el("span", "dk-pick-hash", "#"));
+      if (c.icon) {
+        const face = el("span", "dk-pick-hash");
+        face.appendChild(icon(c.icon));
+        node.appendChild(face);
+      } else node.appendChild(el("span", "dk-pick-hash", "#"));
       const mid = el("span", "dk-pick-mid");
       mid.appendChild(el("span", "dk-pick-n", c.name));
       if (c.desc) mid.appendChild(el("span", "dk-pick-s", c.desc));
@@ -4034,6 +4240,8 @@
   font-family:inherit;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.5);display:inline-flex;
   align-items:center;gap:8px;transition:background .2s,color .2s;}
 .dk-pill:hover{background: #ff9800;color: #000;}
+.dk-pill{touch-action:none;user-select:none;}
+.dk-pill.dragging{cursor:grabbing;opacity:.9;}
 .dk-pill-badge{background: #ff9800;color: #000;border-radius:9px;font-size:11px;line-height:1;
   padding:3px 7px;font-variant-numeric:tabular-nums;}
 /* Red means #help, and only #help: somebody in a room is waiting for staff.
@@ -4470,15 +4678,46 @@
 .dk-hit-h{display:flex;align-items:baseline;gap:8px;}
 .dk-hit-w{font-weight:bold;color: #ff9800;font-size:12px;}
 .dk-hit-t{font-size:12.5px;color: #c3c3c3;margin-top:3px;word-break:break-word;}
-.dk-help{padding:16px 18px;display:block;}
-.dk-help-h{font-size:13px;color: #ff9800;margin:20px 0 8px;letter-spacing:.3px;}
-.dk-help-h:first-child{margin-top:0;}
-.dk-help-p{font-size:13px;color: #c3c3c3;line-height:1.65;margin:0 0 9px;max-width:62ch;}
-.dk-help-list{display:flex;flex-direction:column;gap:1px;margin:0 0 10px;}
-.dk-help-row{display:flex;gap:12px;align-items:baseline;padding:6px 9px;border-radius:4px;background: #1b1b1b;}
-.dk-help-k{flex:none;width:15rem;max-width:45%;font-weight:bold;font-size:12px;color: #fff;}
+/* ── The guide ──
+   Sections as cards with their own icon, rather than one long wall of
+   headings. Each tone is one colour used in three places: the icon, its
+   backing, and the strip down the left. */
+.dk-help{padding:16px 18px 24px;display:flex;flex-direction:column;gap:12px;}
+.dk-help-hero{display:flex;gap:12px;align-items:flex-start;background:linear-gradient(180deg,#241d12,#1b1b1b);
+  border:1px solid #3a3126;border-left:3px solid #ff9800;padding:13px 15px;}
+.dk-help-hero > .fas{color: #ff9800;font-size:17px;margin-top:2px;flex:none;width:1em;text-align:center;}
+.dk-help-hero-t{display:flex;flex-direction:column;gap:3px;min-width:0;}
+.dk-help-hero-h{font-size:15px;font-weight:bold;color: #ff9800;}
+.dk-help-hero-p{font-size:12.5px;color: #c3c3c3;line-height:1.6;}
+.dk-help-s{background: #1b1b1b;border:1px solid #2a2a2a;border-left:3px solid #616161;padding:12px 15px 14px;}
+.dk-help-sh{display:flex;align-items:center;gap:9px;margin-bottom:8px;}
+.dk-help-si{flex:none;width:26px;height:26px;display:flex;align-items:center;justify-content:center;
+  background: #252525;color: #8d8d8d;font-size:12px;}
+.dk-help-si > i{width:1em;text-align:center;line-height:1;}
+.dk-help-s.t-orange{border-left-color: #ff9800;}
+.dk-help-s.t-orange .dk-help-si{color: #ff9800;background:rgba(255,152,0,.12);}
+.dk-help-s.t-blue{border-left-color: #5aa9ff;}
+.dk-help-s.t-blue .dk-help-si{color: #5aa9ff;background:rgba(90,169,255,.12);}
+.dk-help-s.t-purple{border-left-color: #c08bff;}
+.dk-help-s.t-purple .dk-help-si{color: #c08bff;background:rgba(192,139,255,.12);}
+.dk-help-s.t-green{border-left-color: #57d9a3;}
+.dk-help-s.t-green .dk-help-si{color: #57d9a3;background:rgba(87,217,163,.12);}
+.dk-help-s.t-amber{border-left-color: #ffb454;}
+.dk-help-s.t-amber .dk-help-si{color: #ffb454;background:rgba(255,180,84,.12);}
+.dk-help-s.t-red{border-left-color: #ff5468;}
+.dk-help-s.t-red .dk-help-si{color: #ff5468;background:rgba(255,84,104,.12);}
+.dk-help-h{font-size:14px;color: #fff;margin:0;letter-spacing:.2px;}
+.dk-help-p{font-size:13px;color: #c3c3c3;line-height:1.7;margin:0 0 9px;max-width:74ch;}
+.dk-help-p:last-child{margin-bottom:0;}
+.dk-help-list{display:flex;flex-direction:column;gap:2px;margin:2px 0 0;}
+.dk-help-row{display:flex;gap:12px;align-items:baseline;padding:7px 10px;background: #141414;}
+.dk-help-k{flex:none;width:11rem;max-width:42%;font-weight:bold;font-size:12.5px;color: #fff;}
 .dk-help-k.mono{font-family:"Courier New",monospace;color: #ff9800;font-size:11.5px;}
-.dk-help-v{font-size:12px;color: #8d8d8d;line-height:1.5;min-width:0;}
+.dk-help-v{font-size:12.5px;color: #8d8d8d;line-height:1.6;min-width:0;}
+@media (max-width:760px){
+  .dk-help-row{flex-direction:column;gap:3px;}
+  .dk-help-k{width:auto;max-width:100%;}
+}
 .dk-bot{position:relative;background: #1b1b1b;border:1px solid #2a2a2a;border-radius:6px;
   padding:10px 34px 10px 12px;margin:10px 0;display:flex;flex-direction:column;gap:6px;}
 .dk-bot-h{display:flex;align-items:center;gap:7px;}
