@@ -428,6 +428,8 @@ const socket = io({
 });
 // Restart countdown + reconnect overlay (returns the user to a fresh lobby).
 if (window.TalkomaticConnection) window.TalkomaticConnection.attach(socket);
+// The Desk (staff chat) rides the same socket; it stays dormant for non-staff.
+if (window.TalkoDesk) window.TalkoDesk.init(socket);
 
 // ============================================================================
 // 5. DOM REFERENCES & STATE

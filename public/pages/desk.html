@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#202020" />
+    <title>The Desk - Talkomatic</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/png" href="images/icons/favicon.png" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
+      integrity="sha512-Evv84Mr4kqVGRNSgIGL/F/aIDqQb7xQ2vcrdIwxfjThSH8CSR7PBEakCr51Ck+w+/U6swU2Im1vVX0SVk9ABhg=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    />
+    <style>
+      @font-face {
+        font-family: "talkoSS";
+        src: url("../fonts/Sansation_Light.ttf");
+      }
+      @font-face {
+        font-family: "talkoSS";
+        src: url("../fonts/Sansation_Bold.ttf");
+        font-weight: bold;
+      }
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #151515;
+        font-family: talkoSS, Arial, sans-serif;
+        color: #fff;
+      }
+      /* Shown until the server confirms a staff key; desk.js hides it. */
+      #deskGate {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        text-align: center;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      #deskGate i {
+        font-size: 28px;
+        color: #ff9800;
+      }
+      #deskGate p {
+        margin: 0;
+        color: #c3c3c3;
+        font-size: 14px;
+        max-width: 380px;
+        line-height: 1.6;
+      }
+      #deskGate a {
+        color: #ff9800;
+      }
+    </style>
+  </head>
+  <body data-desk-page="1">
+    <div id="deskGate">
+      <i class="fas fa-comments"></i>
+      <p>
+        The Desk is the staff room. If you hold a staff key, sign in from the
+        <a href="/index.html">lobby</a> first and open this page again.
+      </p>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="js/staff-ui.js?v=1.8.1"></script>
+    <script src="js/desk.js?v=1.0.0"></script>
+  </body>
+</html>

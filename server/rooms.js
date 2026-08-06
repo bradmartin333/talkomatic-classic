@@ -46,6 +46,7 @@ const blocklist = require("./blocklist");
 const ipban = require("./ipban");
 const gamesFloor = require("./games");
 const gamesSocket = require("./games/socket");
+const staffchat = require("./staffchat");
 const crypto = require("crypto");
 
 // Room text stashed while someone is sat at a mini game, put back when they
@@ -656,6 +657,12 @@ function logStaff(socket, action, target, room, details) {
     ip: socket?.clientIp || null,
     details: details || null,
   });
+  // If a Desk ping is live for this room, the action lands on its card as a
+  // receipt, so the card ends up a record of what was done. Never the other
+  // way round: nothing in the Desk writes to this log.
+  try {
+    staffchat.noteStaffAction(label, action, targetStr, roomTag);
+  } catch (_) { }
   // Watch mods (not devs - dev keys are owner-only) for action-rate abuse.
   if (socket?.isMod && !socket?.isDev)
     modwatch.record({
@@ -1995,6 +2002,15 @@ async function processPendingChatUpdates(userId, socket) {
     msg = sanitizeMessage(msg);
     state.userMessageBuffers.set(userId, msg);
 
+    // Staff typing @mod/@dev in their textbox raises a Desk ping. The check
+    // is edge-triggered inside staffchat, so a token sitting in the text does
+    // not re-fire on every keystroke. Non-staff text never reaches it.
+    if (socket.isDev || socket.isMod) {
+      try {
+        staffchat.onRoomText(socket, socket.roomId, msg);
+      } catch (_) { }
+    }
+
     if (socket.roomId) {
       state.roomLastChatActivity.set(socket.roomId, Date.now());
     }
@@ -2075,6 +2091,7 @@ async function leaveRoom(socket, userId) {
       updateRoom(roomId);
       sendDevRoomContext(roomId);
       updateRoomSoloTracking(roomId);
+      if (socket.isDev || socket.isMod) staffchat.presenceDirty();
 
       // Drops their queue slots and forfeits any live match. Runs after the
       // successor check above, so the lobby->room handoff does not trip it.
@@ -2282,6 +2299,7 @@ function joinRoom(socket, roomId, userId) {
 
     setupAFKTimers(socket, userId);
     updateRoomSoloTracking(roomId);
+    if (isStaff) staffchat.presenceDirty();
 
     // Session save must complete before emitting join success, so the
     // room page can rejoin via the session without an access code in the URL
@@ -2394,6 +2412,14 @@ let getBuildId = null;
 
 function registerSocketHandlers(opts) {
   if (opts && typeof opts.buildId === "function") getBuildId = opts.buildId;
+  // The Desk reads room and roster state but never owns any of it, so it gets
+  // read accessors and the badge formatter, nothing that mutates.
+  staffchat.init({
+    io,
+    state,
+    formatUserForSocket,
+    findSocketsByUserId,
+  });
   // The game floor resolves players through the room roster, so a spectator or
   // a stale socket can never hold a seat.
   gamesFloor.init({
@@ -2859,6 +2885,9 @@ function registerSocketHandlers(opts) {
 
     // ── Mini games: queue, tables, moves ────────────────────────────────
     gamesSocket.register(socket, safe);
+
+    // ── The Desk: staff chat, pings, presence, inspector ────────────────
+    staffchat.register(socket, safe);
 
     // ── Talkoboard: stroke lifecycle + state sync ───────────────────────
 
@@ -4189,6 +4218,7 @@ function registerSocketHandlers(opts) {
           }
           updateLobby();
         }
+        staffchat.presenceDirty();
         socket.emit("dev hide status", { isHidden: desired });
       }),
     );
@@ -6101,6 +6131,7 @@ function registerSocketHandlers(opts) {
         });
         socket.emit("staff mod history", {
           ...h,
+          canReview: !!socket.isDev,
           entries: socket.isDev
             ? h.entries
             : h.entries.map((e) => {
@@ -6109,6 +6140,47 @@ function registerSocketHandlers(opts) {
               return c;
             }),
         });
+      }),
+    );
+
+    // A developer who has read the log and is satisfied puts a flag to sleep.
+    // Dev-only: a moderator clearing the flags on their own record would make
+    // the whole panel pointless.
+    socket.on(
+      "staff review flag",
+      safe(async (data) => {
+        if (!requireDev(socket)) return;
+        const label = typeof data?.label === "string" ? data.label : "";
+        const key = typeof data?.key === "string" ? data.key : "";
+        const role = data?.role === "dev" ? "dev" : "mod";
+        if (!label || !key) return;
+        if (data?.clear) {
+          audit.clearFlagReview({ role, label, key });
+          logStaff(socket, "unreview flag", null, null, key + " on " + label);
+        } else {
+          audit.reviewFlag({
+            role,
+            label,
+            key,
+            by: socket.staffLabel || "dev",
+            note: data?.note,
+          });
+          logStaff(
+            socket,
+            "review flag",
+            null,
+            null,
+            key + " on " + label + (data?.note ? ": " + data.note : ""),
+          );
+        }
+        // Hand the record straight back so the panel updates in place.
+        const h = audit.historyFor(label, role, {
+          offset: data?.offset,
+          limit: data?.limit,
+          group: typeof data?.group === "string" ? data.group : null,
+          targetUid: typeof data?.targetUid === "string" ? data.targetUid : null,
+        });
+        socket.emit("staff mod history", { ...h, canReview: true });
       }),
     );
 
@@ -7299,6 +7371,7 @@ function registerSocketHandlers(opts) {
           state.users.delete(userId);
         }
         releaseSlot(); // no-op when the dedicated listener already ran
+        if (socket.isDev || socket.isMod) staffchat.presenceDirty();
         console.log(
           `Disconnected: "${username}" from "${location}" (${reason}) IP:${socket.clientIp}${socket.isBot ? " [BOT]" : ""}${socket.isDev ? " [DEV]" : ""}`,
         );

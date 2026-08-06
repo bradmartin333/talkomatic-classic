@@ -98,6 +98,9 @@ function gracefulFlush() {
   try {
     rooms.saveBoardSync(); // persist Talkoboard strokes across the restart
   } catch (e) {}
+  try {
+    require("./server/staffchat").flushSync(); // Desk chat survives restarts
+  } catch (e) {}
 }
 let shuttingDown = false;
 function beginShutdown(signal) {
@@ -642,6 +645,7 @@ const PAGES = [
   "app-directory",
   "browser",
   "contributors",
+  "desk",
   "documentation",
   "index",
   "mod",

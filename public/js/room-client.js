@@ -23,6 +23,8 @@ window.socket = socket;
 // reconnect handler below rejoins the room) instead of bouncing to the lobby.
 if (window.TalkomaticConnection)
   window.TalkomaticConnection.attach(socket, { rejoinInPlace: true });
+// The Desk (staff chat) rides the same socket; it stays dormant for non-staff.
+if (window.TalkoDesk) window.TalkoDesk.init(socket);
 
 let currentUsername = "";
 let currentLocation = "";
@@ -2826,6 +2828,21 @@ function createUserRow(user, container) {
       } else hideAutocomplete();
       const text = getPlainText(div);
       if (/[;:]/.test(text)) replaceEmotes(div);
+      // Staff typing @mod/@dev raises a Desk ping server-side. A normal user
+      // copying what they saw gets pointed at the tool that actually reaches
+      // staff, instead of being silently ignored.
+      if (
+        !currentUserIsDev &&
+        !currentUserIsMod &&
+        /(^|\s)@(mod|dev)s?\b/i.test(text) &&
+        Date.now() - (window._tkPingHintAt || 0) > 5 * 60 * 1000
+      ) {
+        window._tkPingHintAt = Date.now();
+        if (window.toastr)
+          toastr.info(
+            "Typing @mod does not reach staff. To report someone, use the Report option on their name.",
+          );
+      }
       updateSentMessage();
     });
     div.addEventListener("keydown", (e) => {
@@ -4410,6 +4427,12 @@ function openStaffPanel() {
   const isFullMod =
     currentUserIsDev || (currentUserIsMod && currentUserModLevel >= 2);
   const roomItems = [
+    {
+      icon: '<i class="fas fa-comments"></i>',
+      label: "Open the Desk",
+      desc: "Staff chat: pings, presence, and the room map",
+      onClick: () => window.TalkoDesk && window.TalkoDesk.open(),
+    },
     {
       icon: '<i class="fas fa-eraser"></i>',
       label: "Clear Talkoboard",

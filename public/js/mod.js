@@ -22,6 +22,9 @@
     },
   });
 
+  // The Desk (staff chat) rides the dashboard socket like everywhere else.
+  if (window.TalkoDesk) window.TalkoDesk.init(socket);
+
   const $ = (id) => document.getElementById(id);
   const loadingEl = $("loading");
   const deniedEl = $("denied");
@@ -1812,25 +1815,196 @@
 
   // ── Worth a look ────────────────────────────────────────────────────────
   // Shapes in the log that a person should read before trusting the numbers
-  // above them. Deliberately worded as prompts, not accusations: every one of
-  // these has an innocent explanation, and the point is that somebody checks.
+  // above them. Every one of these has an innocent explanation, says so, and
+  // can show the exact rows it was built from - a flag you cannot open is an
+  // accusation, and people learn to ignore those.
+  const FLAG_LEVEL = {
+    concern: { label: "Concern", icon: "fa-triangle-exclamation" },
+    look: { label: "Look", icon: "fa-circle-exclamation" },
+    notice: { label: "Notice", icon: "fa-circle-info" },
+    reviewed: { label: "Reviewed", icon: "fa-circle-check" },
+  };
+
+  function evidenceTable(f) {
+    const wrap = divc("mh-ev");
+    (f.evidence || []).forEach((e) => {
+      const row = divc("mh-evrow");
+      const when = span("mh-evwhen", relTime(e.ts));
+      when.title = fmtTime(e.ts);
+      row.appendChild(when);
+      const mid = divc("mh-evmain");
+      const top = divc("mh-evtop");
+      top.appendChild(span("mh-evact", e.action || "?"));
+      if (e.target) {
+        top.appendChild(icon("fa-arrow-right", "mh-arrow"));
+        top.appendChild(uref(e.target, e.targetId));
+      }
+      mid.appendChild(top);
+      if (e.room) mid.appendChild(span("mh-evroom", e.room));
+      if (e.note) mid.appendChild(span("mh-evnote", e.note));
+      row.appendChild(mid);
+      // The gap between actions IS the evidence, so it gets its own column.
+      if (e.gap) row.appendChild(span("mh-evgap", e.gap));
+      wrap.appendChild(row);
+    });
+    if (!wrap.childNodes.length)
+      wrap.appendChild(span("mh-fbody", "No rows recorded for this one."));
+    return wrap;
+  }
+
+  function flagRow(f, h) {
+    const row = divc("mh-flag " + (f.level || "notice"));
+    const meta = FLAG_LEVEL[f.level] || FLAG_LEVEL.notice;
+
+    const head = divc("mh-fhrow");
+    head.appendChild(span("mh-flevel " + f.level, meta.label));
+    head.appendChild(span("mh-fname", f.title));
+    row.appendChild(head);
+
+    row.appendChild(span("mh-fbody", f.detail));
+    if (f.innocent)
+      row.appendChild(span("mh-finnocent", "Innocent if: " + f.innocent));
+
+    if (f.reviewed) {
+      const r = span(
+        "mh-freviewed",
+        (f.recurredSince ? "Happened again since " : "Reviewed by ") +
+          (f.recurredSince
+            ? fmtTime(f.recurredSince) + ", after " + f.reviewed.by + " cleared it"
+            : f.reviewed.by + " on " + fmtTime(f.reviewed.at)) +
+          (f.reviewed.note ? '  "' + f.reviewed.note + '"' : ""),
+      );
+      row.appendChild(r);
+    }
+
+    const acts = divc("mh-factions");
+    const n = (f.evidence || []).length;
+    if (n) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "mh-fbtn";
+      btn.appendChild(icon("fa-list"));
+      btn.appendChild(document.createTextNode(" Show me (" + n + ")"));
+      let table = null;
+      btn.addEventListener("click", () => {
+        if (table) {
+          table.remove();
+          table = null;
+          btn.lastChild.textContent = " Show me (" + n + ")";
+          return;
+        }
+        table = evidenceTable(f);
+        row.appendChild(table);
+        btn.lastChild.textContent = " Hide";
+      });
+      acts.appendChild(btn);
+    }
+
+    // Putting a flag to sleep is a developer decision: a moderator clearing
+    // the flags on their own record would make the whole panel pointless.
+    if (h.canReview) {
+      const rb = document.createElement("button");
+      rb.type = "button";
+      rb.className = "mh-fbtn";
+      const asleep = f.level === "reviewed";
+      rb.appendChild(icon(asleep ? "fa-bell" : "fa-circle-check"));
+      rb.appendChild(
+        document.createTextNode(asleep ? " Wake this up" : " Mark reviewed"),
+      );
+      rb.addEventListener("click", async () => {
+        const base = {
+          label: h.label,
+          role: h.role || "mod",
+          key: f.key,
+          offset: h.offset,
+          limit: h.limit,
+          group: h.group,
+          targetUid: h.targetUid,
+        };
+        if (asleep) return socket.emit("staff review flag", { ...base, clear: true });
+        const res = await StaffUI.prompt({
+          title: "Mark reviewed",
+          icon: '<i class="fas fa-circle-check"></i>',
+          message:
+            "This stops the flag shouting on " +
+            (h.label || "this record") +
+            ". It wakes back up on its own if the same thing happens again after today.",
+          fields: [
+            {
+              name: "note",
+              label: "What did you find?",
+              type: "textarea",
+              placeholder: "Checked the log - they were bans firing together.",
+              maxLength: 300,
+            },
+          ],
+        });
+        if (res) socket.emit("staff review flag", { ...base, note: res.note });
+      });
+      acts.appendChild(rb);
+    }
+    if (acts.childNodes.length) row.appendChild(acts);
+    return row;
+  }
+
   function recordFlags(h) {
-    const flags = h.flags || [];
-    if (!flags.length) return null;
-    const worst = flags.some((f) => f.level === "watch") ? "watch" : "note";
+    const all = h.flags || [];
+    const live = all.filter((f) => f.level !== "reviewed");
+    const asleep = all.filter((f) => f.level === "reviewed");
+
+    // Saying nothing at all leaves you unsure whether the check even ran.
+    if (!all.length) {
+      if (!h.total) return null;
+      const ok = divc("mh-flags clear");
+      const head = divc("mh-fhead");
+      head.appendChild(icon("fa-circle-check"));
+      head.appendChild(span("mh-ftitle", "Nothing odd about the shape of this record"));
+      ok.appendChild(head);
+      ok.appendChild(
+        span(
+          "mh-fbody",
+          "No padding, no bursts, no one person taking all the attention. This is a check on how the actions are spread, not on whether each one was right.",
+        ),
+      );
+      return ok;
+    }
+
+    const worst = live.length ? live[0].level : "reviewed";
     const box = divc("mh-flags " + worst);
     const head = divc("mh-fhead");
+    head.appendChild(icon((FLAG_LEVEL[worst] || FLAG_LEVEL.notice).icon));
     head.appendChild(
-      icon(worst === "watch" ? "fa-triangle-exclamation" : "fa-circle-exclamation"),
+      span(
+        "mh-ftitle",
+        live.length
+          ? "Worth a look before trusting the total"
+          : "All quiet - everything here has been reviewed",
+      ),
     );
-    head.appendChild(span("mh-ftitle", "Worth a look before trusting the total"));
     box.appendChild(head);
-    flags.forEach((f) => {
-      const row = divc("mh-flag " + (f.level || "note"));
-      row.appendChild(span("mh-fname", f.title));
-      row.appendChild(span("mh-fbody", f.detail));
-      box.appendChild(row);
-    });
+
+    // Loudest three up front. Anything quieter is real but should not be the
+    // first thing somebody reads, or the top signal gets buried again.
+    const shown = live.slice(0, 3);
+    const rest = live.slice(3);
+    shown.forEach((f) => box.appendChild(flagRow(f, h)));
+
+    const more = rest.concat(asleep);
+    if (more.length) {
+      const det = document.createElement("details");
+      det.className = "mh-fmore";
+      const sum = document.createElement("summary");
+      const quiet = rest.length
+        ? rest.length + (rest.length === 1 ? " quieter signal" : " quieter signals")
+        : "";
+      const slept = asleep.length
+        ? asleep.length + " already reviewed"
+        : "";
+      sum.textContent = [quiet, slept].filter(Boolean).join(", ");
+      det.appendChild(sum);
+      more.forEach((f) => det.appendChild(flagRow(f, h)));
+      box.appendChild(det);
+    }
     return box;
   }
 
@@ -1839,7 +2013,7 @@
     if (modLevel !== 1) return null;
     const on = h.onUsers || 0;
     const at = h.promotionAt || PROMOTION_AT;
-    const clean = !(h.flags || []).some((f) => f.level === "watch");
+    const clean = !(h.flags || []).some((f) => f.level === "concern");
     if (on >= at && clean) {
       const p = divc("mh-promote");
       p.appendChild(icon("fa-arrow-up"));

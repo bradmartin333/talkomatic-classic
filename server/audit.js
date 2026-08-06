@@ -202,6 +202,15 @@ function recordNotification({
     reports: reports || null,
   });
   notifyStaffToast(text || "New staff notification", lvl);
+  // Every queue event flows through here, so this one hook feeds the Desk's
+  // #queues channel: reports, appeals, applications, suggestions, abuse
+  // flags. The Desk applies the same audience rules (minLevel, junior mods
+  // see reports only) when it fans the card out.
+  try {
+    require("./staffchat").systemQueues(kind || "notice", text || "", {
+      minLevel: lvl,
+    });
+  } catch (_) {}
   return entry;
 }
 
@@ -409,6 +418,7 @@ const ACTION_GROUPS = [
       "set mod level for user", "revoke mod from user",
       "megaphone", "set ticker", "maintenance on", "maintenance off",
       "set flags", "nuke all rooms", "clear blacklist",
+      "review flag", "unreview flag",
     ],
   },
   {
@@ -464,9 +474,59 @@ const TOGGLE_PAIRS = new Map([
   ["maintenance off", "maintenance on"],
 ]);
 
-const TOGGLE_WINDOW_MS = 2 * 60 * 1000; // undone within two minutes
-const REPEAT_WINDOW_MS = 10 * 60 * 1000; // same thing, same person, again
+// How much a flip-and-flip-back counts for, by how fast it was undone. A flat
+// window scored "locked the room while I sort this out" the same as farming;
+// the gap IS the evidence, so it sets the weight.
+const TOGGLE_WEIGHTS = [
+  [5 * 1000, 1],
+  [30 * 1000, 0.6],
+  [2 * 60 * 1000, 0.3],
+  [5 * 60 * 1000, 0.1],
+];
+const TOGGLE_WINDOW_MS = 5 * 60 * 1000;
+
+function toggleWeight(gap) {
+  for (const [limit, w] of TOGGLE_WEIGHTS) if (gap <= limit) return w;
+  return 0;
+}
+
+// Actions that arrive together as ONE decision. Banning somebody fires kick,
+// ban and ip block from a single button; counting that as three actions three
+// seconds apart is what made a considered ban read as a toolbar being mashed.
+const COMBOS = [
+  ["kick", "kick+ban", "ban", "ban ip", "ip block", "wipe buffer"],
+  ["warn", "wipe buffer"],
+  ["rename", "reset location", "turn pfp off", "allow pfp"],
+];
+const COMBO_WINDOW_MS = 20 * 1000;
+
+function sameDecision(a, b, gap) {
+  if (gap > COMBO_WINDOW_MS) return false;
+  if (a === b) return false; // the same action twice is a repeat, not a combo
+  return COMBOS.some((c) => c.includes(a) && c.includes(b));
+}
+
+// Being kicked removes you from the room, and staff can only kick somebody who
+// is currently in one. So a second kick on the same person is not a moderator
+// leaning on them - it is proof that person came back. Repetition of these is
+// never counted against anybody; it is reported separately, as what it is.
+const REQUIRES_REJOIN = new Set(["kick", "kick+ban"]);
+
+// A run of actions on one person with less than this between them is one
+// sitting, however many log lines it produced.
+const INCIDENT_GAP_MS = 10 * 60 * 1000;
 const RAPID_GAP_MS = 5 * 1000; // back-to-back, faster than reading a room
+
+// Punishments that are supposed to come after something milder.
+const HEAVY = new Set(["ban", "ban ip", "ip block", "kick+ban"]);
+const MILD = new Set(["warn", "kick", "wipe buffer"]);
+const UNDO = new Map([
+  ["ban", "lift ban"],
+  ["ban ip", "unblock ip"],
+  ["ip block", "unblock ip"],
+  ["kick+ban", "lift ban"],
+]);
+const UNDO_ACTIONS = new Set(UNDO.values());
 
 // Pull the display name and id back out of the "user:Name(id)" / "room:Name(id)"
 // strings logStaff writes. Names can contain brackets, so anchor on the LAST
@@ -524,14 +584,11 @@ function historyFor(label, role, opts = {}) {
   let first = null;
   let last = null;
 
-  // Abuse-shape counters, all built in the same pass.
-  const history = []; // { ts, base, group, targetId, roomId, used }
-  let rapid = 0;
-  let repeats = 0;
-  let togglePairs = 0;
-  let kicks = 0;
-  let warns = 0;
-  let prevTs = null;
+  // The actions themselves, kept so the shape analysis below can show its
+  // working. Capped so a moderator with a hundred thousand entries cannot make
+  // this pass expensive; the newest are the ones worth reading anyway.
+  const acts = [];
+  const ACTS_CAP = 6000;
 
   for (const e of entries) {
     if (e.type !== "action") continue;
@@ -551,8 +608,6 @@ function historyFor(label, role, opts = {}) {
       onUsers++;
       if (CORE_USER_ACTIONS.has(base)) core++;
     }
-    if (base === "kick" || base === "kick+ban") kicks++;
-    if (base === "warn") warns++;
 
     const tgt = parseUserTag(e.target);
     const room = parseRoomTag(e.room);
@@ -571,50 +626,17 @@ function historyFor(label, role, opts = {}) {
       t.actions.set(base, (t.actions.get(base) || 0) + 1);
     }
 
-    // Back-to-back actions, faster than anybody could have read the room.
-    if (group !== "passive" && prevTs != null && ts - prevTs < RAPID_GAP_MS)
-      rapid++;
-    if (group !== "passive") prevTs = ts;
-
-    const rec = {
+    acts.push({
       ts,
       base,
       group,
+      action: e.action,
       targetId: tgt ? tgt.id || tgt.name : null,
+      targetName: tgt ? tgt.name : null,
       roomId: room ? room.id || room.name : null,
-      used: false,
-    };
-
-    // The same thing, to the same person, again within ten minutes.
-    if (group === "users" && rec.targetId) {
-      for (let i = history.length - 1; i >= 0; i--) {
-        const p = history[i];
-        if (ts - p.ts > REPEAT_WINDOW_MS) break;
-        if (p.base === base && p.targetId === rec.targetId) {
-          repeats++;
-          break;
-        }
-      }
-    }
-
-    // A switch flipped and flipped straight back on the same room or person.
-    const opposite = TOGGLE_PAIRS.get(base);
-    if (opposite) {
-      const scope = rec.roomId || rec.targetId;
-      for (let i = history.length - 1; i >= 0; i--) {
-        const p = history[i];
-        if (ts - p.ts > TOGGLE_WINDOW_MS) break;
-        if (p.used || p.base !== opposite) continue;
-        if ((p.roomId || p.targetId) !== scope) continue;
-        p.used = true;
-        rec.used = true;
-        togglePairs++;
-        break;
-      }
-    }
-
-    history.push(rec);
-    if (history.length > 4000) history.shift();
+      roomName: room ? room.name : null,
+    });
+    if (acts.length > ACTS_CAP) acts.shift();
 
     if (ts >= cutoff) recent.push({ ...e, base, group });
   }
@@ -680,10 +702,7 @@ function historyFor(label, role, opts = {}) {
     groups,
     targets: topTargets.slice(0, 10),
     distinctTargets: targets.size,
-    flags: buildFlags({
-      total, useful, onUsers, kicks, warns, rapid, repeats, togglePairs,
-      targets: topTargets, groupTotals,
-    }),
+    flags: buildFlags(acts, { role: role || "mod", label: want }),
     promotionAt: PROMOTION_AT,
     counts: [...counts.entries()]
       .map(([action, n]) => ({ action, n }))
@@ -699,72 +718,568 @@ function historyFor(label, role, opts = {}) {
   };
 }
 
-// Turns the shape counters into plain sentences. These are prompts to go and
-// read the log, not verdicts: every one of them has an innocent explanation,
-// and the point is that somebody looks rather than that the number is trusted.
-function buildFlags(s) {
+// ── Reading the shape of a record ─────────────────────────────────────────
+//
+// Every signal below scores 0-100 and carries the entries that produced it, so
+// the panel can show its working instead of asserting a number. They are
+// prompts to go and read the log, never verdicts: each one states what would
+// make it innocent, because the reader needs to know what they are checking.
+
+// Collapse actions that arrived together into single decisions. Everything
+// downstream counts decisions, not log lines.
+function toDecisions(acts) {
   const out = [];
-  const add = (key, level, title, detail) =>
-    out.push({ key, level, title, detail });
+  for (const a of acts) {
+    const prev = out[out.length - 1];
+    if (
+      prev &&
+      prev.targetId &&
+      prev.targetId === a.targetId &&
+      sameDecision(prev.base, a.base, a.ts - prev.lastTs)
+    ) {
+      prev.parts.push(a.base);
+      prev.lastTs = a.ts;
+      continue;
+    }
+    out.push({
+      ts: a.ts,
+      lastTs: a.ts,
+      base: a.base,
+      group: a.group,
+      action: a.action,
+      targetId: a.targetId,
+      targetName: a.targetName,
+      roomId: a.roomId,
+      roomName: a.roomName,
+      parts: [a.base],
+    });
+  }
+  return out;
+}
+
+// Runs of decisions against one person with short gaps: one sitting, however
+// many entries it produced.
+function toIncidents(decisions) {
+  const open = new Map(); // targetId -> incident
+  const done = [];
+  for (const d of decisions) {
+    if (d.group !== "users" || !d.targetId) continue;
+    const cur = open.get(d.targetId);
+    if (cur && d.ts - cur.endTs <= INCIDENT_GAP_MS) {
+      cur.steps.push(d);
+      cur.endTs = d.lastTs;
+      cur.rooms.add(d.roomId || "?");
+      continue;
+    }
+    if (cur) done.push(cur);
+    open.set(d.targetId, {
+      targetId: d.targetId,
+      name: d.targetName,
+      startTs: d.ts,
+      endTs: d.lastTs,
+      steps: [d],
+      rooms: new Set([d.roomId || "?"]),
+    });
+  }
+  for (const inc of open.values()) done.push(inc);
+  return done;
+}
+
+const relGap = (ms) => {
+  if (ms < 1000) return "same second";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + "s";
+  const m = Math.round(s / 60);
+  if (m < 60) return m + "m";
+  return Math.round(m / 60) + "h";
+};
+
+// One evidence row, as the panel renders it.
+const ev = (d, gap, note) => ({
+  ts: d.ts,
+  action: d.parts && d.parts.length > 1 ? d.parts.join(" + ") : d.action || d.base,
+  target: d.targetName || null,
+  targetId: d.targetId || null,
+  room: d.roomName || null,
+  gap: gap == null ? null : relGap(gap),
+  note: note || null,
+});
+
+const levelFor = (score) =>
+  score >= 70 ? "concern" : score >= 40 ? "look" : "notice";
+
+// ── Reviewed flags ────────────────────────────────────────────────────────
+// A developer who has read the log and is satisfied can put a flag to sleep.
+// Without this, a known-good moderator trips the same false alarm forever and
+// the whole panel learns to be ignored - which is worse than no panel.
+//
+// Sleep is not permanent: the review remembers when it was made, and anything
+// the moderator does AFTER that date wakes the flag back up, louder.
+const FLAG_REVIEWS_PATH = path.join(DATA_DIR, "flag-reviews.json");
+let flagReviews = {}; // "role:label:key" -> { by, at, note }
+
+const reviewKey = (role, label, key) =>
+  (role || "mod") + ":" + (label || "?") + ":" + key;
+
+function loadFlagReviews() {
+  try {
+    flagReviews = JSON.parse(fs.readFileSync(FLAG_REVIEWS_PATH, "utf8")) || {};
+  } catch (err) {
+    if (err.code !== "ENOENT") console.error("flag reviews load failed:", err);
+    flagReviews = {};
+  }
+}
+
+function saveFlagReviews() {
+  enqueueWrite(async () => {
+    const tmp = FLAG_REVIEWS_PATH + ".tmp";
+    await fsp.writeFile(tmp, JSON.stringify(flagReviews, null, 2), "utf8");
+    await fsp.rename(tmp, FLAG_REVIEWS_PATH);
+  });
+}
+
+function reviewFlag({ role, label, key, by, note }) {
+  if (!label || !key) return null;
+  const rec = { by: by || "dev", at: Date.now(), note: String(note || "").slice(0, 300) };
+  flagReviews[reviewKey(role, label, key)] = rec;
+  saveFlagReviews();
+  return rec;
+}
+
+function clearFlagReview({ role, label, key }) {
+  if (!label || !key) return false;
+  const k = reviewKey(role, label, key);
+  if (!flagReviews[k]) return false;
+  delete flagReviews[k];
+  saveFlagReviews();
+  return true;
+}
+
+function applyReview(signal, who) {
+  const rec = flagReviews[reviewKey(who.role, who.label, signal.key)];
+  if (!rec) return signal;
+  const newest = (signal.evidence || []).reduce(
+    (m, e) => Math.max(m, e.ts || 0),
+    0,
+  );
+  // Nothing new since it was looked at: put it to sleep.
+  if (newest <= rec.at)
+    return {
+      ...signal,
+      level: "reviewed",
+      reviewed: rec,
+      counts: false,
+    };
+  // It happened again afterwards. That is a stronger signal than the first time.
+  return {
+    ...signal,
+    score: Math.min(100, signal.score + 15),
+    level: levelFor(Math.min(100, signal.score + 15)),
+    recurredSince: rec.at,
+    reviewed: rec,
+    counts: true,
+  };
+}
+
+function buildFlags(acts, who) {
+  const signals = [];
+  const decisions = toDecisions(acts);
+  const incidents = toIncidents(decisions);
+  const work = decisions.filter((d) => d.group !== "passive");
+  const userWork = decisions.filter((d) => d.group === "users");
+  const roomWork = decisions.filter((d) => d.group === "rooms");
   const pct = (n, d) => (d > 0 ? Math.round((n / d) * 100) : 0);
 
-  const roomish =
-    (s.groupTotals.get("rooms") || 0) + (s.groupTotals.get("users") || 0);
-  if (s.togglePairs >= 3) {
-    const share = pct(s.togglePairs * 2, roomish);
-    add(
-      "toggles",
-      s.togglePairs >= 10 ? "watch" : "note",
-      s.togglePairs + " switches flipped and flipped straight back",
-      "Locking a room and unlocking it seconds later is two entries in the log and no moderation. " +
-        (share >= 10 ? "That is about " + share + "% of their room and user actions. " : "") +
-        "Worth a look if their total is what is being judged.",
-    );
+  const add = (s) => {
+    const score = Math.max(0, Math.min(100, Math.round(s.score)));
+    if (score >= 15) signals.push({ ...s, score, level: levelFor(score) });
+  };
+
+  // ── Switches flipped and flipped straight back ──
+  {
+    const used = new Set();
+    const pairs = [];
+    for (let i = 0; i < acts.length; i++) {
+      const a = acts[i];
+      const opposite = TOGGLE_PAIRS.get(a.base);
+      if (!opposite) continue;
+      const scope = a.roomId || a.targetId;
+      for (let j = i - 1; j >= 0; j--) {
+        const p = acts[j];
+        if (a.ts - p.ts > TOGGLE_WINDOW_MS) break;
+        if (used.has(j) || p.base !== opposite) continue;
+        if ((p.roomId || p.targetId) !== scope) continue;
+        const gap = a.ts - p.ts;
+        const w = toggleWeight(gap);
+        if (w > 0) {
+          used.add(j);
+          used.add(i);
+          pairs.push({ a, p, gap, w });
+        }
+        break;
+      }
+    }
+    const weighted = pairs.reduce((s, x) => s + x.w, 0);
+    if (weighted >= 2) {
+      const instant = pairs.filter((x) => x.gap <= 5000).length;
+      const share = pct(pairs.length * 2, roomWork.length + userWork.length);
+      add({
+        key: "toggles",
+        // Rate-led, so a busy moderator is not punished for volume: what
+        // matters is how much of their room work is flipping and unflipping.
+        score: share * 2 + Math.min(25, weighted),
+        title:
+          pairs.length +
+          " switches flipped and flipped straight back" +
+          (instant ? ", " + instant + " within five seconds" : ""),
+        detail:
+          "Locking a room and unlocking it seconds later is two entries in the log and no moderation at all. " +
+          (share >= 8 ? "That is about " + share + "% of their room and user work. " : ""),
+        innocent:
+          "Locking a room while you deal with something and unlocking it after is normal. The ones undone within a few seconds are the ones to read.",
+        evidence: pairs
+          .sort((x, y) => x.gap - y.gap)
+          .slice(0, 12)
+          .map((x) =>
+            ev(x.a, x.gap, x.p.base + " then " + x.a.base + " in " + relGap(x.gap)),
+          ),
+      });
+    }
   }
 
-  if (s.repeats >= 10)
-    add(
-      "repeats",
-      s.repeats >= 25 ? "watch" : "note",
-      s.repeats + " repeats of the same action on the same person",
-      "The same power used on one person again inside ten minutes. Sometimes that is somebody who came straight back; a lot of it is somebody leaning on one user.",
+  // ── Somebody leaned on ──
+  // Kicks are excluded on purpose: staff can only kick a person who is in the
+  // room, and a kick removes them, so a second kick proves they came back. That
+  // is reported below as its own, non-accusing observation.
+  {
+    // Check every part of a decision, not just the one it was filed under: a
+    // "wipe buffer + kick" carries a kick even though its base is the wipe.
+    const hasKick = (d) => d.parts.some((p) => REQUIRES_REJOIN.has(p));
+    const hounded = incidents.filter(
+      (inc) => inc.steps.filter((d) => !hasKick(d)).length >= 3,
     );
+    if (hounded.length) {
+      const worst = hounded
+        .slice()
+        .sort((a, b) => b.steps.length - a.steps.length)[0];
+      const rate = pct(hounded.length, Math.max(1, incidents.length));
+      add({
+        key: "hounding",
+        score: rate * 1.2 + Math.min(30, hounded.length * 2),
+        title:
+          hounded.length +
+          (hounded.length === 1 ? " sitting where" : " sittings where") +
+          " one person was worked over repeatedly",
+        detail:
+          "Worst was " +
+          worst.steps.length +
+          " actions on " +
+          worst.name +
+          " across " +
+          relGap(Math.max(1000, worst.endTs - worst.startTs)) +
+          ". Kicks are not counted here, because being kicked twice means they came back.",
+        innocent:
+          "Somebody who will not stop can need several passes. Check whether they were warned, and whether it escalated to a ban rather than going round again.",
+        evidence: worst.steps
+          .slice(0, 12)
+          .map((d, i) =>
+            ev(d, i === 0 ? null : d.ts - worst.steps[i - 1].lastTs),
+          ),
+      });
+    }
+  }
 
-  if (s.rapid >= 10 && pct(s.rapid, s.useful) >= 25)
-    add(
-      "rapid",
-      pct(s.rapid, s.useful) >= 40 ? "watch" : "note",
-      pct(s.rapid, s.useful) + "% of their actions came within 5 seconds of the last one",
-      "Bursts this tight usually mean a toolbar being clicked through rather than decisions being made one at a time.",
-    );
+  // ── They kept coming back ──
+  // Not a fault. It is the single most useful thing the old "repeats" number
+  // was accidentally measuring, and it reads as training, not suspicion.
+  {
+    const returns = incidents
+      .map((inc) => ({
+        inc,
+        kicks: inc.steps.filter((d) =>
+          d.parts.some((p) => REQUIRES_REJOIN.has(p)),
+        ).length,
+      }))
+      .filter((x) => x.kicks >= 3)
+      .sort((a, b) => b.kicks - a.kicks);
+    if (returns.length) {
+      const banned = returns.filter((x) =>
+        x.inc.steps.some((d) => HEAVY.has(d.base)),
+      ).length;
+      const unresolved = returns.length - banned;
+      if (unresolved > 0)
+        add({
+          key: "returning",
+          score: Math.min(38, 15 + unresolved * 4),
+          title:
+            unresolved +
+            (unresolved === 1 ? " person kept" : " people kept") +
+            " coming back after being kicked",
+          detail:
+            "Worst was " +
+            returns[0].inc.name +
+            ", kicked " +
+            returns[0].kicks +
+            " times in one sitting. Kicking the same person over and over without escalating usually means the tool being used is the wrong one.",
+          innocent:
+            "This is not a mark against them - it is a prompt. A junior who cannot ban may have had no other option, in which case the gap is in their level, not their judgement.",
+          evidence: returns
+            .slice(0, 8)
+            .map((x) =>
+              ev(
+                x.inc.steps[x.inc.steps.length - 1],
+                x.inc.endTs - x.inc.startTs,
+                x.kicks + " kicks on " + x.inc.name + ", no ban",
+              ),
+            ),
+        });
+    }
+  }
 
-  const top = s.targets && s.targets[0];
-  if (top && s.onUsers >= 10 && pct(top.n, s.onUsers) >= 40)
-    add(
-      "focus",
-      pct(top.n, s.onUsers) >= 60 ? "watch" : "note",
-      pct(top.n, s.onUsers) + "% of everything they did to a user landed on " + top.name,
-      "One person taking most of a moderator's attention is either a genuinely persistent problem user or a grudge. The log says which.",
-    );
+  // ── Bursts ──
+  {
+    const fast = [];
+    for (let i = 1; i < work.length; i++) {
+      const gap = work[i].ts - work[i - 1].lastTs;
+      if (gap < RAPID_GAP_MS) fast.push({ d: work[i], gap });
+    }
+    const share = pct(fast.length, Math.max(1, work.length));
+    if (fast.length >= 8 && share >= 25) {
+      const differentTargets = new Set(
+        fast.map((f) => f.d.targetId).filter(Boolean),
+      ).size;
+      add({
+        key: "bursts",
+        score: Math.min(100, (share - 15) * 2.2),
+        title: share + "% of their decisions came within five seconds of the last",
+        detail:
+          "Counted after related actions are folded together, so a ban firing kick, ban and block at once is one decision here, not three." +
+          (differentTargets > 3
+            ? " These landed on " + differentTargets + " different people."
+            : ""),
+        innocent:
+          "Clearing several people out of one room at once looks exactly like this. If the targets differ each time, it is a raid being handled, not a toolbar being mashed.",
+        evidence: fast.slice(0, 12).map((f) => ev(f.d, f.gap)),
+      });
+    }
+  }
 
-  if (s.kicks >= 10 && s.warns === 0)
-    add(
-      "nowarn",
-      "note",
-      s.kicks + " kicks and not one warning",
-      "Nobody was told what they did wrong before being removed.",
-    );
+  // ── One person taking all the attention ──
+  {
+    const byTarget = new Map();
+    for (const inc of incidents)
+      byTarget.set(inc.targetId, {
+        name: inc.name,
+        n: (byTarget.get(inc.targetId)?.n || 0) + 1,
+        rooms: new Set([
+          ...(byTarget.get(inc.targetId)?.rooms || []),
+          ...inc.rooms,
+        ]),
+      });
+    const ranked = [...byTarget.entries()].sort((a, b) => b[1].n - a[1].n);
+    const top = ranked[0];
+    if (top && incidents.length >= 8) {
+      const share = pct(top[1].n, incidents.length);
+      if (share >= 35)
+        add({
+          key: "focus",
+          score: Math.min(100, (share - 20) * 2),
+          title:
+            share +
+            "% of the times they acted on somebody, it was " +
+            top[1].name,
+          detail:
+            top[1].n +
+            " separate sittings with the same person, across " +
+            top[1].rooms.size +
+            (top[1].rooms.size === 1 ? " room." : " different rooms."),
+          innocent:
+            "One genuinely persistent problem user can dominate a record honestly. Read the reasons on the warnings - if there are none, that is the answer.",
+          evidence: incidents
+            .filter((i) => i.targetId === top[0])
+            .slice(-10)
+            .map((i) =>
+              ev(i.steps[0], null, i.steps.length + " actions in this sitting"),
+            ),
+        });
+    }
+  }
 
-  if (s.onUsers === 0 && s.useful >= 40)
-    add(
-      "nousers",
-      "note",
-      "No actions on users at all",
-      s.useful +
-        " logged actions, none of which landed on a person. This is a record built entirely out of rooms, notes and settings.",
-    );
+  // ── Following somebody between rooms ──
+  // Bumping into the same nuisance in four rooms once each is breadth of work,
+  // not pursuit. Pursuit is a SMALL number of people, met repeatedly, in room
+  // after room - so it needs both a room spread and repeat sittings, and it
+  // stops meaning anything once it is true of lots of people.
+  {
+    const perTarget = new Map();
+    for (const d of userWork) {
+      if (!d.targetId || !d.roomId) continue;
+      if (!perTarget.has(d.targetId))
+        perTarget.set(d.targetId, { name: d.targetName, rooms: new Set(), n: 0 });
+      const t = perTarget.get(d.targetId);
+      t.rooms.add(d.roomId);
+      t.n++;
+    }
+    const sittings = new Map();
+    for (const inc of incidents)
+      sittings.set(inc.targetId, (sittings.get(inc.targetId) || 0) + 1);
 
-  return out;
+    const followed = [...perTarget.entries()]
+      .filter(
+        ([id, v]) => v.rooms.size >= 4 && (sittings.get(id) || 0) >= 4,
+      )
+      .sort((a, b) => b[1].rooms.size - a[1].rooms.size);
+
+    // True of many people at once? Then it is just how this moderator works.
+    if (followed.length >= 1 && followed.length <= 3)
+      add({
+        key: "following",
+        score: 25 + followed[0][1].rooms.size * 7,
+        title:
+          followed[0][1].name +
+          " was sought out across " +
+          followed[0][1].rooms.size +
+          " different rooms",
+        detail:
+          (sittings.get(followed[0][0]) || 0) +
+          " separate sittings with them, in room after room." +
+          (followed.length > 1
+            ? " " + (followed.length - 1) + " other person like this."
+            : ""),
+        innocent:
+          "A user causing the same trouble everywhere they go produces this honestly. The question is who arrived first.",
+        evidence: userWork
+          .filter((d) => d.targetId === followed[0][0])
+          .slice(-12)
+          .map((d) => ev(d)),
+      });
+  }
+
+  // ── Punishment with no process ──
+  {
+    const seen = new Map(); // targetId -> saw a mild action first
+    const cold = [];
+    for (const d of decisions) {
+      if (!d.targetId) continue;
+      if (d.parts.some((p) => MILD.has(p))) seen.set(d.targetId, true);
+      if (d.parts.some((p) => HEAVY.has(p)) && !seen.get(d.targetId)) cold.push(d);
+      if (d.parts.some((p) => HEAVY.has(p))) seen.set(d.targetId, true);
+    }
+    const heavyTotal = decisions.filter((d) =>
+      d.parts.some((p) => HEAVY.has(p)),
+    ).length;
+    if (cold.length >= 3 && pct(cold.length, Math.max(1, heavyTotal)) >= 50)
+      add({
+        key: "noprocess",
+        score: Math.min(100, 25 + cold.length * 5),
+        title:
+          cold.length +
+          " bans or blocks with no warning or kick first",
+        detail:
+          "Out of " +
+          heavyTotal +
+          " heavy punishments, these went straight to the strongest tool available with nothing milder on record for that person.",
+        innocent:
+          "Some things do not deserve a warning, and a moderator arriving mid-raid will not stop to issue one. Read the reasons attached.",
+        evidence: cold.slice(-12).map((d) => ev(d)),
+      });
+  }
+
+  // ── Undone punishments ──
+  {
+    const pending = new Map();
+    const reversals = [];
+    for (const d of decisions) {
+      if (!d.targetId) continue;
+      for (const p of d.parts) {
+        if (UNDO_ACTIONS.has(p)) {
+          const key = d.targetId + "|" + p;
+          const orig = pending.get(key);
+          if (orig && d.ts - orig.ts <= 24 * 60 * 60 * 1000) {
+            reversals.push({ orig, undo: d, gap: d.ts - orig.ts });
+            pending.delete(key);
+          }
+        }
+        if (UNDO.has(p)) pending.set(d.targetId + "|" + UNDO.get(p), d);
+      }
+    }
+    const heavyCount = decisions.filter((d) =>
+      d.parts.some((p) => HEAVY.has(p)),
+    ).length;
+    if (reversals.length >= 2)
+      add({
+        key: "reversals",
+        score: 25 + pct(reversals.length, Math.max(1, heavyCount)),
+        title: reversals.length + " punishments undone within a day",
+        detail:
+          "A ban or block placed and then lifted shortly after, on the same person.",
+        innocent:
+          "Catching your own mistake quickly is exactly what you want from a moderator. A pattern of it means something else.",
+        evidence: reversals
+          .slice(-10)
+          .map((r) => ev(r.undo, r.gap, "undone after " + relGap(r.gap))),
+      });
+  }
+
+  // ── All the work in short daily bursts ──
+  {
+    const byDay = new Map();
+    for (const d of work) {
+      const k = new Date(d.ts).toDateString();
+      if (!byDay.has(k)) byDay.set(k, []);
+      byDay.get(k).push(d);
+    }
+    const busy = [...byDay.entries()].filter(([, v]) => v.length >= 10);
+    if (busy.length >= 3) {
+      const tight = busy.filter(
+        ([, v]) => v[v.length - 1].ts - v[0].ts < 15 * 60 * 1000,
+      );
+      if (pct(tight.length, busy.length) >= 60)
+        add({
+          key: "sessions",
+          score: 20 + pct(tight.length, busy.length) * 0.7,
+          title:
+            tight.length +
+            " days where a whole day of actions happened inside fifteen minutes",
+          detail:
+            "On " +
+            tight.length +
+            " of their " +
+            busy.length +
+            " busy days, everything logged arrived in one short sitting rather than across a shift.",
+          innocent:
+            "A moderator who only signs on when they are called will look exactly like this, and that is a perfectly good way to help.",
+          evidence: tight
+            .slice(-8)
+            .map(([day, v]) =>
+              ev(
+                v[0],
+                v[v.length - 1].ts - v[0].ts,
+                day + ": " + v.length + " actions in " +
+                  relGap(Math.max(1000, v[v.length - 1].ts - v[0].ts)),
+              ),
+            ),
+        });
+    }
+  }
+
+  // ── A record with nobody in it ──
+  if (userWork.length === 0 && work.length >= 40)
+    add({
+      key: "nousers",
+      score: 45,
+      title: "No actions on users at all",
+      detail:
+        work.length +
+        " logged actions, not one of which landed on a person. This record is built entirely out of rooms, notes and settings.",
+      innocent:
+        "Somebody who genuinely only tidies rooms is doing real work - it just is not the work promotion is judged on.",
+      evidence: work.slice(-10).map((d) => ev(d)),
+    });
+
+  // Rank, mark reviewed, and hand back the strongest first.
+  signals.sort((a, b) => b.score - a.score);
+  return signals.map((s) => applyReview(s, who));
 }
 
 // Every staff member's workload in one pass, for the leaderboard and for
@@ -838,6 +1353,7 @@ function load() {
 }
 
 load();
+loadFlagReviews();
 
 module.exports = {
   recordAction,
@@ -851,6 +1367,8 @@ module.exports = {
   leaderboard,
   isUsefulAction,
   PROMOTION_AT,
+  reviewFlag,
+  clearFlagReview,
   startOfPacificDay,
   pacificDayStarts,
   setAuditSub,
