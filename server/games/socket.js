@@ -172,22 +172,9 @@ function register(socket, safe) {
   // the point of watching.
   socket.on(
     "games chat",
-    act((u, d) => {
-      const out = floor.chat(socket.roomId, u, String(d.tableId || ""), d.text);
-      // In Draw & Guess a chat line is also a guess. A near miss posts as an
-      // ordinary message, so the nudge goes only to the person who typed it.
-      if (out && out.ok && out.close) {
-        socket.emit("games feedback", {
-          tableId: d.tableId,
-          accepted: null,
-          pts: 0,
-          correct: false,
-          close: true,
-          known: false,
-        });
-      }
-      return out;
-    }),
+    act((u, d) =>
+      floor.chat(socket.roomId, u, String(d.tableId || ""), d.text),
+    ),
   );
 
   socket.on(

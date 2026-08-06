@@ -2197,7 +2197,7 @@
 
   BOARDS.drawguess = function () {
     let root, timerRow, timerNum, timerFill, progEl, promptEl, choiceEl;
-    let canvas, ctx, tools, guessWrap, guessForm, guessInput, guessHint;
+    let canvas, ctx, tools, guessWrap, guessHint;
     let statusEl, drawerActions, canvasBox, canvasWrap, sizesEl;
     let stageEl, lobbyEl;
     let drawing = false;
@@ -2218,7 +2218,6 @@
     let palette = null;
     let papers = null;
     let bg = 0;
-    let focusedGuess = false;
     let ro = null;
 
     // The drawing is a fixed 16:9 board, not whatever shape the window happens
@@ -2472,31 +2471,11 @@
         lobbyEl = el("div", { class: "gm-dg-lobby" });
         root.appendChild(lobbyEl);
 
-        // Guessing. Deliberately loud, it is the thing most people are here for.
+        // No guess box: the chat feed is the guess box. A second field under
+        // the canvas asked people to decide which one to type in and took
+        // space the drawing wanted. This line just says where to type.
         guessHint = el("div", { class: "gm-dg-guesslabel" });
-        guessInput = el("input", {
-          class: "gm-dg-input",
-          type: "text",
-          maxlength: "40",
-          placeholder: "Type your guess and press enter",
-          autocomplete: "off",
-          autocapitalize: "off",
-          spellcheck: "false",
-        });
-        guessForm = el("form", { class: "gm-dg-guessform" }, [
-          guessInput,
-          el("button", { class: "gm-btn gm-btn-primary", type: "submit", text: "Guess" }),
-        ]);
-        guessForm.addEventListener("submit", (e) => {
-          e.preventDefault();
-          const v = guessInput.value.trim();
-          if (!v) return;
-          S.emit("games move", {
-            tableId: detail.id, move: { kind: "guess", text: v },
-          });
-          guessInput.value = "";
-        });
-        guessWrap = el("div", { class: "gm-dg-guesswrap" }, [guessHint, guessForm]);
+        guessWrap = el("div", { class: "gm-dg-guesswrap gm-dg-tip" }, [guessHint]);
         root.appendChild(guessWrap);
 
         statusEl = el("div", { class: "gm-dg-status" });
@@ -2722,7 +2701,7 @@
         tools.style.display = iDraw ? "" : "none";
         canvas.classList.toggle("gm-dg-live", iDraw);
 
-        // The guess box, and why it is or is not there.
+        // Where to type, and whether they still need to.
         const showGuess = t.seated && g.phase === "drawing" && !g.amDrawer;
         guessWrap.style.display = showGuess ? "" : "none";
         if (showGuess) {
@@ -2730,22 +2709,17 @@
           if (g.canGuess) {
             guessWrap.classList.remove("gm-dg-got");
             guessHint.appendChild(el("i", { class: "fas fa-lightbulb" }));
-            guessHint.appendChild(el("span", { text: " What is it?" }));
-            guessInput.disabled = false;
-            if (!focusedGuess) {
-              focusedGuess = true;
-              setTimeout(() => guessInput.focus(), 40);
-            }
+            guessHint.appendChild(
+              el("span", { text: " What is it? Type your guess in the chat." }),
+            );
           } else {
             guessWrap.classList.add("gm-dg-got");
             guessHint.appendChild(el("i", { class: "fas fa-circle-check" }));
             guessHint.appendChild(
               el("span", { text: " You got it. Chat while the rest catch up." }),
             );
-            guessInput.disabled = true;
           }
         }
-        if (g.phase !== "drawing") focusedGuess = false;
 
         // Who has it, who we are still waiting on, and the nudge button.
         statusEl.textContent = "";
@@ -3002,15 +2976,33 @@
   });
 
   // A dropped connection leaves the panel showing a board the server no longer
-  // knows we are looking at. Re-announce on the way back.
-  S.on("connect", () => {
+  // knows we are looking at, and a restart wipes every table outright.
+  //
+  // Re-announcing the moment the socket is back is too early: the room page
+  // rejoins on its own clock, so the server would still have no room to look
+  // the floor up in. Wait for the rejoin, then step back into the games list.
+  // If the table survived, the snapshot below puts us straight back on it.
+  let reannounce = null;
+
+  function backToGames() {
+    if (!reannounce) return;
+    clearTimeout(reannounce);
+    reannounce = null;
     if (!isOpen) return;
     boardKey = "";
     detail = null;
+    view = { name: "floor", tableId: null };
     S.emit("games open");
-    if (view.name === "game" && view.tableId)
-      S.emit("games spectate", { tableId: view.tableId, on: true });
+    render();
+  }
+
+  S.on("connect", () => {
+    if (!isOpen || reannounce) return;
+    // The fallback covers a spectator, or a rejoin that never acknowledges.
+    reannounce = setTimeout(backToGames, 3000);
   });
+  S.on("room joined", backToGames);
+  S.on("spectate joined", backToGames);
 
   S.on("games floor", (d) => {
     takeFloor(d);
@@ -3070,10 +3062,14 @@
       board.feedbackMsg(d.accepted + "  +" + d.pts, true);
     else if (d.correct && board.say)
       board.say("Correct, +" + d.pts + " points", true);
-    else if (d.close && board.say) board.say("So close", false);
+    // "So close" is fine when the answer is one of two hundred countries. It
+    // is a giveaway when the answer is a single drawn word, so Draw & Guess
+    // never says it, and never posts the near miss either.
+    else if (d.close && board.say && detail && detail.type !== "drawguess")
+      board.say("So close", false);
     // "known" means they typed a real country, just the wrong one. Worth
     // saying, because it separates a near miss from a typo.
-    else if (d.correct === false && board.say)
+    else if (d.correct === false && board.say && detail && detail.type !== "drawguess")
       board.say(d.known ? "That is a country, but not this one" : "Not it", false);
   });
 

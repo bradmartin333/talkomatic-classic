@@ -477,11 +477,13 @@ function chatGuess(state, userId, text) {
 
   const out = move(state, userId, { kind: "guess", text });
   if (!out || !out.ok) return null;
-  // A miss stays a normal chat line, so the feed reads as conversation rather
-  // than a column of failures. A near miss is still worth a quiet nudge to the
-  // person who typed it, so it is reported without claiming the line.
-  if (!out.correct) return out.close ? { ok: true, near: true } : null;
-  return out;
+  if (out.correct) return out;
+  // "octopur" when the word is octopus hands it to the whole room, so a near
+  // miss is swallowed: it never reaches the feed and the typer is not told
+  // either, since being told is itself the giveaway. An ordinary wrong guess
+  // is harmless and posts as normal chat.
+  if (out.close) return { ok: true, swallow: true };
+  return null;
 }
 
 function sanitizeStroke(s) {

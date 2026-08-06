@@ -2275,6 +2275,15 @@ button.gm-side-fold:hover {
   box-sizing: border-box;
 }
 
+/* Draw & Guess has no field of its own: guesses go in the chat, so this is a
+   one line pointer rather than a panel. Stripping the box back gives the
+   drawing the height the old input and button were taking. */
+.gm-dg-guesswrap.gm-dg-tip {
+  padding: 0;
+  border: none;
+  background: none;
+}
+
 .gm-dg-guesswrap.gm-dg-got {
   border-color: var(--tk-success, #4caf50);
   border-style: dashed;
@@ -2288,6 +2297,11 @@ button.gm-side-fold:hover {
   font-weight: bold;
   color: var(--primary, var(--tk-accent));
   margin-bottom: 6px;
+}
+
+.gm-dg-guesswrap.gm-dg-tip .gm-dg-guesslabel {
+  justify-content: center;
+  margin-bottom: 0;
 }
 
 .gm-dg-guesswrap.gm-dg-got .gm-dg-guesslabel {

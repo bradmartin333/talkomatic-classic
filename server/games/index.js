@@ -963,15 +963,14 @@ function chat(roomId, user, tableId, text) {
   // feed is guessing, so there is no second box to find. The game decides;
   // the floor only asks. A line it does not claim falls through and is posted
   // as an ordinary message below.
-  let nearMiss = false;
   if (t.state === "playing" && t.game) {
     const rules = rulesFor(t.type);
     if (rules && rules.chatGuess) {
       const out = rules.chatGuess(t.game, user.userId, body);
-      if (out && out.near) {
-        // Nearly right. The line still posts as an ordinary message; only the
-        // person who typed it is told they were close.
-        nearMiss = true;
+      if (out && out.swallow) {
+        // One letter off the answer. Posting it would spoil the word for
+        // everybody, so the line is dropped without comment.
+        return { ok: true };
       } else if (out) {
         t.misses.delete(user.userId); // they are clearly still here
         // The word itself is never echoed: that would hand it to everybody
@@ -1000,7 +999,7 @@ function chat(roomId, user, tableId, text) {
     text: body,
     watching: !playing,
   });
-  return nearMiss ? { ok: true, close: true } : { ok: true };
+  return { ok: true };
 }
 
 function typing(roomId, userId, tableId, on) {

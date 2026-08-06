@@ -1454,48 +1454,81 @@
       : parts.join(", ");
   }
 
+  const rankKey = (s) =>
+    s.role === "dev" ? "dev" : (s.level || 2) >= 2 ? "l2" : "l1";
+
+  // One row for a person. The rank is carried by the group heading above
+  // them, so it is not repeated on every line.
+  function staffRow(s, offline) {
+    const row = el("div", "dk-staff" + (offline ? " off" : ""));
+    row.appendChild(faceEl(s, "sm"));
+    const w = el("div", "dk-staff-w");
+    const nameLine = el("div", "dk-staff-n");
+    nameLine.appendChild(el("span", "dk-staff-name", s.label));
+    if (s.hidden) nameLine.appendChild(el("span", "dk-chip ghost", "HIDDEN"));
+    if (s.vanished) nameLine.appendChild(el("span", "dk-chip ghost", "VANISHED"));
+    w.appendChild(nameLine);
+    const differs =
+      s.alias && s.alias.toLowerCase() !== (s.label || "").toLowerCase();
+    const sub = offline
+      ? s.lastActive
+        ? "last on " + relTime(s.lastActive) + " ago"
+        : "nothing on record yet"
+      : (differs ? 'as "' + s.alias + '", ' : "") + locLine(s);
+    const subEl = el("div", "dk-staff-l", sub);
+    // The full story on hover, however many tabs they have open.
+    subEl.title =
+      (s.alias ? 'Appearing as "' + s.alias + '"\n' : "") +
+      (s.locations || []).map(locText).join("\n");
+    w.appendChild(subEl);
+    row.appendChild(w);
+    return row;
+  }
+
+  // Devs, then full mods, then juniors, each under their own heading. Twelve
+  // people each wearing their own rank chip was a column of noise; the rank
+  // only needs saying once.
+  function byRank(list) {
+    return [
+      { key: "dev", label: "Developers", rows: list.filter((s) => rankKey(s) === "dev") },
+      { key: "l2", label: "Full mods", rows: list.filter((s) => rankKey(s) === "l2") },
+      { key: "l1", label: "Junior mods", rows: list.filter((s) => rankKey(s) === "l1") },
+    ].filter((g) => g.rows.length);
+  }
+
+  function groupHead(g) {
+    const h = el("div", "dk-group " + g.key);
+    h.appendChild(el("span", "dk-group-n", g.label));
+    h.appendChild(el("span", "dk-group-c", String(g.rows.length)));
+    return h;
+  }
+
   function renderSide() {
     if (!els.side || !me) return;
     const side = els.side;
     side.textContent = "";
 
     side.appendChild(el("div", "dk-side-h", "On now - " + presence.staff.length));
-    for (const s of presence.staff) {
-      const rank = s.role === "dev" ? "dev" : (s.level || 2) >= 2 ? "l2" : "l1";
-      const row = el("div", "dk-staff");
-      row.appendChild(faceEl(s, "sm"));
-      const w = el("div", "dk-staff-w");
-      const nameLine = el("div", "dk-staff-n");
-      nameLine.appendChild(el("span", "dk-staff-name", s.label));
-      nameLine.appendChild(el("span", "dk-chip " + rank, rankName(rank)));
-      if (s.hidden) nameLine.appendChild(el("span", "dk-chip ghost", "HIDDEN"));
-      if (s.vanished) nameLine.appendChild(el("span", "dk-chip ghost", "VANISHED"));
-      w.appendChild(nameLine);
-      const differs =
-        s.alias && s.alias.toLowerCase() !== (s.label || "").toLowerCase();
-      const sub = (differs ? 'as "' + s.alias + '", ' : "") + locLine(s);
-      const subEl = el("div", "dk-staff-l", sub);
-      // The full story on hover, however many tabs they have open.
-      subEl.title =
-        (s.alias ? 'Appearing as "' + s.alias + '"\n' : "") +
-        (s.locations || []).map(locText).join("\n");
-      w.appendChild(subEl);
-      row.appendChild(w);
-      side.appendChild(row);
+    for (const g of byRank(presence.staff)) {
+      side.appendChild(groupHead(g));
+      for (const s of g.rows) side.appendChild(staffRow(s, false));
     }
     if (!presence.staff.length)
       side.appendChild(el("div", "dk-rail-empty", "Nobody is on."));
 
     side.appendChild(el("div", "dk-side-h", "Rooms - " + presence.rooms.length));
     for (const room of presence.rooms.slice(0, 20)) {
-      const row = el("div", "dk-room");
-      // Who can walk in: the first thing you want to know about a room you
-      // are about to step into.
+      // Two lines: what the room is, then what you can do about it. Squeezing
+      // a name, two state icons, a headcount and two buttons onto one line
+      // left the name with about four characters.
+      const card = el("div", "dk-room");
       const t = ROOM_TYPE[room.type] || ROOM_TYPE.public;
+
+      const top = el("div", "dk-room-top");
       const dot = el("span", "dk-rtype " + t.cls);
       dot.appendChild(icon(t.icon));
       dot.title = t.label;
-      row.appendChild(dot);
+      top.appendChild(dot);
 
       const name = el("span", "dk-room-n", room.name || "?");
       name.title =
@@ -1506,22 +1539,29 @@
         (room.staff && room.staff.length
           ? "\nStaff inside: " + room.staff.join(", ")
           : "\nNo staff inside");
-      row.appendChild(name);
-      if (room.locked) row.appendChild(icon("fa-lock"));
-      if (room.slow) row.appendChild(icon("fa-gauge-simple"));
+      top.appendChild(name);
+      if (room.locked) top.appendChild(icon("fa-lock"));
+      if (room.slow) top.appendChild(icon("fa-gauge-simple"));
+      const count = el("span", "dk-room-c", String(room.n));
+      count.title = room.n === 1 ? "1 person inside" : room.n + " people inside";
+      top.appendChild(count);
+      card.appendChild(top);
+
+      const bar = el("div", "dk-room-bar");
       // The one flag that matters at a glance: people with no staff around.
       if (room.n > 0 && (!room.staff || !room.staff.length))
-        row.appendChild(el("span", "dk-nostaff", "no staff"));
-      row.appendChild(el("span", "dk-room-c", String(room.n)));
-      const insp = btn("dk-ib", null, "fa-eye", "Inspect");
+        bar.appendChild(el("span", "dk-nostaff", "no staff"));
+      const insp = btn("dk-minib", "Inspect", "fa-eye");
       insp.addEventListener("click", () => openInspector(room.id));
-      row.appendChild(insp);
-      const join = btn("dk-ib", null, "fa-door-open", "Join in a new tab");
+      bar.appendChild(insp);
+      const join = btn("dk-minib", "Join", "fa-door-open");
+      join.title = "Open this room in a new tab";
       join.addEventListener("click", () =>
         window.open("/room.html?roomId=" + encodeURIComponent(room.id), "_blank"),
       );
-      row.appendChild(join);
-      side.appendChild(row);
+      bar.appendChild(join);
+      card.appendChild(bar);
+      side.appendChild(card);
     }
     if (!presence.rooms.length)
       side.appendChild(el("div", "dk-rail-empty", "No rooms open right now."));
@@ -1666,40 +1706,25 @@
       return;
     }
 
+    // Same shape as the side panel: on or off first, then grouped by rank
+    // with the rank said once at the top of each group.
     const section = (label, rows, offline) => {
       if (!rows.length) return;
       body.appendChild(el("div", "dk-side-h", label));
-      for (const s of rows) {
-        const rank = s.role === "dev" ? "dev" : (s.level || 2) >= 2 ? "l2" : "l1";
-        const row = el("div", "dk-staff" + (offline ? " off" : ""));
-        row.appendChild(faceEl(s, "sm"));
-        const w = el("div", "dk-staff-w");
-        const nameLine = el("div", "dk-staff-n");
-        nameLine.appendChild(el("span", "dk-staff-name", s.label));
-        nameLine.appendChild(el("span", "dk-chip " + rank, rankName(rank)));
-        if (s.hidden) nameLine.appendChild(el("span", "dk-chip ghost", "HIDDEN"));
-        if (s.vanished) nameLine.appendChild(el("span", "dk-chip ghost", "VANISHED"));
-        w.appendChild(nameLine);
-        // Who is who matters most on this screen, so the public name they are
-        // wearing right now sits next to where they are.
-        const differs =
-          s.alias && s.alias.toLowerCase() !== (s.label || "").toLowerCase();
-        const sub = offline
-          ? s.lastActive
-            ? "last did something " + relTime(s.lastActive) + " ago"
-            : "nothing on record yet"
-          : (differs ? 'as "' + s.alias + '", ' : "") + locLine(s);
-        w.appendChild(el("div", "dk-staff-l", sub));
-        row.appendChild(w);
-        if (!offline) {
-          const room = (s.locations || []).find((l) => l.roomId);
-          if (room) {
-            const go = btn("dk-ib", null, "fa-eye", "Inspect " + room.roomName);
-            go.addEventListener("click", () => openInspector(room.roomId));
-            row.appendChild(go);
+      for (const g of byRank(rows)) {
+        body.appendChild(groupHead(g));
+        for (const s of g.rows) {
+          const row = staffRow(s, offline);
+          if (!offline) {
+            const room = (s.locations || []).find((l) => l.roomId);
+            if (room) {
+              const go = btn("dk-ib", null, "fa-eye", "Inspect " + room.roomName);
+              go.addEventListener("click", () => openInspector(room.roomId));
+              row.appendChild(go);
+            }
           }
+          body.appendChild(row);
         }
-        body.appendChild(row);
       }
     };
 
@@ -2272,7 +2297,7 @@
   padding:6px 8px;border-radius:4px;line-height:1;}
 .dk-hbtn:hover{background:#ff9800;color:#000;}
 .dk-burger,.dk-msearch{display:none;}
-.dk-body{flex:1;display:grid;grid-template-columns:200px minmax(0,1fr) 240px;min-height:0;position:relative;}
+.dk-body{flex:1;display:grid;grid-template-columns:200px minmax(0,1fr) 290px;min-height:0;position:relative;}
 .dk-scrim{display:none;position:absolute;inset:0;background:rgba(0,0,0,.6);z-index:4;}
 .dk-rail{background:#1b1b1b;border-right:1px solid #333;overflow-y:auto;padding:10px 8px;
   display:flex;flex-direction:column;gap:2px;}
@@ -2446,9 +2471,22 @@
 .dk-staff-n .dk-chip{flex:none;}
 .dk-staff-l{font-size:11px;color:#8d8d8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .dk-staff.off{opacity:.6;}
-.dk-room{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:4px;min-width:0;}
-.dk-room:hover{background:#242424;}
-.dk-room .fas{font-size:9px;color:#8d8d8d;flex:none;}
+/* One heading per rank instead of a chip on every single row. */
+.dk-group{display:flex;align-items:center;gap:6px;padding:9px 5px 3px;}
+.dk-group-n{font-size:10px;font-weight:bold;letter-spacing:.7px;text-transform:uppercase;color:#8d8d8d;}
+.dk-group.dev .dk-group-n{color:#ff5468;}
+.dk-group.l2 .dk-group-n{color:#5aa9ff;}
+.dk-group.l1 .dk-group-n{color:#c08bff;}
+.dk-group-c{font-size:10px;color:#6f6f6f;font-variant-numeric:tabular-nums;}
+.dk-group::after{content:"";flex:1;height:1px;background:#2a2a2a;}
+/* Two rows: what the room is, then what to do about it. */
+.dk-room{padding:7px 8px;border-radius:5px;min-width:0;background:#202020;
+  border:1px solid #2a2a2a;margin-bottom:6px;}
+.dk-room:hover{border-color:#3a3a3a;}
+.dk-room-top{display:flex;align-items:center;gap:6px;min-width:0;}
+.dk-room-top .fas{font-size:9px;color:#8d8d8d;flex:none;}
+.dk-room-bar{display:flex;align-items:center;gap:6px;margin-top:7px;}
+.dk-room-bar .dk-minib{padding:4px 9px;font-size:11px;}
 .dk-rtype{flex:none;width:16px;display:flex;align-items:center;justify-content:center;}
 .dk-rtype .fas{font-size:10px;}
 .dk-rtype.pub .fas{color:#57d9a3;}
@@ -2456,8 +2494,8 @@
 .dk-rtype.priv .fas{color:#ff5468;}
 .dk-room-n{font-size:12.5px;font-weight:bold;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .dk-room-c{color:#ff9800;font-weight:bold;font-size:12px;font-variant-numeric:tabular-nums;flex:none;}
-.dk-nostaff{flex:none;font-size:9px;font-weight:bold;letter-spacing:.4px;text-transform:uppercase;
-  color:#ffb454;border:1px solid #ffb454;border-radius:3px;padding:1px 4px;}
+.dk-nostaff{flex:1;font-size:9px;font-weight:bold;letter-spacing:.4px;text-transform:uppercase;
+  color:#ffb454;}
 .dk-ib{flex:none;background:none;border:1px solid #333;color:#c3c3c3;border-radius:4px;
   padding:4px 7px;font-size:11px;cursor:pointer;line-height:1;}
 .dk-ib:hover{border-color:#ff9800;color:#fff;}
