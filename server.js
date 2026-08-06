@@ -582,9 +582,10 @@ for (const page of PAGES) {
     sendPage(req, res, path.join(PAGES_DIR, `${page}.html`)),
   );
 }
-app.get("/", (req, res) =>
-  sendPage(req, res, path.join(PAGES_DIR, "index.html")),
-);
+// There is only one room and no lobby to browse - go straight there. The room
+// page collects a name itself (localStorage, or a prompt on first visit) so
+// index.html's sign-in form is no longer the front door.
+app.get("/", (req, res) => res.redirect("/room.html"));
 
 // ── Guess the Flag images ───────────────────────────────────────────────────
 // Served from here rather than letting the browser talk to flagcdn directly:

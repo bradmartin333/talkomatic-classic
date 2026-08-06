@@ -1433,15 +1433,6 @@ const APPS_DATA = {
     openInNewTab: false,
     action: "games",
   },
-  fileshare: {
-    name: "File Share",
-    description: "Share files and images securely",
-    icon: "\uD83D\uDCC1",
-    iconClass: "placeholder",
-    status: "coming-soon",
-    url: null,
-    openInNewTab: false,
-  },
 };
 let appDirectoryDropdown = null;
 let puzzleAppEnabled = true; // flipped by the "puzzle state" event from a dev toggle
@@ -1481,13 +1472,8 @@ function createAppDirectoryDropdown() {
     desc.textContent = app.description;
     info.appendChild(nameEl);
     info.appendChild(desc);
-    const status = document.createElement("div");
-    status.className = `app-status status-${app.status}`;
-    status.textContent =
-      app.status === "available" ? "Available" : "Coming Soon";
     item.appendChild(icon);
     item.appendChild(info);
-    item.appendChild(status);
     if (app.status === "available") {
       item.addEventListener("click", (e) => {
         e.preventDefault();
@@ -1512,17 +1498,8 @@ function createAppDirectoryDropdown() {
     }
     grid.appendChild(item);
   });
-  const footer = document.createElement("div");
-  footer.className = "app-directory-footer";
-  const link = document.createElement("a");
-  link.href = "app-directory.html";
-  link.className = "view-all-link";
-  link.target = "_blank";
-  link.textContent = "\uD83D\uDCC2 View All Apps";
-  footer.appendChild(link);
   appDirectoryDropdown.appendChild(header);
   appDirectoryDropdown.appendChild(grid);
-  appDirectoryDropdown.appendChild(footer);
   const navbar = document.querySelector(".top-navbar");
   if (navbar) {
     navbar.style.position = "relative";
@@ -2551,7 +2528,7 @@ function createUserRow(user, container) {
 
   const nameEl = document.createElement("span");
   nameEl.className = "ui-name";
-  nameEl.textContent = `${user.username} / ${user.location}`;
+  nameEl.textContent = user.username;
   info.appendChild(nameEl);
 
   // Mute button
@@ -3419,27 +3396,40 @@ function storedAvatar() {
   return null;
 }
 
+// There is no separate sign-in page any more, so a first-time visitor is
+// asked for a name right here, once, with the simplest thing that works.
+// Saved to localStorage immediately, so a refresh never asks again.
+function promptForUsername() {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const typed = (window.prompt("What's your name?") || "").trim();
+    if (typed) return typed.slice(0, 15);
+  }
+  // Declined twice: fall back rather than getting permanently stuck.
+  return `Guest${Math.floor(10000 + Math.random() * 90000)}`;
+}
+
 function joinRoom(roomId, accessCode = null) {
   // Re-announce identity from this browser before joining. "join room" carries
   // no name and trusts the server session, but the session is in-memory: a
   // server restart wipes it (the signed cookie survives, its data does not), so
   // a plain join after a restart - or any full page load with a lost session,
   // such as a hard refresh or the reload after being granted mod - would land
-  // as "Anonymous" / "On The Web". The lobby self-heals from localStorage the
-  // same way; the room page must too. Mirrors the reconnect path: announce,
-  // then join once the sign-in is acknowledged (with a timeout fallback so a
-  // missed ack never strands the join).
-  const uname = currentUsername || localStorage.getItem("talkomaticUsername");
+  // as "Anonymous" / "On The Web". This self-heals from localStorage; a
+  // first-ever visit (nothing in localStorage yet) prompts for a name instead.
+  // Mirrors the reconnect path below: announce, then join once the sign-in is
+  // acknowledged (with a timeout fallback so a missed ack never strands the join).
+  let uname = currentUsername || localStorage.getItem("talkomaticUsername");
   const uloc =
     currentLocation ||
     localStorage.getItem("talkomaticLocation") ||
     "On The Web";
 
   if (!uname) {
-    // No saved identity (first visit via a direct/invite link); join as-is and
-    // let the server apply its normal handling.
-    socket.emit("join room", { roomId, accessCode });
-    return;
+    uname = promptForUsername();
+    localStorage.setItem("talkomaticUsername", uname);
+    localStorage.setItem("talkomaticLocation", uloc);
+    currentUsername = uname;
+    currentLocation = uloc;
   }
 
   let joined = false;
@@ -4766,19 +4756,18 @@ socket.on("user renamed", (data) => {
   if (!row) return;
   const info = row.querySelector(".user-info");
   if (!info) return;
-  const label = `${data.username} / ${data.location}`;
   const nameEl = info.querySelector(".ui-name");
   if (nameEl) {
-    nameEl.textContent = label;
+    nameEl.textContent = data.username;
     return;
   }
   for (const node of Array.from(info.childNodes)) {
     if (node.nodeType === Node.TEXT_NODE) {
-      node.textContent = label;
+      node.textContent = data.username;
       return;
     }
   }
-  info.appendChild(document.createTextNode(label));
+  info.appendChild(document.createTextNode(data.username));
 });
 socket.on("room lock status", (data) => {
   currentRoomLocked = !!(data && data.locked);
