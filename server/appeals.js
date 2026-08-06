@@ -208,15 +208,24 @@ function userReply(a, text, replyToId) {
   return { ok: true, message: m };
 }
 
-// A moderator writes. Their label goes on the message so the user knows who
-// they are talking to, and so the record shows who said what.
-function staffReply(a, text, byLabel, replyToId) {
+// A moderator writes. Their label, rank and picture go on the message: the
+// person reading it is banned and anxious, and "Staff" with no face is how you
+// get somebody arguing with what they assume is a bot. It is stamped onto the
+// message rather than looked up later, so it still reads correctly after they
+// change their picture or hand the key back.
+function staffReply(a, text, who, replyToId) {
   if (!a) return { ok: false, code: "no_appeal" };
   const body = String(text || "").trim().slice(0, MSG_MAX);
   if (!body) return { ok: false, code: "too_short" };
+  const w = typeof who === "string" ? { label: who } : who || {};
   const m = pushMessage(a, {
     from: "staff",
-    by: byLabel || "staff",
+    by: w.label || "staff",
+    role: w.role === "dev" ? "dev" : "mod",
+    level: w.role === "dev" ? 0 : w.level === 1 ? 1 : 2,
+    ...(w.avatar && w.avatar.id && w.avatar.hash
+      ? { avatar: { id: String(w.avatar.id), hash: String(w.avatar.hash) } }
+      : {}),
     text: body,
     ...(replySnapshot(a, replyToId)
       ? { reply: replySnapshot(a, replyToId) }

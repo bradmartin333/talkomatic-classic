@@ -817,6 +817,9 @@ function buildAppealsList(forDev) {
         ts: m.ts,
         from: m.from,
         by: m.by || null,
+        role: m.role || null,
+        level: m.level == null ? null : m.level,
+        avatar: m.avatar || null,
         text: m.text || "",
         reply: m.reply || null,
       })),
@@ -6462,10 +6465,16 @@ function registerSocketHandlers(opts) {
         const text = sanitizeMessage(
           typeof data?.text === "string" ? data.text : "",
         ).slice(0, 1000);
+        const av = socket.handshake?.session?.avatar;
         const r = appeals.staffReply(
           a,
           text,
-          socket.staffLabel || (socket.isDev ? "dev" : "mod"),
+          {
+            label: socket.staffLabel || (socket.isDev ? "dev" : "mod"),
+            role: socket.isDev ? "dev" : "mod",
+            level: socket.isDev ? 0 : socket.modLevel || 2,
+            avatar: av && av.id && av.hash ? { id: av.id, hash: av.hash } : null,
+          },
           Number(data?.replyTo) || null,
         );
         if (!r.ok)

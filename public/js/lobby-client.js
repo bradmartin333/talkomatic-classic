@@ -816,8 +816,19 @@ function showBanScreen(info) {
       #banScreen .ac-m{display:flex;flex-direction:column;gap:3px;max-width:88%;}
       #banScreen .ac-m.user{align-self:flex-end;align-items:flex-end;}
       #banScreen .ac-m.staff{align-self:flex-start;}
-      #banScreen .ac-who{font-size:11px;color:#8d8d8d;font-weight:bold;}
+      #banScreen .ac-who{font-size:11px;color:#8d8d8d;font-weight:bold;
+        display:flex;align-items:center;gap:7px;}
       #banScreen .ac-m.staff .ac-who{color:#ff9800;}
+      /* Who you are talking to: face, name, rank. */
+      #banScreen .ac-av{flex:none;width:24px;height:24px;border-radius:50%;overflow:hidden;
+        background:#2b5e9e;color:#fff;font-size:11px;font-weight:bold;display:flex;
+        align-items:center;justify-content:center;}
+      #banScreen .ac-av.dev{background:#a3323f;}
+      #banScreen .ac-av img{width:100%;height:100%;object-fit:cover;display:block;}
+      #banScreen .ac-name{color:#fff;font-size:12.5px;}
+      #banScreen .ac-rank{font-size:9.5px;font-weight:bold;letter-spacing:.5px;
+        text-transform:uppercase;color:#5aa9ff;border:1px solid #5aa9ff;padding:1px 5px;}
+      #banScreen .ac-rank.dev{color:#ff5468;border-color:#ff5468;}
       #banScreen .ac-b{background:#1e1e1e;border:1px solid #333;padding:8px 11px;
         font-size:13.5px;line-height:1.5;color:#ededed;white-space:pre-wrap;
         word-break:break-word;text-align:left;}
@@ -962,6 +973,36 @@ function showBanScreen(info) {
     }
   };
 
+  // The moderator's picture, rebuilt from the validated snowflake + hash the
+  // server stores - the same rule the rooms use, never a raw URL from data.
+  // Falls back to their initial, so there is always a face on the message.
+  const PFP_ID_RE = /^\d{17,20}$/;
+  const PFP_HASH_RE = /^(?:a_)?[a-f0-9]{32}$/i;
+  function appealFace(m) {
+    const wrap = document.createElement("span");
+    wrap.className = "ac-av" + (m.role === "dev" ? " dev" : "");
+    const av = m.avatar;
+    if (av && PFP_ID_RE.test(av.id || "") && PFP_HASH_RE.test(av.hash || "")) {
+      const img = document.createElement("img");
+      img.src =
+        "https://cdn.discordapp.com/avatars/" +
+        av.id +
+        "/" +
+        av.hash +
+        ".webp?size=64";
+      img.alt = "";
+      img.loading = "lazy";
+      img.addEventListener("error", () => {
+        img.remove();
+        wrap.textContent = (m.by || "S").trim().charAt(0).toUpperCase();
+      });
+      wrap.appendChild(img);
+    } else {
+      wrap.textContent = (m.by || "S").trim().charAt(0).toUpperCase();
+    }
+    return wrap;
+  }
+
   function renderAppealChat() {
     const wrap = document.getElementById("banAppealWrap");
     if (!wrap || !appealState || !appealState.has) return;
@@ -1002,7 +1043,26 @@ function showBanScreen(info) {
       row.className = "ac-m " + (m.from === "user" ? "user" : "staff");
       const who = document.createElement("div");
       who.className = "ac-who";
-      who.textContent = m.from === "user" ? "You" : m.by || "Staff";
+      if (m.from === "user") {
+        who.textContent = "You";
+      } else {
+        // A name, a rank and a face. Somebody appealing a ban is talking to a
+        // person, and every part of this is what makes that obvious.
+        who.appendChild(appealFace(m));
+        const nm = document.createElement("span");
+        nm.className = "ac-name";
+        nm.textContent = m.by || "Staff";
+        who.appendChild(nm);
+        const rank = document.createElement("span");
+        const isDev = m.role === "dev";
+        rank.className = "ac-rank" + (isDev ? " dev" : "");
+        rank.textContent = isDev
+          ? "Developer"
+          : m.level === 1
+            ? "Moderator"
+            : "Moderator";
+        who.appendChild(rank);
+      }
       row.appendChild(who);
       const b = document.createElement("div");
       b.className = "ac-b";

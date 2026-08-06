@@ -253,10 +253,12 @@ app.use(
         // unban, and a 429 body used to be misread client-side as "unbanned",
         // spawning a reload loop. Exempt this cheap read.
         url.endsWith("/ban-status") ||
-        // Same reasoning for the appeal conversation: polling it is the banned
-        // user's only way to see a moderator's reply, and a 429 would silently
-        // freeze the chat. Reads only - posting a message stays limited.
-        (req.method === "GET" && url.endsWith("/appeal"))
+        // Same reasoning for the appeal conversation: it is the banned user's
+        // only channel to staff, and a 429 would silently freeze it. The
+        // appeal store does the real limiting - a message cooldown and a cap
+        // per appeal - which is the limit that actually belongs here.
+        url.endsWith("/appeal") ||
+        url.endsWith("/appeal/message")
       );
     },
     message: {
@@ -774,7 +776,26 @@ app.get(`${API}/status`, (req, res) => {
 app.post(`${API}/bot-tokens/request`, handleBotTokenRequest);
 app.get(`${API}/bot-tokens/info`, handleBotTokenInfo);
 app.use("/api", antibotMiddleware);
-app.use("/api", enhancedRateLimit);
+
+// The ban screen is the one place where the caller is ALWAYS a blocked IP, and
+// enhancedRateLimit puts blocked IPs on the suspicious bucket: ten requests a
+// minute, then a five minute lockout. That budget is gone in seconds, and what
+// breaks is exactly what a banned user needs - the poll that notices their ban
+// was lifted, and the appeal conversation with staff. Both are cheap reads,
+// both are already throttled where it matters (the appeal store caps messages
+// per appeal and enforces a cooldown), so they skip the limiter entirely.
+const BAN_SCREEN_PATHS = new Set([
+  `${API}/ban-status`,
+  `${API}/appeal`,
+  `${API}/appeal/message`,
+]);
+app.use("/api", (req, res, next) => {
+  // originalUrl, not req.path: inside a mounted middleware the mount point is
+  // stripped, so req.path here is "/v1/ban-status" rather than the full route.
+  const path = (req.originalUrl || "").split("?")[0];
+  if (BAN_SCREEN_PATHS.has(path)) return next();
+  return enhancedRateLimit(req, res, next);
+});
 
 app.get(`${API}/config`, (req, res) => {
   const cached = state.apiCache.get("config");
@@ -905,7 +926,12 @@ function appealPayload(a) {
       id: m.id,
       ts: m.ts,
       from: m.from,
+      // Who they are talking to: the name, the rank, and the picture. Nothing
+      // here is private - it is the same flair the moderator wears in a room.
       by: m.from === "staff" ? m.by || "staff" : null,
+      role: m.from === "staff" ? m.role || "mod" : null,
+      level: m.from === "staff" ? (m.level == null ? 2 : m.level) : null,
+      avatar: m.from === "staff" ? m.avatar || null : null,
       text: m.text || "",
       reply: m.reply || null,
     })),
