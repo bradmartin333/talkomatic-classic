@@ -1013,15 +1013,9 @@ function showBanScreen(info) {
     letter.className = "ac-av-i";
     letter.textContent = (m.by || "S").trim().charAt(0).toUpperCase();
     wrap.appendChild(letter);
-    const av = m.avatar;
-    if (!av || !PFP_ID_RE.test(av.id || "") || !PFP_HASH_RE.test(av.hash || ""))
-      return wrap;
-    const url =
-      "https://cdn.discordapp.com/avatars/" +
-      av.id +
-      "/" +
-      av.hash +
-      ".webp?size=64";
+    // The lobby's own builder, so an animated picture animates here too.
+    const url = avatarUrl(m.avatar || {}, 64);
+    if (!url) return wrap;
     const img = document.createElement("img");
     img.loading = "eager";
     img.decoding = "async";

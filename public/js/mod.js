@@ -3371,12 +3371,12 @@
     log.textContent = "";
 
     const msgs = a.messages || [];
-    if (!msgs.length) log.appendChild(span("ap-empty", "Nothing said yet."));
+    if (!msgs.length) log.appendChild(span("apm-empty", "Nothing said yet."));
     let lastKey = null;
     let lastTs = 0;
     msgs.forEach((m) => {
       if (m.from === "system") {
-        log.appendChild(span("ap-sys", m.text));
+        log.appendChild(span("apm-sys", m.text));
         lastKey = null;
         return;
       }

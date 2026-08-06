@@ -115,17 +115,46 @@
   // server stores - same rule as the rooms, never a raw URL from data.
   const PFP_ID_RE = /^\d{17,20}$/;
   const PFP_HASH_RE = /^(?:a_)?[a-f0-9]{32}$/i;
+  // The same builder the lobby and the rooms use, character for character.
+  // The Desk had its own, and it was wrong twice: it only read `id` (the
+  // stored shape is sometimes `discordId`, which is why some people had no
+  // picture here but did in rooms), and it dropped `animated`, which is why
+  // the animated ones were showing as a still frame.
   function avatarUrl(av, size) {
-    if (!av || !PFP_ID_RE.test(av.id || "") || !PFP_HASH_RE.test(av.hash || ""))
+    if (!av) return null;
+    const id = av.discordId || av.id;
+    if (!PFP_ID_RE.test(id || "") || !PFP_HASH_RE.test(av.hash || ""))
       return null;
     return (
       "https://cdn.discordapp.com/avatars/" +
-      av.id +
+      id +
       "/" +
       av.hash +
       ".webp?size=" +
-      (size || 64)
+      (size || 64) +
+      (av.animated ? "&animated=true" : "")
     );
+  }
+
+  // Everybody's picture, remembered by staff label. Payloads disagree about
+  // who carries one: presence rows have it, offline roster rows never do, and
+  // an old message carries whatever was true when it was sent. Rendering
+  // straight from whichever payload happened to arrive is why faces came and
+  // went. Once seen, a picture is used everywhere that person appears.
+  const avatarMemory = new Map(); // lowercase label -> avatar
+
+  function rememberAvatar(label, av) {
+    if (!label || !av || !avatarUrl(av)) return;
+    avatarMemory.set(String(label).toLowerCase(), av);
+  }
+
+  function avatarFor(person) {
+    if (!person) return null;
+    if (person.avatar && avatarUrl(person.avatar)) {
+      rememberAvatar(person.label, person.avatar);
+      return person.avatar;
+    }
+    return avatarMemory.get(String(person.label || "").toLowerCase()) || null;
   }
 
   // The round face next to a message or presence row: their picture when they
@@ -146,7 +175,8 @@
     // so a slow or failed load shows a letter rather than an empty circle, and
     // nothing has to be swapped in later.
     wrap.appendChild(el("span", "dk-av-i", initialOf(author && author.label)));
-    const url = author && avatarUrl(author.avatar, 64);
+    // Their last known picture, not just whatever this payload carried.
+    const url = avatarUrl(avatarFor(author), 64);
     if (!url) return wrap;
     const img = document.createElement("img");
     // Not lazy: these are 26px and live in lists that re-render under the
@@ -156,11 +186,11 @@
     img.referrerPolicy = "no-referrer";
     img.alt = "";
     let retried = false;
-    img.addEventListener("load", () => {
-      avatarSeen.add(url);
-      wrap.classList.add("has-img");
-    });
+    img.addEventListener("load", () => avatarSeen.add(url));
     img.addEventListener("error", () => {
+      // A picture that has loaded before gets one retry: a single CDN hiccup
+      // used to drop somebody's face for the rest of the session. One that has
+      // never loaded is simply gone, and the letter underneath shows through.
       if (avatarSeen.has(url) && !retried) {
         retried = true;
         setTimeout(() => {
@@ -169,7 +199,6 @@
         return;
       }
       img.remove();
-      wrap.classList.remove("has-img");
     });
     img.src = url;
     wrap.appendChild(img);
@@ -185,6 +214,13 @@
 
   function forgetNames() {
     nameIndex = null;
+  }
+
+  // Anything that arrives with a picture on it teaches the memory. Called on
+  // every presence tick, roster push and message, so a face only has to be
+  // seen once to keep showing up.
+  function learnAvatars(list) {
+    for (const s of list || []) if (s && s.label) rememberAvatar(s.label, s.avatar);
   }
 
   function channelLabel(key) {
@@ -724,6 +760,7 @@
       threads = d.threads || [];
       unread = d.unread || {};
       presence = d.presence || presence;
+      learnAvatars(presence.staff);
       forgetNames();
       if (!channels.some((c) => c.key === viewKey()) && view.kind === "channel")
         view = {
@@ -749,6 +786,7 @@
 
     socket.on("desk message", (d) => {
       if (!d || !d.msg) return;
+      if (d.msg.author) rememberAvatar(d.msg.author.label, d.msg.author.avatar);
       const c = cacheFor(d.key);
       let change;
       if (c.detached && !d.updated) {
@@ -824,6 +862,7 @@
 
     socket.on("desk history", (d) => {
       if (!d || !d.key) return;
+      learnAvatars((d.messages || []).map((m) => m.author).filter(Boolean));
       const c = cacheFor(d.key);
       if (d.around != null) {
         // A window centred on a search hit.
@@ -853,6 +892,7 @@
     socket.on("desk presence", (p) => {
       if (p) {
         presence = p;
+        learnAvatars(p.staff);
         forgetNames();
         if (panelOpen) renderSide();
       }
@@ -872,6 +912,7 @@
 
     socket.on("desk roster", (d) => {
       roster = (d && d.staff) || [];
+      learnAvatars(roster);
       forgetNames();
       if (panelOpen && mode === "team") renderTeam();
     });
@@ -3246,6 +3287,10 @@
       const gutter = el("div", "dk-ap-gut");
       if (!grouped) {
         if (mine) {
+          // faceEl falls back to the remembered picture, so a moderator whose
+          // message predates their avatar still shows the face you know them
+          // by across the rest of the Desk.
+          rememberAvatar(m.by, m.avatar);
           const f = faceEl(
             { label: m.by, role: m.role, level: m.level, avatar: m.avatar },
             "sm",

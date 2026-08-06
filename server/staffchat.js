@@ -82,9 +82,18 @@ function who(socket) {
     role: socket.isDev ? "dev" : "mod",
     level: socket.isDev ? 0 : socket.modLevel || 2,
     alias: socket.handshake?.session?.username || null,
+    // Accept BOTH shapes the session can hold. It is written as {discordId}
+    // by the lobby and normalised to {id} on the identity path, and this only
+    // ever looked for `id` - so anybody whose session kept the other shape had
+    // no picture anywhere on the Desk while theirs showed fine in a room,
+    // where the client helper has always accepted either.
     avatar:
-      av && av.id && av.hash
-        ? { id: String(av.id), hash: String(av.hash), animated: !!av.animated }
+      av && (av.id || av.discordId) && av.hash
+        ? {
+            id: String(av.id || av.discordId),
+            hash: String(av.hash),
+            animated: !!av.animated,
+          }
         : null,
   };
 }

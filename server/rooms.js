@@ -6589,7 +6589,14 @@ function registerSocketHandlers(opts) {
             label: socket.staffLabel || (socket.isDev ? "dev" : "mod"),
             role: socket.isDev ? "dev" : "mod",
             level: socket.isDev ? 0 : socket.modLevel || 2,
-            avatar: av && av.id && av.hash ? { id: av.id, hash: av.hash } : null,
+            avatar:
+              av && (av.id || av.discordId) && av.hash
+                ? {
+                    id: av.id || av.discordId,
+                    hash: av.hash,
+                    animated: !!av.animated,
+                  }
+                : null,
           },
           Number(data?.replyTo) || null,
         );
@@ -7222,8 +7229,12 @@ function registerSocketHandlers(opts) {
           discord,
           answers: { why, availability },
           // Present only when they have linked their Discord picture, which is
-          // what lets a reviewer match them to the Talkomatic server.
-          discordId: socket.handshake.session?.avatar?.id || null,
+          // what lets a reviewer match them to the Talkomatic server. Either
+          // shape the session can hold counts.
+          discordId:
+            socket.handshake.session?.avatar?.id ||
+            socket.handshake.session?.avatar?.discordId ||
+            null,
         });
         if (!res.ok) return socket.emit("mod application result", res);
         audit.recordNotification({

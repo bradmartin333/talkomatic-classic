@@ -292,8 +292,15 @@ function staffReply(a, text, who, replyToId) {
     by: w.label || "staff",
     role: w.role === "dev" ? "dev" : "mod",
     level: w.role === "dev" ? 0 : w.level === 1 ? 1 : 2,
-    ...(w.avatar && w.avatar.id && w.avatar.hash
-      ? { avatar: { id: String(w.avatar.id), hash: String(w.avatar.hash) } }
+    // `animated` travels with it, or an animated picture arrives as a still.
+    ...(w.avatar && (w.avatar.id || w.avatar.discordId) && w.avatar.hash
+      ? {
+          avatar: {
+            id: String(w.avatar.id || w.avatar.discordId),
+            hash: String(w.avatar.hash),
+            animated: !!w.avatar.animated,
+          },
+        }
       : {}),
     text: body,
     ...(replySnapshot(a, replyToId)
