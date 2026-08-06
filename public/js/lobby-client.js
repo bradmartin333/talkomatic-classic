@@ -749,99 +749,114 @@ function showBanScreen(info) {
     const style = document.createElement("style");
     style.id = "banScreenStyles";
     style.textContent = `
+      /* Talkomatic's own language: flat #202020 behind, black cards, thin
+         #333 lines, a cream section strip with a coloured icon, orange fills.
+         Square corners throughout, same as the dashboard. */
       #banScreen{position:fixed;inset:0;z-index:1000001;background:#202020;
-        display:flex;align-items:flex-start;justify-content:center;padding:24px 20px;
+        display:flex;align-items:flex-start;justify-content:center;padding:20px 16px;
         overflow:auto;font-family:talkoSS,Arial,sans-serif;}
-      #banScreen .ban-card{max-width:560px;width:100%;background:#000;
-        border:1px solid #616161;border-radius:8px;text-align:center;
-        box-shadow:0 12px 40px rgba(0,0,0,.6);overflow:hidden;margin:auto;}
-      #banScreen .ban-hd{background:#303030;
-        border-bottom:1px solid #616161;padding:26px 28px 22px;}
-      #banScreen .ban-icon{font-size:46px;color:#ff5468;margin-bottom:10px;}
-      #banScreen h1{color:#ff9800;font-size:28px;margin:0;font-weight:bold;}
-      #banScreen .ban-body{padding:24px 28px 28px;}
-      #banScreen .ban-sub{color:#dcdcdc;font-size:15px;line-height:1.6;margin:0 0 18px;}
-      #banScreen .ban-meta{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;
-        margin:0 0 16px;}
-      #banScreen .ban-chip{display:inline-flex;align-items:center;gap:7px;background:#161616;
-        border:1px solid #333;border-radius:4px;padding:8px 12px;font-size:13px;color:#c3c3c3;}
-      #banScreen .ban-chip i{color:#ff9800;}
+      #banScreen .ban-card{max-width:620px;width:100%;background:#000;
+        border:1px solid #616161;border-radius:0;text-align:left;
+        overflow:hidden;margin:auto;}
+      #banScreen .ban-hd{background:#fdf5e6;color:#000;padding:13px 16px;
+        display:flex;align-items:center;gap:11px;}
+      #banScreen .ban-icon{font-size:17px;color:#c62828;}
+      #banScreen h1{color:#000;font-size:16px;margin:0;font-weight:bold;letter-spacing:.2px;flex:1;}
+      #banScreen .ban-hd-sub{font-size:12px;color:#5f5346;font-weight:bold;}
+      #banScreen .ban-body{padding:16px;display:flex;flex-direction:column;gap:14px;}
+      #banScreen .ban-sub{color:#dcdcdc;font-size:14px;line-height:1.6;margin:0;}
+      #banScreen .ban-meta{display:flex;flex-wrap:wrap;gap:7px;margin:0;}
+      #banScreen .ban-chip{display:inline-flex;align-items:center;gap:7px;background:#1b1b1b;
+        border:1px solid #333;border-radius:0;padding:6px 10px;font-size:12.5px;color:#c3c3c3;}
+      #banScreen .ban-chip i{color:#ff9800;font-size:11px;}
       #banScreen .ban-chip b{color:#fff;font-weight:bold;}
-      #banScreen .ban-strip{background:#161616;border:1px solid #333;
-        border-left:3px solid #ff9800;border-radius:0;padding:12px 14px;margin:0 0 16px;
+      /* Section strip, the same one the dashboard uses to open a block. */
+      #banScreen .ban-strip{background:#1b1b1b;border:1px solid #333;
+        border-left:3px solid #ff9800;border-radius:0;padding:11px 13px;margin:0;
         text-align:left;}
-      #banScreen .ban-strip .lbl{color:#ff9800;font-size:11px;text-transform:uppercase;
-        letter-spacing:1px;font-weight:bold;margin-bottom:5px;display:flex;align-items:center;gap:7px;}
-      #banScreen .ban-strip .txt{color:#e6e6e6;font-size:14.5px;line-height:1.5;
+      #banScreen .ban-strip .lbl{color:#ff9800;font-size:10.5px;text-transform:uppercase;
+        letter-spacing:.8px;font-weight:bold;margin-bottom:5px;display:flex;align-items:center;gap:7px;}
+      #banScreen .ban-strip .txt{color:#e6e6e6;font-size:14px;line-height:1.55;
         white-space:pre-wrap;word-break:break-word;}
-      #banScreen .ban-timer{background:#161616;border:1px solid #616161;border-radius:8px;
-        padding:16px;margin:0 0 16px;}
-      #banScreen .ban-timer-label{color:#8d8d8d;font-size:11px;text-transform:uppercase;
-        letter-spacing:1px;margin-bottom:8px;}
-      #banScreen .ban-timer-value{color:#fff;font-size:32px;font-weight:bold;
+      #banScreen .ban-timer{background:#1b1b1b;border:1px solid #333;border-radius:0;
+        padding:13px;margin:0;display:flex;align-items:center;justify-content:space-between;gap:12px;}
+      #banScreen .ban-timer-label{color:#8d8d8d;font-size:10.5px;text-transform:uppercase;
+        letter-spacing:.8px;}
+      #banScreen .ban-timer-value{color:#fff;font-size:26px;font-weight:bold;
         font-variant-numeric:tabular-nums;font-family:'Courier New',monospace;}
-      #banScreen .ban-perm{display:inline-block;background:#ff5468;color:#1a0005;
-        font-weight:bold;font-size:14px;padding:9px 16px;border-radius:4px;
-        text-transform:uppercase;letter-spacing:1px;margin:0 0 16px;}
-      #banScreen .ban-appeal{border-top:1px solid #333;margin-top:4px;padding-top:18px;text-align:left;}
-      #banScreen .ban-appeal-h{color:#fff;font-size:16px;font-weight:bold;margin:0 0 4px;
-        display:flex;align-items:center;gap:8px;}
-      #banScreen .ban-appeal-h i{color:#ff9800;}
-      #banScreen .ban-appeal-p{color:#9a9a9a;font-size:13px;line-height:1.5;margin:0 0 10px;}
-      #banScreen textarea#banAppealText{width:100%;min-height:96px;resize:vertical;
-        background:#000;color:#fff;border:1px solid #616161;border-radius:4px;padding:11px 12px;
-        font-family:talkoSS,Arial,sans-serif;font-size:14px;line-height:1.5;box-sizing:border-box;}
+      #banScreen .ban-perm{display:inline-flex;align-items:center;gap:8px;background:#1b1b1b;
+        border:1px solid #333;border-left:3px solid #ff5468;color:#ff5468;
+        font-weight:bold;font-size:13px;padding:11px 13px;border-radius:0;
+        text-transform:uppercase;letter-spacing:.8px;margin:0;}
+      /* The appeal panel is its own card, the way the dashboard and the
+         suggestion board stack sections. */
+      #banScreen .ban-appeal{background:#0d0d0d;border:1px solid #333;padding:0;text-align:left;}
+      #banScreen .ban-appeal-h{background:#1b1b1b;border-bottom:1px solid #333;
+        color:#fff;font-size:13px;font-weight:bold;margin:0;padding:10px 13px;
+        display:flex;align-items:center;gap:8px;letter-spacing:.2px;}
+      #banScreen .ban-appeal-h i{color:#ff9800;font-size:12px;}
+      #banScreen .ban-appeal-p{color:#9a9a9a;font-size:12.5px;line-height:1.6;
+        margin:0;padding:11px 13px 0;}
+      #banScreen textarea#banAppealText{width:calc(100% - 26px);min-height:74px;resize:vertical;
+        background:#000;color:#fff;border:1px solid #616161;border-radius:0;padding:10px 11px;
+        font-family:talkoSS,Arial,sans-serif;font-size:13.5px;line-height:1.5;
+        box-sizing:border-box;margin:11px 13px 0;display:block;}
       #banScreen textarea#banAppealText:focus{outline:none;border-color:#ff9800;}
-      #banScreen .ban-appeal-row{display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap;}
+      #banScreen .ban-appeal-row{display:flex;align-items:center;gap:11px;
+        padding:10px 13px 13px;flex-wrap:wrap;}
       #banScreen button#banAppealSend{display:inline-flex;align-items:center;gap:8px;
-        background:#ff9800;color:#000;border:none;border-radius:4px;padding:11px 22px;
-        font-size:14px;font-weight:bold;cursor:pointer;font-family:inherit;}
+        background:#ff9800;color:#000;border:none;border-radius:0;padding:9px 16px;
+        font-size:13px;font-weight:bold;cursor:pointer;font-family:inherit;}
       #banScreen button#banAppealSend:hover{background:#ffad33;}
       #banScreen button#banAppealSend:disabled{opacity:.6;cursor:default;}
-      #banScreen .ban-appeal-msg{font-size:13px;line-height:1.5;}
+      #banScreen .ban-appeal-msg{font-size:12.5px;line-height:1.5;}
       #banScreen .ban-appeal-msg.ok{color:#57d9a3;}
       #banScreen .ban-appeal-msg.err{color:#ff5468;}
-      #banScreen .ban-appeal-done{background:#161616;border:1px solid #333;
-        border-left:3px solid #57d9a3;border-radius:0;padding:14px;color:#d7f3e7;font-size:14px;
-        line-height:1.55;text-align:left;display:flex;gap:10px;align-items:flex-start;}
+      #banScreen .ban-appeal-done{background:#1b1b1b;border:none;
+        border-left:3px solid #57d9a3;border-radius:0;padding:13px;color:#d7f3e7;font-size:13.5px;
+        line-height:1.55;text-align:left;display:flex;gap:10px;align-items:flex-start;margin:11px 13px 13px;}
       #banScreen .ban-appeal-done i{color:#57d9a3;margin-top:2px;}
       /* ── The appeal conversation ──
-         Once an appeal is filed this becomes a chat with staff, because most
-         bans cannot be judged without asking what actually happened. */
-      #banScreen .ac-log{background:#0d0d0d;border:1px solid #333;padding:12px;
-        max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;
+         Bubbles: staff on the left with their face and rank, you on the right.
+         Nobody should have to work out who they are talking to. */
+      #banScreen .ac-log{background:#000;border-top:1px solid #333;border-bottom:1px solid #333;
+        padding:12px 13px;max-height:340px;overflow-y:auto;display:flex;flex-direction:column;
         scrollbar-width:thin;scrollbar-color:#3d3d3d transparent;}
       #banScreen .ac-log::-webkit-scrollbar{width:7px;}
       #banScreen .ac-log::-webkit-scrollbar-thumb{background:#3d3d3d;border-radius:4px;}
-      #banScreen .ac-m{display:flex;flex-direction:column;gap:3px;max-width:88%;}
+      #banScreen .ac-m{display:flex;flex-direction:column;gap:4px;max-width:88%;margin-top:12px;}
+      #banScreen .ac-m:first-child{margin-top:0;}
       #banScreen .ac-m.user{align-self:flex-end;align-items:flex-end;}
       #banScreen .ac-m.staff{align-self:flex-start;}
       #banScreen .ac-who{font-size:11px;color:#8d8d8d;font-weight:bold;
         display:flex;align-items:center;gap:7px;}
-      #banScreen .ac-m.staff .ac-who{color:#ff9800;}
       /* Who you are talking to: face, name, rank. */
-      #banScreen .ac-av{flex:none;width:24px;height:24px;border-radius:50%;overflow:hidden;
-        background:#2b5e9e;color:#fff;font-size:11px;font-weight:bold;display:flex;
-        align-items:center;justify-content:center;}
+      #banScreen .ac-av{position:relative;flex:none;width:26px;height:26px;border-radius:50%;
+        overflow:hidden;background:#2b5e9e;color:#fff;font-size:11px;font-weight:bold;
+        display:flex;align-items:center;justify-content:center;}
       #banScreen .ac-av.dev{background:#a3323f;}
-      #banScreen .ac-av img{width:100%;height:100%;object-fit:cover;display:block;}
+      #banScreen .ac-av-i{position:absolute;inset:0;display:flex;align-items:center;
+        justify-content:center;}
+      #banScreen .ac-av img{position:absolute;inset:0;width:100%;height:100%;
+        object-fit:cover;display:block;}
       #banScreen .ac-name{color:#fff;font-size:12.5px;}
       #banScreen .ac-rank{font-size:9.5px;font-weight:bold;letter-spacing:.5px;
         text-transform:uppercase;color:#5aa9ff;border:1px solid #5aa9ff;padding:1px 5px;}
       #banScreen .ac-rank.dev{color:#ff5468;border-color:#ff5468;}
-      #banScreen .ac-b{background:#1e1e1e;border:1px solid #333;padding:8px 11px;
-        font-size:13.5px;line-height:1.5;color:#ededed;white-space:pre-wrap;
-        word-break:break-word;text-align:left;}
-      #banScreen .ac-m.user .ac-b{background:#26211a;border-color:#4a3d28;}
-      #banScreen .ac-m.staff .ac-b{border-left:3px solid #ff9800;}
-      #banScreen .ac-q{font-size:11.5px;color:#8d8d8d;border-left:2px solid #444;
+      #banScreen .ac-b{background:#262626;padding:9px 12px;border-radius:12px 12px 12px 3px;
+        font-size:13.5px;line-height:1.55;color:#ededed;white-space:pre-wrap;
+        word-break:break-word;text-align:left;max-width:100%;}
+      #banScreen .ac-m.user .ac-b{background:#7a4d05;color:#fff;border-radius:12px 12px 3px 12px;}
+      #banScreen .ac-q{font-size:11.5px;color:rgba(255,255,255,.6);
+        border-left:2px solid rgba(255,255,255,.3);
         padding-left:7px;margin-bottom:5px;display:block;overflow:hidden;
         text-overflow:ellipsis;white-space:nowrap;max-width:100%;}
       #banScreen .ac-t{font-size:10.5px;color:#6f6f6f;}
-      #banScreen .ac-sys{align-self:center;max-width:100%;text-align:center;font-size:12.5px;
-        color:#9a9a9a;background:#161616;border:1px solid #333;padding:7px 12px;line-height:1.5;}
-      #banScreen .ac-reply{display:flex;align-items:center;gap:8px;background:#161616;
-        border:1px solid #333;border-left:3px solid #ff9800;padding:7px 10px;margin-top:10px;
+      #banScreen .ac-sys{align-self:center;max-width:100%;text-align:center;font-size:12px;
+        color:#9a9a9a;background:#1b1b1b;border:1px solid #333;padding:6px 11px;
+        line-height:1.5;margin-top:12px;}
+      #banScreen .ac-reply{display:flex;align-items:center;gap:8px;background:#1b1b1b;
+        border-left:3px solid #ff9800;padding:7px 10px;margin:11px 13px 0;
         font-size:12.5px;color:#c3c3c3;text-align:left;}
       #banScreen .ac-reply span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
         white-space:nowrap;}
@@ -850,14 +865,20 @@ function showBanScreen(info) {
       #banScreen .ac-rbtn{background:none;border:none;color:#6f6f6f;cursor:pointer;
         font-size:11px;font-family:inherit;padding:0;text-decoration:underline;}
       #banScreen .ac-rbtn:hover{color:#ff9800;}
-      #banScreen .ac-closed{background:#161616;border:1px solid #333;padding:11px 13px;
-        margin-top:10px;font-size:13px;color:#9a9a9a;line-height:1.5;text-align:left;}
-      #banScreen .ban-foot{margin-top:18px;padding-top:18px;border-top:1px solid #333;}
+      #banScreen .ac-closed{background:#1b1b1b;border-left:3px solid #616161;padding:11px 13px;
+        margin:11px 13px 13px;font-size:12.5px;color:#9a9a9a;line-height:1.55;text-align:left;}
+      #banScreen .ban-foot{padding-top:2px;display:flex;flex-direction:column;
+        align-items:flex-start;gap:10px;}
       #banScreen .ban-discord{display:inline-flex;align-items:center;gap:9px;background:#5865f2;
-        color:#fff;text-decoration:none;font-size:14px;font-weight:bold;padding:11px 20px;
-        border-radius:4px;transition:background .2s;}
+        color:#fff;text-decoration:none;font-size:13px;font-weight:bold;padding:9px 16px;
+        border-radius:0;transition:background .2s;}
       #banScreen .ban-discord:hover{background:#4752c4;}
-      #banScreen .ban-note{color:#8d8d8d;font-size:12.5px;margin-top:14px;line-height:1.5;}
+      #banScreen .ban-note{color:#8d8d8d;font-size:12px;margin:0;line-height:1.55;}
+      @media (max-width:520px){
+        #banScreen{padding:0;}
+        #banScreen .ban-card{border:none;min-height:100%;}
+        #banScreen .ac-m{max-width:96%;}
+      }
     `;
     document.head.appendChild(style);
   }
@@ -867,20 +888,32 @@ function showBanScreen(info) {
     ? '<div class="ban-perm"><i class="fas fa-ban"></i> Permanent ban</div>'
     : '<div class="ban-timer"><div class="ban-timer-label">Time remaining</div>' +
       '<div class="ban-timer-value" id="banCountdown">--:--:--</div></div>';
+  const foot =
+    '<div class="ban-foot">' +
+    '<a class="ban-discord" href="' +
+    DISCORD +
+    '" target="_blank" rel="noopener noreferrer">' +
+    '<i class="fab fa-discord"></i> Talkomatic Discord</a>' +
+    '<p class="ban-note">' +
+    (permanent ? "" : "This page updates itself the moment your ban ends. ") +
+    "Every appeal is read by a person." +
+    "</p>" +
+    "</div>";
 
   const overlay = document.createElement("div");
   overlay.id = "banScreen";
   overlay.innerHTML =
     '<div class="ban-card">' +
     '<div class="ban-hd">' +
-    '<div class="ban-icon"><i class="fas fa-gavel"></i></div>' +
-    "<h1>Access Blocked</h1>" +
+    '<i class="fas fa-gavel ban-icon"></i>' +
+    "<h1>Access blocked</h1>" +
+    '<span class="ban-hd-sub">Talkomatic</span>' +
     "</div>" +
     '<div class="ban-body">' +
     '<p class="ban-sub">' +
     (permanent
-      ? "Your access to Talkomatic has been permanently blocked by a moderator."
-      : "Your access to Talkomatic has been temporarily blocked by a moderator.") +
+      ? "A moderator has permanently blocked your access to Talkomatic."
+      : "A moderator has temporarily blocked your access to Talkomatic.") +
     "</p>" +
     '<div class="ban-meta" id="banMeta"></div>' +
     '<div class="ban-strip" id="banReason" style="display:none">' +
@@ -890,23 +923,14 @@ function showBanScreen(info) {
     timerHtml +
     '<div class="ban-appeal" id="banAppealWrap">' +
     '<div class="ban-appeal-h"><i class="fas fa-scale-balanced"></i> Appeal this ban</div>' +
-    '<p class="ban-appeal-p">Think this was a mistake? Send a short appeal and a staff member will review it. You only need to send it once.</p>' +
+    '<p class="ban-appeal-p">Think this was a mistake? Say what happened. A moderator reads it and can ask you questions here.</p>' +
     '<textarea id="banAppealText" maxlength="1000" placeholder="Explain why this ban should be lifted..."></textarea>' +
     '<div class="ban-appeal-row">' +
-    '<button id="banAppealSend"><i class="fas fa-paper-plane"></i> Submit appeal</button>' +
+    '<button id="banAppealSend"><i class="fas fa-paper-plane"></i> Send appeal</button>' +
     '<span class="ban-appeal-msg" id="banAppealMsg"></span>' +
     "</div>" +
     "</div>" +
-    '<div class="ban-foot">' +
-    '<a class="ban-discord" href="' +
-    DISCORD +
-    '" target="_blank" rel="noopener noreferrer">' +
-    '<i class="fab fa-discord"></i> Or appeal on our Discord</a>' +
-    '<p class="ban-note">' +
-    (permanent ? "" : "This page refreshes automatically once your ban ends. ") +
-    "Staff review every appeal." +
-    "</p>" +
-    "</div>" +
+    foot +
     "</div>" +
     "</div>";
   document.body.appendChild(overlay);
@@ -978,28 +1002,45 @@ function showBanScreen(info) {
   // Falls back to their initial, so there is always a face on the message.
   const PFP_ID_RE = /^\d{17,20}$/;
   const PFP_HASH_RE = /^(?:a_)?[a-f0-9]{32}$/i;
+  const banAvatarSeen = new Set();
   function appealFace(m) {
     const wrap = document.createElement("span");
     wrap.className = "ac-av" + (m.role === "dev" ? " dev" : "");
+    // The initial goes underneath and stays there. The picture covers it, so
+    // a redraw or a CDN hiccup can never leave an empty circle - which is how
+    // faces were disappearing mid-conversation.
+    const letter = document.createElement("span");
+    letter.className = "ac-av-i";
+    letter.textContent = (m.by || "S").trim().charAt(0).toUpperCase();
+    wrap.appendChild(letter);
     const av = m.avatar;
-    if (av && PFP_ID_RE.test(av.id || "") && PFP_HASH_RE.test(av.hash || "")) {
-      const img = document.createElement("img");
-      img.src =
-        "https://cdn.discordapp.com/avatars/" +
-        av.id +
-        "/" +
-        av.hash +
-        ".webp?size=64";
-      img.alt = "";
-      img.loading = "lazy";
-      img.addEventListener("error", () => {
-        img.remove();
-        wrap.textContent = (m.by || "S").trim().charAt(0).toUpperCase();
-      });
-      wrap.appendChild(img);
-    } else {
-      wrap.textContent = (m.by || "S").trim().charAt(0).toUpperCase();
-    }
+    if (!av || !PFP_ID_RE.test(av.id || "") || !PFP_HASH_RE.test(av.hash || ""))
+      return wrap;
+    const url =
+      "https://cdn.discordapp.com/avatars/" +
+      av.id +
+      "/" +
+      av.hash +
+      ".webp?size=64";
+    const img = document.createElement("img");
+    img.loading = "eager";
+    img.decoding = "async";
+    img.referrerPolicy = "no-referrer";
+    img.alt = "";
+    let retried = false;
+    img.addEventListener("load", () => banAvatarSeen.add(url));
+    img.addEventListener("error", () => {
+      if (banAvatarSeen.has(url) && !retried) {
+        retried = true;
+        setTimeout(() => {
+          img.src = url + "&r=1";
+        }, 400);
+        return;
+      }
+      img.remove();
+    });
+    img.src = url;
+    wrap.appendChild(img);
     return wrap;
   }
 

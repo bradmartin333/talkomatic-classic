@@ -130,26 +130,49 @@
 
   // The round face next to a message or presence row: their picture when they
   // have one, their initial when they do not.
+  // Pictures that have loaded at least once. The panel re-renders constantly -
+  // every presence tick rebuilds the side pane - and each rebuild asks the CDN
+  // for the picture again. One hiccup used to replace it with a letter for the
+  // rest of the session, which is why faces kept vanishing. A URL that has
+  // worked before gets one retry before giving up.
+  const avatarSeen = new Set();
+
   function faceEl(author, cls) {
     const wrap = el(
       "span",
       "dk-av " + (cls || "") + " " + (rankOf(author) || ""),
     );
+    // The initial is ALWAYS there, underneath. The picture sits on top of it,
+    // so a slow or failed load shows a letter rather than an empty circle, and
+    // nothing has to be swapped in later.
+    wrap.appendChild(el("span", "dk-av-i", initialOf(author && author.label)));
     const url = author && avatarUrl(author.avatar, 64);
-    if (url) {
-      const img = document.createElement("img");
-      img.src = url;
-      img.alt = "";
-      img.loading = "lazy";
-      // A dead CDN link falls back to the initial instead of a broken image.
-      img.addEventListener("error", () => {
-        img.remove();
-        wrap.textContent = initialOf(author && author.label);
-      });
-      wrap.appendChild(img);
-    } else {
-      wrap.textContent = initialOf(author && author.label);
-    }
+    if (!url) return wrap;
+    const img = document.createElement("img");
+    // Not lazy: these are 26px and live in lists that re-render under the
+    // scroll position, where a deferred load often never happens at all.
+    img.loading = "eager";
+    img.decoding = "async";
+    img.referrerPolicy = "no-referrer";
+    img.alt = "";
+    let retried = false;
+    img.addEventListener("load", () => {
+      avatarSeen.add(url);
+      wrap.classList.add("has-img");
+    });
+    img.addEventListener("error", () => {
+      if (avatarSeen.has(url) && !retried) {
+        retried = true;
+        setTimeout(() => {
+          img.src = url + "&r=1";
+        }, 400);
+        return;
+      }
+      img.remove();
+      wrap.classList.remove("has-img");
+    });
+    img.src = url;
+    wrap.appendChild(img);
     return wrap;
   }
 
@@ -851,6 +874,15 @@
       roster = (d && d.staff) || [];
       forgetNames();
       if (panelOpen && mode === "team") renderTeam();
+    });
+
+    // A record we asked for. The dashboard listens for this too, so only take
+    // it when the Desk is the one waiting.
+    socket.on("staff mod history", (h) => {
+      if (!h || !recordFor || !recordFor.loading) return;
+      if ((h.label || "") !== recordFor.label) return;
+      recordFor = Object.assign({}, h, { loading: false, role: recordFor.role });
+      showRecord();
     });
 
     // The appeal being read, pushed whenever either side says anything.
@@ -2370,9 +2402,22 @@
 
     if (!grouped) {
       const rank = rankOf(m.author);
-      r.appendChild(faceEl(m.author));
+      // Face and name both open that person's record.
+      const openRec = (e) => {
+        e.stopPropagation();
+        openRecord(m.author.label, m.author.role);
+      };
+      const face = faceEl(m.author);
+      face.classList.add("clickable");
+      face.title = "Open " + m.author.label + "'s record";
+      face.addEventListener("click", openRec);
+      r.appendChild(face);
       const head = el("div", "dk-mhead");
-      head.appendChild(el("span", "dk-mname", m.author.label));
+      const nameBtn = el("button", "dk-mname clickable", m.author.label);
+      nameBtn.type = "button";
+      nameBtn.title = "Open " + m.author.label + "'s record";
+      nameBtn.addEventListener("click", openRec);
+      head.appendChild(nameBtn);
       head.appendChild(el("span", "dk-chip " + rank, rankName(rank)));
       if (m.author.alias && m.author.alias !== m.author.label)
         head.appendChild(el("span", "dk-alias", 'as "' + m.author.alias + '"'));
@@ -2707,10 +2752,24 @@
   // them, so it is not repeated on every line.
   function staffRow(s, offline) {
     const row = el("div", "dk-staff" + (offline ? " off" : ""));
-    row.appendChild(faceEl(s, "sm"));
+    // The whole identity opens their record: the picture and the name are the
+    // two things people actually aim at.
+    const open = (e) => {
+      e.stopPropagation();
+      openRecord(s.label, s.role);
+    };
+    const face = faceEl(s, "sm");
+    face.classList.add("clickable");
+    face.title = "Open " + s.label + "'s record";
+    face.addEventListener("click", open);
+    row.appendChild(face);
     const w = el("div", "dk-staff-w");
     const nameLine = el("div", "dk-staff-n");
-    nameLine.appendChild(el("span", "dk-staff-name", s.label));
+    const nameBtn = el("button", "dk-staff-name clickable", s.label);
+    nameBtn.type = "button";
+    nameBtn.title = "Open " + s.label + "'s record";
+    nameBtn.addEventListener("click", open);
+    nameLine.appendChild(nameBtn);
     if (s.hidden) nameLine.appendChild(el("span", "dk-chip ghost", "HIDDEN"));
     if (s.vanished)
       nameLine.appendChild(el("span", "dk-chip ghost", "VANISHED"));
@@ -3057,6 +3116,218 @@
   const appealDraft = new Map();
   let appealReply = null;
 
+  // ── One staff member's record, from anywhere ──────────────────────────────
+  // Clicking a name or a face on the Desk asks the server the same question
+  // the dashboard asks, and shows the answer in place. The Desk is on every
+  // page, so this is usually the fastest way to check who somebody is before
+  // handing them something.
+  let recordFor = null; // { label, role }
+
+  function openRecord(label, role) {
+    if (!label) return;
+    recordFor = { label, role: role === "dev" ? "dev" : "mod", loading: true };
+    socket.emit("staff get mod history", { label, role: recordFor.role, limit: 12 });
+    showRecord();
+  }
+
+  function showRecord() {
+    if (!els.record) {
+      els.record = el("div", "dk-rec");
+      els.record.addEventListener("click", (e) => {
+        if (e.target === els.record) closeRecord();
+      });
+      els.panel.appendChild(els.record);
+    }
+    const h = recordFor || {};
+    els.record.textContent = "";
+    els.record.style.display = "";
+
+    const card = el("div", "dk-rec-c");
+    const head = el("div", "dk-rec-h");
+    head.appendChild(
+      faceEl({ label: h.label, role: h.role, level: h.level }, "sm"),
+    );
+    const ht = el("div", "dk-rec-ht");
+    ht.appendChild(el("span", "dk-rec-n", h.label || "Staff"));
+    const r = h.role === "dev" ? "dev" : (h.modLevel || 2) >= 2 ? "l2" : "l1";
+    ht.appendChild(el("span", "dk-chip " + r, rankName(r)));
+    head.appendChild(ht);
+    const x = btn("dk-hbtn", null, "fa-xmark", "Close");
+    x.addEventListener("click", closeRecord);
+    head.appendChild(x);
+    card.appendChild(head);
+
+    const body = el("div", "dk-rec-b");
+    if (h.loading) {
+      body.appendChild(el("div", "dk-empty", "Looking..."));
+    } else {
+      const grid = el("div", "dk-rec-g");
+      const stat = (n, label, cls) => {
+        const c = el("div", "dk-rec-s" + (cls ? " " + cls : ""));
+        c.appendChild(el("div", "dk-rec-sn", String(n)));
+        c.appendChild(el("div", "dk-rec-sl", label));
+        grid.appendChild(c);
+      };
+      stat(h.onUsers || 0, "actions on users", "lead");
+      stat(h.useful || 0, "not passive");
+      stat(h.total || 0, "logged in total");
+      stat(h.distinctTargets || 0, "different people");
+      body.appendChild(grid);
+      if (h.last)
+        body.appendChild(
+          el("div", "dk-rec-when", "Last action " + relTime(h.last) + " ago"),
+        );
+      if (h.flags && h.flags.length) {
+        body.appendChild(el("div", "dk-side-h", "Worth a look"));
+        for (const f of h.flags.slice(0, 4))
+          body.appendChild(el("div", "dk-rec-flag", f.title || f.kind || "flag"));
+      }
+      body.appendChild(el("div", "dk-side-h", "Recent"));
+      const list = h.entries || [];
+      if (!list.length) body.appendChild(el("div", "dk-empty", "Nothing yet."));
+      for (const e of list.slice(0, 12)) {
+        const row = el("div", "dk-rec-e");
+        row.appendChild(el("span", "dk-rec-ea", e.action || "?"));
+        if (e.target)
+          row.appendChild(el("span", "dk-rec-et", String(e.target).replace(/^user:/, "")));
+        row.appendChild(el("span", "dk-rec-ew", relTime(e.ts)));
+        body.appendChild(row);
+      }
+      body.appendChild(
+        el(
+          "div",
+          "dk-rec-foot",
+          "The full record, with the flags and every page of it, is in the dashboard.",
+        ),
+      );
+    }
+    card.appendChild(body);
+    els.record.appendChild(card);
+  }
+
+  function closeRecord() {
+    recordFor = null;
+    if (els.record) els.record.style.display = "none";
+  }
+
+  // One appeal's conversation, drawn into `host`. Bubbles, not rows: the
+  // banned person on the left, staff on the right, so who is answering whom is
+  // readable without stopping to read a name. Several moderators in one thread
+  // is the case that used to get confusing, so every staff message carries its
+  // own face and name, and only repeats them when the speaker changes.
+  function appealThread(host, a) {
+    const msgs = (a.messages || []).slice();
+    if (!msgs.length) {
+      host.appendChild(el("div", "dk-empty", "Nothing said yet."));
+      return;
+    }
+    let lastKey = null;
+    let lastTs = 0;
+    for (const m of msgs) {
+      if (m.from === "system") {
+        host.appendChild(el("div", "dk-ap-sys", m.text));
+        lastKey = null;
+        continue;
+      }
+      const mine = m.from === "staff";
+      // Two messages group when the same person sends them close together.
+      const key = mine ? "staff:" + (m.by || "?") : "user";
+      const grouped = key === lastKey && m.ts - lastTs < 5 * 60 * 1000;
+      lastKey = key;
+      lastTs = m.ts;
+
+      const row = el(
+        "div",
+        "dk-ap-m " + (mine ? "staff" : "user") + (grouped ? " grouped" : ""),
+      );
+
+      // The face column. Empty on a grouped message so a run from one person
+      // reads as one block rather than a column of repeated pictures.
+      const gutter = el("div", "dk-ap-gut");
+      if (!grouped) {
+        if (mine) {
+          const f = faceEl(
+            { label: m.by, role: m.role, level: m.level, avatar: m.avatar },
+            "sm",
+          );
+          // Clicking a moderator opens their record, the same as anywhere else
+          // on the Desk.
+          f.classList.add("clickable");
+          f.title = "Open " + (m.by || "their") + "'s record";
+          f.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openRecord(m.by, m.role === "dev" ? "dev" : "mod");
+          });
+          gutter.appendChild(f);
+        } else {
+          const f = el("span", "dk-av sm banned");
+          f.appendChild(el("span", "dk-av-i", initialOf(a.name || "?")));
+          f.title = (a.name || "This user") + " - the banned user";
+          gutter.appendChild(f);
+        }
+      }
+      row.appendChild(gutter);
+
+      const stack = el("div", "dk-ap-stack");
+      if (!grouped) {
+        const who = el("div", "dk-ap-who");
+        if (mine) {
+          const nm = el("button", "dk-ap-name", m.by || "Staff");
+          nm.type = "button";
+          nm.title = "Open " + (m.by || "their") + "'s record";
+          nm.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openRecord(m.by, m.role === "dev" ? "dev" : "mod");
+          });
+          who.appendChild(nm);
+          const r = m.role === "dev" ? "dev" : (m.level || 2) >= 2 ? "l2" : "l1";
+          who.appendChild(el("span", "dk-chip " + r, rankName(r)));
+        } else {
+          who.appendChild(el("span", "dk-ap-name plain", a.name || "Banned user"));
+          who.appendChild(el("span", "dk-chip banned", "BANNED"));
+        }
+        const t = el("span", "dk-ap-t", relTime(m.ts));
+        t.title = new Date(m.ts).toLocaleString();
+        who.appendChild(t);
+        stack.appendChild(who);
+      }
+
+      const b = el("div", "dk-ap-bub");
+      if (m.reply)
+        b.appendChild(
+          el(
+            "div",
+            "dk-ap-quote",
+            (m.reply.from === "staff"
+              ? m.reply.by || "Staff"
+              : a.name || "Them") +
+              ": " +
+              m.reply.text,
+          ),
+        );
+      b.appendChild(textEl(m.text, "dk-ap-txt"));
+      // Clicking a message is the quick way to answer it: it arms the reply
+      // exactly as the reply button does.
+      if (a.status === "open") {
+        b.classList.add("clickable");
+        b.title = "Click to reply to this";
+        b.addEventListener("click", () => {
+          appealReply = {
+            id: m.id,
+            by: mine ? m.by || "Staff" : a.name || "Them",
+            text: String(m.text || "").slice(0, 90),
+          };
+          renderAppeal();
+          const box = els.main && els.main.querySelector(".dk-comp .dk-input");
+          if (box) box.focus();
+        });
+      }
+      stack.appendChild(b);
+      row.appendChild(stack);
+      host.appendChild(row);
+    }
+  }
+
   function openAppeal(id) {
     mode = "appeal";
     appeal = appeal && appeal.id === id ? appeal : { id, loading: true };
@@ -3121,53 +3392,12 @@
     head.appendChild(hb);
     body.appendChild(head);
 
-    for (const m of a.messages || []) {
-      if (m.from === "system") {
-        body.appendChild(el("div", "dk-ap-sys", m.text));
-        continue;
-      }
-      const row = el("div", "dk-ap-m " + (m.from === "staff" ? "staff" : "user"));
-      const who = el("div", "dk-ap-who");
-      who.appendChild(
-        el(
-          "span",
-          "dk-ap-name",
-          m.from === "staff" ? m.by || "Staff" : a.name || "Them",
-        ),
-      );
-      const t = el("span", "dk-ap-t", relTime(m.ts));
-      t.title = new Date(m.ts).toLocaleString();
-      who.appendChild(t);
-      if (a.status === "open") {
-        const rb = btn("dk-ap-rb", "reply", null);
-        rb.addEventListener("click", () => {
-          appealReply = {
-            id: m.id,
-            by: m.from === "staff" ? m.by || "Staff" : a.name || "Them",
-            text: String(m.text || "").slice(0, 90),
-          };
-          renderAppeal();
-        });
-        who.appendChild(rb);
-      }
-      row.appendChild(who);
-      const b = el("div", "dk-ap-bub");
-      if (m.reply)
-        b.appendChild(
-          el(
-            "div",
-            "dk-ap-quote",
-            (m.reply.from === "staff" ? m.reply.by || "Staff" : a.name || "Them") +
-              ": " +
-              m.reply.text,
-          ),
-        );
-      b.appendChild(textEl(m.text, "dk-ap-txt"));
-      row.appendChild(b);
-      body.appendChild(row);
-    }
+    appealThread(body, a);
     main.appendChild(body);
-    body.scrollTop = body.scrollHeight;
+    // Land on the newest line without animating past the whole history.
+    requestAnimationFrame(() => {
+      body.scrollTop = body.scrollHeight;
+    });
 
     if (a.status !== "open") {
       main.appendChild(
@@ -4344,11 +4574,14 @@
 .dk-av{position:absolute;left:4px;top:2px;width:32px;height:32px;border-radius:50%;display:flex;
   align-items:center;justify-content:center;font-weight:bold;font-size:14px;color: #fff;background: #616161;
   overflow:hidden;flex:none;}
-.dk-av.sm{position:static;width:26px;height:26px;font-size:12px;}
+.dk-av.sm{position:relative;width:26px;height:26px;font-size:12px;}
 .dk-av.dev{background: #a3323f;}
 .dk-av.l2{background: #2b5e9e;}
 .dk-av.l1{background: #6d4b9e;}
-.dk-av img{width:100%;height:100%;object-fit:cover;display:block;}
+/* The letter sits underneath and the picture covers it, so a slow or failed
+   load degrades to an initial instead of an empty hole. */
+.dk-av-i{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;}
+.dk-av img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;}
 .dk-quote{display:flex;align-items:baseline;gap:6px;width:100%;text-align:left;background:none;border:none;
   font-family:inherit;color: #8d8d8d;font-size:11.5px;padding:0 0 3px 0;cursor:pointer;min-width:0;}
 .dk-quote .fas{font-size:9px;flex:none;}
@@ -4504,22 +4737,66 @@
 .dk-ap-ban-b{display:flex;flex-direction:column;gap:2px;min-width:0;}
 .dk-ap-ban-t{font-size:12.5px;font-weight:bold;}
 .dk-ap-ban-r{font-size:12px;color: #8d8d8d;line-height:1.5;word-break:break-word;}
-.dk-ap-m{display:flex;flex-direction:column;gap:3px;max-width:82%;margin-top:8px;}
-.dk-ap-m.staff{align-self:flex-end;align-items:flex-end;}
-.dk-ap-who{display:flex;align-items:center;gap:7px;font-size:11px;color: #8d8d8d;}
-.dk-ap-name{font-weight:bold;color: #c3c3c3;}
-.dk-ap-m.staff .dk-ap-name{color: #ff9800;}
-.dk-ap-rb{background:none;border:none;color: #6f6f6f;font-family:inherit;font-size:11px;
-  cursor:pointer;padding:0;text-decoration:underline;}
-.dk-ap-rb:hover{color: #ff9800;}
-.dk-ap-bub{background: #1b1b1b;border:1px solid #2a2a2a;padding:7px 10px;font-size:13px;
-  line-height:1.55;word-break:break-word;}
-.dk-ap-m.staff .dk-ap-bub{border-right:3px solid #ff9800;}
-.dk-ap-m.user .dk-ap-bub{border-left:3px solid #616161;}
-.dk-ap-quote{font-size:11px;color: #8d8d8d;border-left:2px solid #444;padding-left:7px;
-  margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* Bubbles, not rows. The banned person is on the left with a face and a
+   BANNED tag, staff are on the right; a run from one person keeps one face
+   and one name. Nothing here wears a coloured edge strip - the side of the
+   panel it sits on is what says who is talking. */
+.dk-ap-m{display:flex;gap:8px;margin-top:10px;max-width:86%;align-items:flex-end;}
+.dk-ap-m.grouped{margin-top:2px;}
+.dk-ap-m.staff{margin-left:auto;flex-direction:row-reverse;}
+.dk-ap-gut{flex:none;width:26px;}
+.dk-ap-stack{display:flex;flex-direction:column;gap:3px;min-width:0;}
+.dk-ap-m.staff .dk-ap-stack{align-items:flex-end;}
+.dk-ap-who{display:flex;align-items:center;gap:6px;font-size:11px;color: #8d8d8d;flex-wrap:wrap;}
+.dk-ap-m.staff .dk-ap-who{flex-direction:row-reverse;}
+.dk-ap-name{font-weight:bold;color: #ff9800;background:none;border:none;padding:0;
+  font-family:inherit;font-size:11.5px;cursor:pointer;}
+.dk-ap-name:hover{text-decoration:underline;}
+.dk-ap-name.plain{color: #c3c3c3;cursor:default;}
+.dk-ap-name.plain:hover{text-decoration:none;}
+.dk-chip.banned{color: #ff5468;border-color: #ff5468;}
+.dk-av.banned{background: #4a2a30;}
+.dk-ap-bub{background: #262626;padding:8px 11px;font-size:13px;line-height:1.55;
+  word-break:break-word;border-radius:12px 12px 12px 3px;max-width:100%;}
+.dk-ap-m.staff .dk-ap-bub{background: #7a4d05;color: #fff;border-radius:12px 12px 3px 12px;}
+.dk-ap-m.grouped.user .dk-ap-bub{border-radius:3px 12px 12px 3px;}
+.dk-ap-m.grouped.staff .dk-ap-bub{border-radius:12px 3px 3px 12px;}
+.dk-ap-bub.clickable{cursor:pointer;}
+.dk-ap-bub.clickable:hover{filter:brightness(1.16);}
+.dk-ap-quote{font-size:11px;color:rgba(255,255,255,.62);border-left:2px solid rgba(255,255,255,.3);
+  padding-left:7px;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .dk-ap-sys{align-self:center;text-align:center;font-size:11.5px;color: #8d8d8d;background: #1b1b1b;
-  border:1px solid #2a2a2a;padding:5px 10px;margin-top:8px;max-width:100%;}
+  border:1px solid #2a2a2a;padding:5px 10px;margin:10px auto 0;max-width:100%;width:fit-content;}
+.dk-av.clickable,.dk-mname.clickable,.dk-staff-name.clickable{cursor:pointer;}
+.dk-mname.clickable,.dk-staff-name.clickable{background:none;border:none;padding:0;
+  font:inherit;color:inherit;text-align:left;}
+.dk-mname.clickable:hover,.dk-staff-name.clickable:hover{color: #ff9800;text-decoration:underline;}
+.dk-av.clickable:hover{outline:2px solid #ff9800;outline-offset:1px;}
+
+/* ── One staff member's record, over the panel ── */
+.dk-rec{position:absolute;inset:0;z-index:9;background:rgba(0,0,0,.62);display:flex;
+  align-items:center;justify-content:center;padding:18px;}
+.dk-rec-c{background: #202020;border:1px solid #616161;width:min(460px,100%);
+  max-height:100%;display:flex;flex-direction:column;overflow:hidden;}
+.dk-rec-h{flex:none;display:flex;align-items:center;gap:10px;padding:11px 13px;
+  border-bottom:1px solid #333;background: #1b1b1b;}
+.dk-rec-ht{display:flex;align-items:center;gap:8px;flex:1;min-width:0;}
+.dk-rec-n{font-weight:bold;font-size:14px;}
+.dk-rec-b{overflow-y:auto;padding:13px;display:flex;flex-direction:column;gap:9px;}
+.dk-rec-g{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:7px;}
+.dk-rec-s{background: #141414;border:1px solid #2a2a2a;padding:8px 10px;}
+.dk-rec-s.lead{border-color:rgba(255,152,0,.35);}
+.dk-rec-sn{font-size:17px;font-weight:bold;font-variant-numeric:tabular-nums;}
+.dk-rec-s.lead .dk-rec-sn{color: #ff9800;}
+.dk-rec-sl{font-size:10.5px;color: #8d8d8d;margin-top:2px;}
+.dk-rec-when{font-size:11.5px;color: #8d8d8d;}
+.dk-rec-flag{font-size:12px;color: #ffb454;background:rgba(255,180,84,.08);
+  border-left:3px solid #ffb454;padding:6px 9px;}
+.dk-rec-e{display:flex;align-items:baseline;gap:8px;font-size:12px;padding:5px 8px;background: #1b1b1b;}
+.dk-rec-ea{font-weight:bold;flex:none;}
+.dk-rec-et{color: #8d8d8d;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dk-rec-ew{color: #6f6f6f;font-size:11px;flex:none;}
+.dk-rec-foot{font-size:11px;color: #6f6f6f;line-height:1.5;}
 .dk-ap-acts{flex:none;display:flex;gap:6px;flex-wrap:wrap;padding:9px 14px;border-top:1px solid #333;
   background: #1b1b1b;}
 

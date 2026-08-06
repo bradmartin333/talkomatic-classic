@@ -3311,98 +3311,180 @@
   }
 
   // ── The appeal conversation ──────────────────────────────────────────────
-  // An appeal is a chat now, because a ban is much easier to judge once you
-  // have asked what actually happened. Same thread the user sees on their ban
-  // screen, same thread the Desk shows.
+  // In a modal of its own. Inline in the card it was unusable: every message
+  // that arrived re-rendered the whole board, which moved the page under
+  // whoever was reading and threw away what they were typing. The modal owns
+  // its scroll position and its draft, and updates in place.
   const appealDrafts = new Map(); // id -> half-typed reply
   const appealReplyTo = new Map(); // id -> message being answered
+  let appealChat = null; // { id, ctrl, log, replyHost, input }
 
-  function buildAppealChat(a) {
-    const box = divc("ap-box ap-chat");
-    const lbl = divc("lbl");
-    lbl.appendChild(icon("fa-comments"));
-    lbl.appendChild(
-      document.createTextNode(
-        " Conversation" +
-          (a.messages && a.messages.length
-            ? " (" + a.messages.length + ")"
-            : ""),
-      ),
-    );
-    if (a.waiting) {
-      const w = span("ap-waiting", "waiting on you");
-      lbl.appendChild(w);
-    }
-    box.appendChild(lbl);
+  function openAppealChat(id) {
+    if (!window.StaffUI) return;
+    const a = appealsList.find((x) => x.id === id);
+    if (!a) return;
 
-    const log = divc("ap-log");
-    const msgs = a.messages && a.messages.length ? a.messages : [];
-    if (!msgs.length) {
-      log.appendChild(span("ap-empty", "Nothing said yet."));
-    }
+    const wrap = divc("apm");
+    const log = divc("apm-log");
+    wrap.appendChild(log);
+    const replyHost = divc("apm-replyhost");
+    wrap.appendChild(replyHost);
+    const foot = divc("apm-foot");
+    wrap.appendChild(foot);
+
+    const ctrl = StaffUI.modal({
+      title: (a.name || "A banned user") + "'s appeal",
+      icon: '<i class="fas fa-scale-balanced"></i>',
+      subtitle: appealSubtitle(a),
+      wide: true,
+      body: wrap,
+      actions: [{ label: "Close", kind: "ghost", onClick: () => {} }],
+      onClose: () => {
+        appealChat = null;
+      },
+    });
+
+    appealChat = { id, ctrl, log, replyHost, foot, wrap };
+    paintAppealChat();
+  }
+
+  function appealSubtitle(a) {
+    const bits = [];
+    bits.push(a.banPermanent ? "Permanent ban" : "Temporary ban");
+    if (a.banBy) bits.push("by " + a.banBy);
+    if (a.banReason) bits.push('"' + a.banReason + '"');
+    bits.push(a.stillBlocked ? "still blocked" : "not blocked");
+    return bits.join("  ·  ");
+  }
+
+  // Redraw the open conversation from the current board data, keeping the
+  // reader where they were and the draft they were typing.
+  function paintAppealChat() {
+    if (!appealChat) return;
+    const a = appealsList.find((x) => x.id === appealChat.id);
+    if (!a) return;
+    const { log, replyHost, foot } = appealChat;
+
+    const atBottom =
+      log.scrollHeight - log.scrollTop - log.clientHeight < 60 ||
+      !log.childNodes.length;
+    log.textContent = "";
+
+    const msgs = a.messages || [];
+    if (!msgs.length) log.appendChild(span("ap-empty", "Nothing said yet."));
+    let lastKey = null;
+    let lastTs = 0;
     msgs.forEach((m) => {
       if (m.from === "system") {
         log.appendChild(span("ap-sys", m.text));
+        lastKey = null;
         return;
       }
-      const row = divc("ap-m " + (m.from === "staff" ? "staff" : "user"));
-      const who = divc("ap-who");
-      who.appendChild(
-        span("ap-who-n", m.from === "staff" ? m.by || "Staff" : a.name || "Them"),
+      const mine = m.from === "staff";
+      const key = mine ? "staff:" + (m.by || "?") : "user";
+      const grouped = key === lastKey && m.ts - lastTs < 5 * 60 * 1000;
+      lastKey = key;
+      lastTs = m.ts;
+
+      const row = divc(
+        "apm-m " + (mine ? "staff" : "user") + (grouped ? " grouped" : ""),
       );
-      const t = span("ap-who-t", relTime(m.ts));
-      t.title = fmtTime(m.ts);
-      who.appendChild(t);
-      if (a.status === "open") {
-        const rb = document.createElement("button");
-        rb.className = "ap-reply-b";
-        rb.type = "button";
-        rb.textContent = "reply";
-        rb.addEventListener("click", () => {
-          appealReplyTo.set(a.id, {
-            id: m.id,
-            by: m.from === "staff" ? m.by || "Staff" : a.name || "Them",
-            text: String(m.text || "").slice(0, 90),
-          });
-          renderAppeals();
-        });
-        who.appendChild(rb);
+      const gut = divc("apm-gut");
+      if (!grouped) {
+        const av = divc(
+          "avatar apm-av" + (mine ? (m.role === "dev" ? " dev" : " mod") : " banned"),
+        );
+        av.textContent = initialOf(mine ? m.by || "S" : a.name || "?");
+        av.title = mine
+          ? (m.by || "Staff") + (m.role === "dev" ? " (developer)" : " (moderator)")
+          : (a.name || "This user") + " - the banned user";
+        gut.appendChild(av);
       }
-      row.appendChild(who);
-      const b = divc("ap-bub");
+      row.appendChild(gut);
+
+      const stack = divc("apm-stack");
+      if (!grouped) {
+        const who = divc("apm-who");
+        who.appendChild(
+          span("apm-name", mine ? m.by || "Staff" : a.name || "Banned user"),
+        );
+        who.appendChild(
+          span(
+            "chip " + (mine ? (m.role === "dev" ? "dev" : "l2") : "banned"),
+            mine ? (m.role === "dev" ? "DEV" : "MOD") : "BANNED",
+          ),
+        );
+        const t = span("apm-t", relTime(m.ts));
+        t.title = fmtTime(m.ts);
+        who.appendChild(t);
+        stack.appendChild(who);
+      }
+      const bub = divc("apm-bub");
       if (m.reply) {
-        const q = divc("ap-quote");
+        const q = divc("apm-quote");
         q.textContent =
           (m.reply.from === "staff" ? m.reply.by || "Staff" : a.name || "Them") +
           ": " +
           m.reply.text;
-        b.appendChild(q);
+        bub.appendChild(q);
       }
       const txt = document.createElement("div");
       txt.textContent = m.text || "";
-      b.appendChild(txt);
-      row.appendChild(b);
+      bub.appendChild(txt);
+      // Clicking a message answers it, the same as the reply button.
+      if (a.status === "open" && viewerIsFullMod()) {
+        bub.classList.add("clickable");
+        bub.title = "Click to reply to this";
+        bub.addEventListener("click", () => {
+          appealReplyTo.set(a.id, {
+            id: m.id,
+            by: mine ? m.by || "Staff" : a.name || "Them",
+            text: String(m.text || "").slice(0, 90),
+          });
+          paintAppealChat();
+          if (appealChat && appealChat.input) appealChat.input.focus();
+        });
+      }
+      stack.appendChild(bub);
+      row.appendChild(stack);
       log.appendChild(row);
     });
-    box.appendChild(log);
-    // Land on the newest line, the way any chat does.
-    requestAnimationFrame(() => {
-      log.scrollTop = log.scrollHeight;
-    });
+    if (atBottom) log.scrollTop = log.scrollHeight;
 
-    if (a.status !== "open" || !viewerIsFullMod()) return box;
+    // ── Reply bar + composer ──
+    replyHost.textContent = "";
+    foot.textContent = "";
+    appealChat.input = null;
+
+    if (a.status !== "open") {
+      foot.appendChild(
+        span(
+          "apm-closed",
+          a.resolution === "lifted"
+            ? "Ban lifted" + (a.reviewedBy ? " by " + cleanReviewer(a.reviewedBy) : "") + "."
+            : "Appeal declined" +
+                (a.reviewedBy ? " by " + cleanReviewer(a.reviewedBy) : "") +
+                ". The ban stays in place.",
+        ),
+      );
+      return;
+    }
+    if (!viewerIsFullMod()) {
+      foot.appendChild(span("apm-closed", "Full mods and developers answer appeals."));
+      return;
+    }
 
     if (a.locked) {
-      const note = divc("ap-locked");
+      const note = divc("apm-locked");
       note.appendChild(icon("fa-lock"));
       note.appendChild(
         document.createTextNode(
           " Chat ended" +
             (a.lockedBy ? " by " + a.lockedBy : "") +
-            ". They cannot write any more. You still can.",
+            ". They cannot write. You still can.",
         ),
       );
-      box.appendChild(note);
+      replyHost.appendChild(note);
     }
 
     const rt = appealReplyTo.get(a.id);
@@ -3416,10 +3498,10 @@
       x.textContent = "×";
       x.addEventListener("click", () => {
         appealReplyTo.delete(a.id);
-        renderAppeals();
+        paintAppealChat();
       });
       bar.appendChild(x);
-      box.appendChild(bar);
+      replyHost.appendChild(bar);
     }
 
     const comp = divc("ap-comp");
@@ -3455,8 +3537,55 @@
     sendBtn.appendChild(document.createTextNode(" Send"));
     sendBtn.addEventListener("click", send);
     comp.appendChild(sendBtn);
-    box.appendChild(comp);
-    return box;
+    foot.appendChild(comp);
+    appealChat.input = ta;
+
+    // The decisions, where the conversation is rather than back on the board.
+    const acts = divc("apm-acts");
+    const mk = (label, faIcon, cls, fn) => {
+      const b = document.createElement("button");
+      b.className = "btn sm" + (cls ? " " + cls : "");
+      b.appendChild(icon(faIcon));
+      b.appendChild(document.createTextNode(" " + label));
+      b.addEventListener("click", fn);
+      acts.appendChild(b);
+    };
+    mk(
+      a.locked ? "Reopen chat" : "End chat",
+      a.locked ? "fa-lock-open" : "fa-lock",
+      "",
+      () => socket.emit("staff appeal lock", { id: a.id, locked: !a.locked }),
+    );
+    if (me && me.role === "dev" && a.stillBlocked)
+      mk("Lift the ban", "fa-unlock", "primary", async () => {
+        const ok = await StaffUI.confirm({
+          title: "Lift ban",
+          message:
+            "Unblock " + (a.name || "this user") + " and accept their appeal?",
+          confirmText: "Lift ban",
+        });
+        if (ok) resolveAppeal(a, "lift");
+      });
+    mk("Decline", "fa-xmark", "danger", async () => {
+      const r = await StaffUI.prompt({
+        title: "Decline this appeal",
+        icon: '<i class="fas fa-xmark"></i>',
+        message:
+          "The ban stays in place. Whatever you write here is the last thing they read on their ban screen.",
+        fields: [
+          {
+            name: "note",
+            label: "Message to them (optional)",
+            type: "textarea",
+            maxLength: 300,
+          },
+        ],
+        danger: true,
+        confirmText: "Decline appeal",
+      });
+      if (r != null) resolveAppeal(a, "dismiss", (r.note || "").trim());
+    });
+    foot.appendChild(acts);
   }
 
   function renderAppeals() {
@@ -3558,7 +3687,39 @@
       contest.appendChild(cv);
       grid.appendChild(contest);
 
-      grid.appendChild(buildAppealChat(a));
+      // The conversation lives in a modal, not in the card. Inline, every
+      // arriving message re-rendered the whole board under the reader and
+      // jumped the page; a modal owns its own scroll and updates in place.
+      const chatBox = divc("ap-box ap-open");
+      const cl2 = divc("lbl");
+      cl2.appendChild(icon("fa-comments"));
+      cl2.appendChild(document.createTextNode(" Conversation"));
+      if (a.waiting) cl2.appendChild(span("ap-waiting", "waiting on you"));
+      chatBox.appendChild(cl2);
+      const last = (a.messages || [])[(a.messages || []).length - 1];
+      const preview = divc("ap-prev");
+      preview.textContent = last
+        ? (last.from === "staff"
+            ? (last.by || "Staff") + ": "
+            : last.from === "user"
+              ? (a.name || "Them") + ": "
+              : "") + String(last.text || "").slice(0, 120)
+        : "Nothing said yet.";
+      chatBox.appendChild(preview);
+      const openBtn = document.createElement("button");
+      openBtn.className = "btn sm primary";
+      openBtn.appendChild(icon("fa-comments"));
+      openBtn.appendChild(
+        document.createTextNode(
+          " Open the conversation" +
+            (a.messages && a.messages.length
+              ? " (" + a.messages.length + ")"
+              : ""),
+        ),
+      );
+      openBtn.addEventListener("click", () => openAppealChat(a.id));
+      chatBox.appendChild(openBtn);
+      grid.appendChild(chatBox);
       card.appendChild(grid);
 
       // Footer: resolution note (if any) + identity + actions
@@ -4849,6 +5010,9 @@
   socket.on("staff appeals", (list) => {
     appealsList = Array.isArray(list) ? list : [];
     renderAppeals();
+    // An open conversation redraws in place rather than being torn down with
+    // the board underneath it.
+    paintAppealChat();
   });
 
   socket.on("staff suggestions", (list) => {
