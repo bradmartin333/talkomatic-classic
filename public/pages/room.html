@@ -239,6 +239,10 @@
         font-size: 18px;
         color: #fff;
       }
+      #changeNameToggle {
+        font-size: 16px;
+        color: #fff;
+      }
 
       .user-info button.staff-action-button i.fas {
         color: rgb(201, 201, 201) !important;
@@ -278,6 +282,14 @@
             <img src="images/icons/apps.png" alt="Apps" id="appDirectoryIcon" />
             <span>Apps</span>
           </button>
+          <button
+            id="changeNameToggle"
+            class="mute-toggle"
+            aria-label="Change name"
+            title="Change name"
+          >
+            <i class="fas fa-user-pen"></i>
+          </button>
         </div>
       </nav>
       <div class="chat-container"></div>
@@ -285,6 +297,31 @@
 
     <!-- Emote autocomplete container -->
     <div id="emoteAutocomplete" class="emote-autocomplete"></div>
+
+    <!-- Name entry: shown on first visit (no saved name) and reopened by the
+         "Change name" button. Not the shared #customModal - that input is
+         digit-only (access codes), and this needs to be visible before the
+         rest of the modal system's wiring necessarily applies. -->
+    <div id="nameEntryModal" class="custom-modal">
+      <div class="modal-content">
+        <h3>What's your name?</h3>
+        <div id="nameEntryInputContainer">
+          <input
+            type="text"
+            id="nameEntryInput"
+            maxlength="15"
+            autocomplete="off"
+            placeholder="Your name"
+          />
+          <p class="input-error" id="nameEntryError"></p>
+        </div>
+        <div class="modal-buttons">
+          <button id="nameEntryConfirmBtn" class="modal-btn modal-confirm-btn">
+            Join
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- Custom Modal -->
     <div id="customModal" class="custom-modal">

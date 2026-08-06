@@ -3397,25 +3397,66 @@ function storedAvatar() {
 }
 
 // There is no separate sign-in page any more, so a first-time visitor is
-// asked for a name right here, once, with the simplest thing that works.
-// Saved to localStorage immediately, so a refresh never asks again.
-function promptForUsername() {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const typed = (window.prompt("What's your name?") || "").trim();
-    if (typed) return typed.slice(0, 15);
-  }
-  // Declined twice: fall back rather than getting permanently stuck.
-  return `Guest${Math.floor(10000 + Math.random() * 90000)}`;
+// asked for a name right here, once. This is a real in-page overlay rather
+// than window.prompt(): Chrome silently suppresses prompt()/alert()/confirm()
+// when the tab isn't the focused, active one at the moment the call fires -
+// no dialog, no error, just an instant null - which would otherwise pass
+// unnoticed straight into a "declined" fallback. Also reused by "Change name".
+const nameEntryModal = document.getElementById("nameEntryModal");
+const nameEntryInput = document.getElementById("nameEntryInput");
+const nameEntryError = document.getElementById("nameEntryError");
+const nameEntryConfirmBtn = document.getElementById("nameEntryConfirmBtn");
+
+function askForName(existingName) {
+  return new Promise((resolve) => {
+    nameEntryInput.value = existingName || "";
+    nameEntryError.style.display = "none";
+    nameEntryError.textContent = "";
+    nameEntryModal.classList.add("show");
+    document.body.style.overflow = "hidden";
+    nameEntryInput.focus();
+
+    const submit = () => {
+      const typed = nameEntryInput.value.trim().slice(0, 15);
+      if (!typed) {
+        nameEntryError.textContent = "Please enter a name.";
+        nameEntryError.style.display = "block";
+        return;
+      }
+      nameEntryModal.classList.remove("show");
+      document.body.style.overflow = "";
+      nameEntryConfirmBtn.removeEventListener("click", submit);
+      nameEntryInput.removeEventListener("keydown", onKeydown);
+      resolve(typed);
+    };
+    const onKeydown = (e) => {
+      if (e.key === "Enter") submit();
+    };
+    nameEntryConfirmBtn.addEventListener("click", submit);
+    nameEntryInput.addEventListener("keydown", onKeydown);
+  });
 }
 
-function joinRoom(roomId, accessCode = null) {
+// "Change name" button: reopens the same overlay pre-filled, then reloads so
+// the room-join sequence runs fresh with the new name rather than trying to
+// rename a live seat in place.
+async function changeName() {
+  const current =
+    currentUsername || localStorage.getItem("talkomaticUsername") || "";
+  const typed = await askForName(current);
+  if (typed === current) return;
+  localStorage.setItem("talkomaticUsername", typed);
+  window.location.reload();
+}
+
+async function joinRoom(roomId, accessCode = null) {
   // Re-announce identity from this browser before joining. "join room" carries
   // no name and trusts the server session, but the session is in-memory: a
   // server restart wipes it (the signed cookie survives, its data does not), so
   // a plain join after a restart - or any full page load with a lost session,
   // such as a hard refresh or the reload after being granted mod - would land
   // as "Anonymous" / "On The Web". This self-heals from localStorage; a
-  // first-ever visit (nothing in localStorage yet) prompts for a name instead.
+  // first-ever visit (nothing in localStorage yet) asks for a name instead.
   // Mirrors the reconnect path below: announce, then join once the sign-in is
   // acknowledged (with a timeout fallback so a missed ack never strands the join).
   let uname = currentUsername || localStorage.getItem("talkomaticUsername");
@@ -3425,7 +3466,7 @@ function joinRoom(roomId, accessCode = null) {
     "On The Web";
 
   if (!uname) {
-    uname = promptForUsername();
+    uname = await askForName();
     localStorage.setItem("talkomaticUsername", uname);
     localStorage.setItem("talkomaticLocation", uloc);
     currentUsername = uname;
@@ -3578,6 +3619,9 @@ window.addEventListener("load", () => {
   // users; refreshLayoutToggle() handles when it appears/disappears.
   const layoutBtn = document.getElementById("layoutToggle");
   if (layoutBtn) layoutBtn.addEventListener("click", toggleRoomLayout);
+
+  const changeNameBtn = document.getElementById("changeNameToggle");
+  if (changeNameBtn) changeNameBtn.addEventListener("click", changeName);
 
   // Viewport: immediate handler so the mobile keyboard reflows without lag
   if (window.visualViewport)
