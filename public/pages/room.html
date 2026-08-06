@@ -60,54 +60,6 @@
         margin-right: 10px;
         vertical-align: middle;
       }
-      .emotes-button {
-        padding: 5px 10px;
-        background-color: #444;
-        color: var(--tk-text);
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-      }
-      .emotes-dropdown {
-        background-color: #333;
-        border: 1px solid #555;
-        border-radius: 4px;
-        padding: 10px;
-        z-index: 1000;
-        max-width: 300px;
-        max-height: 300px;
-        overflow-y: auto;
-        display: none;
-        flex-wrap: wrap;
-        gap: 5px;
-      }
-      .emote-item {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 5px;
-        cursor: pointer;
-        border-radius: 4px;
-        background-color: #444;
-        width: 60px;
-        height: 60px;
-        transition: background-color 0.2s ease;
-      }
-      .emote-item:hover {
-        background-color: #555;
-      }
-      .emote-item img {
-        width: 30px;
-        height: auto;
-      }
-      .emote-item span {
-        font-size: 10px;
-        color: var(--tk-text);
-        margin-top: 5px;
-        text-align: center;
-        word-break: break-all;
-      }
       .chat-input {
         background-color: var(--tk-chat-bg, #000) !important;
         color: var(--tk-chat-text, orange) !important;
@@ -314,131 +266,9 @@
           display: none;
         }
       }
-      #filterToggle {
-        font-size: 16px;
-        opacity: 1;
-        transition: opacity 0.2s ease;
-      }
-      #filterToggle.filter-off {
-        opacity: 0.4;
-      }
       #layoutToggle {
         font-size: 18px;
         color: #fff;
-      }
-
-      /* Feature announcement modal */
-      .feature-announce-overlay {
-        display: none;
-        position: fixed;
-        inset: 0;
-        z-index: 99999;
-        background: rgba(0, 0, 0, 0.75);
-        backdrop-filter: blur(4px);
-        align-items: center;
-        justify-content: center;
-      }
-      .feature-announce-overlay.show {
-        display: flex;
-        animation: fadeIn 0.25s ease-out;
-      }
-      @keyframes fadeIn {
-        from {
-          opacity: 0;
-        }
-        to {
-          opacity: 1;
-        }
-      }
-      .feature-announce-box {
-        background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
-        border: 2px solid var(--tk-accent);
-        border-radius: 14px;
-        padding: 28px 32px;
-        max-width: 420px;
-        width: 90%;
-        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
-        text-align: center;
-        animation: slideUp 0.3s ease-out;
-      }
-      @keyframes slideUp {
-        from {
-          transform: translateY(30px);
-          opacity: 0;
-        }
-        to {
-          transform: translateY(0);
-          opacity: 1;
-        }
-      }
-      .feature-announce-icon {
-        font-size: 48px;
-        margin-bottom: 12px;
-      }
-      .feature-announce-tag {
-        display: inline-block;
-        background: var(--tk-accent);
-        color: #000;
-        font-size: 11px;
-        font-weight: bold;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        padding: 3px 10px;
-        border-radius: 20px;
-        margin-bottom: 14px;
-      }
-      .feature-announce-title {
-        color: #fff;
-        font-size: 20px;
-        font-weight: bold;
-        margin: 0 0 10px;
-      }
-      .feature-announce-body {
-        color: #ccc;
-        font-size: 14px;
-        line-height: 1.6;
-        margin: 0 0 8px;
-      }
-      .feature-announce-hint {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        background: color-mix(in srgb, var(--tk-accent) 10%, transparent);
-        border: 1px solid rgba(255, 152, 0, 0.3);
-        border-radius: 8px;
-        padding: 8px 14px;
-        margin: 12px 0 20px;
-        color: var(--tk-accent);
-        font-size: 13px;
-        font-weight: 500;
-      }
-      .feature-announce-hint-icon {
-        font-size: 20px;
-      }
-      .feature-announce-note {
-        color: #888;
-        font-size: 12px;
-        margin: 0 0 18px;
-      }
-      .feature-announce-btn {
-        background: var(--tk-accent);
-        color: #000;
-        border: none;
-        padding: 10px 32px;
-        border-radius: 8px;
-        font-size: 14px;
-        font-weight: bold;
-        cursor: pointer;
-        transition:
-          background 0.2s ease,
-          transform 0.1s ease;
-      }
-      .feature-announce-btn:hover {
-        background: #ffb74d;
-        transform: translateY(-1px);
-      }
-      .feature-announce-btn:active {
-        transform: translateY(0);
       }
 
       .user-info button.staff-action-button i.fas {
@@ -458,20 +288,9 @@
             <span class="time"></span>
           </div>
         </div>
-        <div class="navbar-section navbar-center">
-          <div class="brand">Talkomatic™</div>
-        </div>
         <div class="navbar-section navbar-right">
           <button id="muteToggle" class="mute-toggle" aria-label="Toggle Sound">
             <img src="images/icons/sound-on.svg" alt="Sound On" id="muteIcon" />
-          </button>
-          <button
-            id="filterToggle"
-            class="mute-toggle"
-            aria-label="Toggle Word Filter"
-            title="Word Filter: ON (click to disable)"
-          >
-            🛡️
           </button>
           <button
             id="layoutToggle"
@@ -490,38 +309,9 @@
             <img src="images/icons/apps.png" alt="Apps" id="appDirectoryIcon" />
             <span>Apps</span>
           </button>
-          <div class="leave-room">Leave Room</div>
         </div>
       </nav>
-      <div class="second-navbar">
-        <div class="room-type">Public Room</div>
-        <div class="room-name">*</div>
-        <div class="room-type-group">
-          <div class="room-uptime">*</div>
-          <div class="room-id">*</div>
-        </div>
-      </div>
       <div class="chat-container"></div>
-      <div class="invite-section" id="inviteSection">
-        <button
-          id="toggleInvite"
-          class="invite-toggle"
-          aria-label="Hide invite link"
-          aria-expanded="true"
-          title="Hide invite link"
-        >
-          <i class="fas fa-chevron-down"></i>
-        </button>
-        <div class="invite-text">
-          Invite friends to your room with this link:
-        </div>
-        <div class="invite-container">
-          <div class="invite-link" id="inviteLink"></div>
-          <button id="copyInviteLink" aria-label="Copy invite link">
-            <img src="images/icons/copy.svg" alt="Copy" />
-          </button>
-        </div>
-      </div>
     </div>
 
     <!-- Emote autocomplete container -->
@@ -552,31 +342,6 @@
       </div>
     </div>
 
-    <!-- Feature announcement: word filter toggle -->
-    <div id="featureAnnounce" class="feature-announce-overlay">
-      <div class="feature-announce-box">
-        <div class="feature-announce-icon">🛡️</div>
-        <div class="feature-announce-tag">New Feature</div>
-        <h2 class="feature-announce-title">Automod is now optional</h2>
-        <p class="feature-announce-body">
-          You can now enable or disable the word filter for yourself. When
-          enabled, offensive words are replaced with asterisks in chat. When
-          disabled, you see all messages unfiltered.
-        </p>
-        <div class="feature-announce-hint">
-          <span class="feature-announce-hint-icon">🛡️</span>
-          Click the shield icon in the top right to toggle it
-        </div>
-        <p class="feature-announce-note">
-          This only changes what <strong>you</strong> see. It does not affect
-          other users.
-        </p>
-        <button class="feature-announce-btn" id="featureAnnounceClose">
-          Got it
-        </button>
-      </div>
-    </div>
-
     <audio id="joinSound" src="audio/ding.mp3"></audio>
     <audio id="leaveSound" src="audio/ding.mp3"></audio>
 
@@ -594,8 +359,5 @@
     <script src="js/theme-editor.js?v=2.2.0"></script>
 
     <script src="js/games-client.js?v=4.12.0"></script>
-
-    <!-- Feature announcement logic -->
-    <script src="js/feature-announce.js?v=1.0.4"></script>
   </body>
 </html>

@@ -96,7 +96,7 @@ const ERROR_CODES = {
 // ── 2. WORD FILTER ──────────────────────────────────────────────────────────
 
 let clientWordFilter = null;
-let wordFilterEnabled = true;
+let wordFilterEnabled = false;
 
 function hasEmote(code) {
   return Object.prototype.hasOwnProperty.call(emoteList, code);
@@ -161,45 +161,6 @@ function notifyFilterWatchers() {
       /* one bad listener must not stop the rest */
     }
   }
-}
-
-function toggleWordFilter() {
-  wordFilterEnabled = !wordFilterEnabled;
-  localStorage.setItem("wordFilterEnabled", JSON.stringify(wordFilterEnabled));
-  updateFilterToggleUI();
-
-  if (chatInput && selfRawText) {
-    const cursor = getCursorPosition(chatInput);
-    const display = wordFilterEnabled
-      ? applyWordFilter(selfRawText)
-      : selfRawText;
-    chatInput.innerHTML = "";
-    chatInput.textContent = display;
-    replaceEmotes(chatInput);
-    try {
-      setCursorPosition(chatInput, cursor);
-    } catch {
-      placeCursorAtEnd(chatInput);
-    }
-    selfIsFiltered = wordFilterEnabled && clientWordFilter?.ready;
-  }
-
-  document.querySelectorAll(".chat-row").forEach((row) => {
-    if (row.dataset.userId === currentUserId) return;
-    const chatDiv = row.querySelector(".chat-input");
-    if (!chatDiv || chatDiv.dataset.rawText === undefined) return;
-    renderOtherUserMessage(chatDiv, chatDiv.dataset.rawText);
-  });
-  notifyFilterWatchers();
-}
-
-function updateFilterToggleUI() {
-  const btn = document.getElementById("filterToggle");
-  if (!btn) return;
-  btn.classList.toggle("filter-off", !wordFilterEnabled);
-  btn.title = wordFilterEnabled
-    ? "Word Filter: ON (click to disable)"
-    : "Word Filter: OFF (click to enable)";
 }
 
 // ── 3. MODAL SYSTEM ─────────────────────────────────────────────────────────
@@ -1410,124 +1371,6 @@ function hydrateVisibleEmoteImages(dropdown) {
 
 // Builds the Emoticons button beside .room-type (wrapped in a group so the
 // room type display is never replaced) and the emote picker dropdown
-function createEmotesDropdown() {
-  if (document.getElementById("emotesButton")) return;
-
-  const roomTypeEl = document.querySelector(".room-type");
-  if (!roomTypeEl) return;
-
-  const button = document.createElement("button");
-  button.id = "emotesButton";
-  button.className = "emotes-button";
-  button.textContent = "Emoticons";
-
-  const dropdown = document.createElement("div");
-  dropdown.id = "emotesDropdown";
-  dropdown.className = "emotes-dropdown";
-  dropdown.style.display = "none";
-  dropdown.style.position = "absolute";
-  dropdown.style.zIndex = "10000";
-
-  const header = document.createElement("div");
-  header.className = "emotes-dropdown-header";
-
-  const toggleLabel = document.createElement("label");
-  toggleLabel.className = "emotes-dropdown-toggle";
-
-  const toggle = document.createElement("input");
-  toggle.type = "checkbox";
-  toggle.checked = useOverlayEmotes;
-  toggle.addEventListener("change", () => {
-    useOverlayEmotes = toggle.checked;
-  });
-
-  const toggleText = document.createElement("span");
-  toggleText.textContent = "Use overlay emotes";
-
-  toggleLabel.appendChild(toggle);
-  toggleLabel.appendChild(toggleText);
-  header.appendChild(toggleLabel);
-  dropdown.appendChild(header);
-
-  const list = document.createElement("div");
-  list.className = "emotes-dropdown-list";
-
-  // Emotes load asynchronously, so the picker can be built before they arrive.
-  // Fill it from the current emoteList now and refresh on open, so it never
-  // stays empty just because it was created too early.
-  const fillList = () => {
-    list.textContent = "";
-    Object.entries(emoteList).forEach(([code, url]) => {
-      const item = document.createElement("div");
-      item.className = "emote-item";
-      const img = document.createElement("img");
-      img.referrerPolicy = "no-referrer";
-      img.src = EMOTE_IMAGE_PLACEHOLDER;
-      img.dataset.src = url;
-      img.alt = `:${code}:`;
-      img.decoding = "async";
-      const name = document.createElement("span");
-      name.textContent = code;
-      item.appendChild(img);
-      item.appendChild(name);
-      item.addEventListener("mousedown", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dropdown.style.display = "none";
-        setTimeout(() => {
-          if (chatInput) {
-            chatInput.focus();
-            insertEmote(code, null, { overlay: useOverlayEmotes });
-          }
-        }, 0);
-      });
-      list.appendChild(item);
-    });
-  };
-  fillList();
-
-  const loadVisibleImages = () => hydrateVisibleEmoteImages(list);
-  list.addEventListener("scroll", loadVisibleImages, { passive: true });
-  window.addEventListener("resize", loadVisibleImages, { passive: true });
-
-  dropdown.appendChild(list);
-
-  button.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const visible = dropdown.style.display === "flex";
-    document
-      .querySelectorAll(".emotes-dropdown")
-      .forEach((d) => (d.style.display = "none"));
-    if (!visible) {
-      if (list.children.length !== Object.keys(emoteList).length) fillList();
-      const rect = button.getBoundingClientRect();
-      dropdown.style.top = `${rect.bottom + window.scrollY + 5}px`;
-      dropdown.style.left = `${rect.left + window.scrollX}px`;
-      dropdown.style.display = "flex";
-      requestAnimationFrame(loadVisibleImages);
-      if (chatInput) setTimeout(() => chatInput.focus(), 0);
-    }
-  });
-
-  document.addEventListener("click", (e) => {
-    if (
-      dropdown.style.display === "flex" &&
-      !dropdown.contains(e.target) &&
-      e.target !== button
-    )
-      dropdown.style.display = "none";
-  });
-
-  const group = document.createElement("div");
-  group.className = "room-type-group";
-  roomTypeEl.parentNode.insertBefore(group, roomTypeEl);
-  group.appendChild(roomTypeEl);
-  group.appendChild(button);
-
-  document.body.appendChild(dropdown);
-}
-
 // ── 7. APP DIRECTORY ────────────────────────────────────────────────────────
 
 const APPS_DATA = {
@@ -3004,8 +2847,6 @@ function updateRoomInfo(data) {
   if (typeEl && roomType) {
     typeEl.textContent = `${getRoomTypeDisplay(roomType) || "Public"} room`;
   }
-
-  if (!document.getElementById("emotesButton")) createEmotesDropdown();
 }
 
 // ── 14. LAYOUT ──────────────────────────────────────────────────────────────
@@ -3035,19 +2876,6 @@ function injectStyles() {
     .votes-dropdown-title { color:#ff9800; font-size:12px; padding:2px 6px 6px; border-bottom:1px solid #333; margin-bottom:4px; }
     .votes-dropdown-item { color:#fff; font-size:13px; padding:4px 6px; border-radius:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .votes-dropdown-item:hover { background:#333; }
-    .emotes-button { padding:5px 10px; background:#444; color:white; border:none; border-radius:4px; cursor:pointer; }
-    .emotes-dropdown { background:#333; border:1px solid #555; border-radius:4px; padding:8px; max-width:320px; max-height:340px; overflow:hidden; display:flex; flex-direction:column; gap:8px; }
-    .emotes-dropdown-header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:2px 4px 6px; border-bottom:1px solid #555; color:#eee; }
-    .emotes-dropdown-toggle { display:inline-flex; align-items:center; gap:8px; font-size:12px; color:#fff; cursor:pointer; user-select:none; }
-    .emotes-dropdown-toggle input { accent-color:#ff9800; }
-    .emotes-dropdown-list { display:flex; flex-wrap:wrap; gap:5px; overflow-y:auto; max-height:260px; padding-top:2px; }
-    .emote-item { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:5px; cursor:pointer; border-radius:4px; background:#444; width:60px; height:60px; transition:background-color 0.2s ease; }
-    .emote-item:hover { background-color:#555; }
-    .emote-item img { width:30px; height:auto; }
-    .emote-item span { font-size:10px; color:white; margin-top:5px; text-align:center; word-break:break-all; }
-    #filterToggle { font-size:16px; opacity:1; transition:opacity 0.2s ease; }
-    #filterToggle.filter-off { opacity:0.4; }
-
     /* Link safety */
     .chat-link { color:#4da6ff; text-decoration:underline; cursor:pointer; word-break:break-all; }
     .chat-link:hover { color:#80c1ff; }
@@ -3247,36 +3075,7 @@ function handleViewportChange() {
   adjustLayout();
 }
 
-// ── 15. INVITE LINKS & DATE/TIME ────────────────────────────────────────────
-
-function generateInviteLink() {
-  const url = new URL(window.location.href);
-  url.searchParams.set("roomId", currentRoomId);
-  url.searchParams.delete("accessCode"); // never leak codes in invite links
-  return url.href;
-}
-
-// No-op until a room has been joined, so an empty roomId never renders
-function updateInviteLink() {
-  const el = document.getElementById("inviteLink");
-  const copyBtn = document.getElementById("copyInviteLink");
-  if (!currentRoomId) {
-    if (el) el.textContent = "";
-    if (copyBtn) copyBtn.style.display = "none";
-    return;
-  }
-  const link = generateInviteLink();
-  el.textContent = link;
-  el.href = link;
-  copyBtn.style.display = "inline-block";
-}
-
-function copyInviteLink() {
-  navigator.clipboard
-    .writeText(generateInviteLink())
-    .then(() => showInfoModal("Invite link copied to clipboard!"))
-    .catch(() => showErrorModal("Failed to copy invite link."));
-}
+// ── 15. DATE/TIME ────────────────────────────────────────────────────────────
 
 const dateTimeElement = document.querySelector("#dateTime");
 function updateTimeLabels() {
@@ -3319,7 +3118,7 @@ socket.on("kicked", (data) => {
 
 socket.on("room full", () => {
   showInfoModal(
-    "This room is full. You will be redirected to the lobby.",
+    "This room is full. Try again in a moment.",
     () => {
       window.location.href = "/index.html";
     },
@@ -3360,8 +3159,6 @@ socket.on("room joined", (data) => {
   updateRoomUI(data);
   if (data.votes) updateVotesUI(data.votes);
   if (data.currentMessages) updateCurrentMessages(data.currentMessages);
-  updateInviteLink();
-  createEmotesDropdown();
 
   // Appearance controls (hide/vanish/color) now live inside the Staff panel,
   // so the navbar only gains a single "Staff" button - keeps mobile tidy.
@@ -3421,7 +3218,7 @@ socket.on("room joined", (data) => {
 
 socket.on("room not found", () => {
   showInfoModal(
-    "The room does not exist or has been deleted. Redirecting to lobby.",
+    "Something went wrong finding the room. Taking you back to sign in.",
     () => {
       window.location.href = "/index.html";
     },
@@ -3570,7 +3367,7 @@ socket.on("access code required", () => {
     (confirmed, code) => {
       if (confirmed && code) joinRoom(currentRoomId, code);
       else
-        showInfoModal("You will be redirected to the lobby.", () => {
+        showInfoModal("Taking you back to sign in.", () => {
           window.location.href = "/index.html";
         });
     },
@@ -3720,10 +3517,12 @@ socket.io.on("reconnect", () => {
 });
 
 // Reads roomId from the URL and scrubs any legacy ?accessCode= parameter
-// from the address bar and browser history
+// from the address bar and browser history. There is only one room, so a
+// missing ?roomId= just means "the" room rather than an error.
+const MAIN_ROOM_ID = "000001";
 function readAndScrubUrlParams() {
   const params = new URLSearchParams(window.location.search);
-  const roomId = params.get("roomId");
+  const roomId = params.get("roomId") || MAIN_ROOM_ID;
   const accessCode = params.get("accessCode"); // legacy fallback only
 
   if (accessCode !== null) {
@@ -3750,10 +3549,6 @@ async function initRoom() {
   if (filter.ready) clientWordFilter = filter;
   else console.warn("[WordFilter] Not available.");
 
-  const saved = localStorage.getItem("wordFilterEnabled");
-  wordFilterEnabled = saved !== "false";
-  updateFilterToggleUI();
-
   const { roomId, accessCode } = readAndScrubUrlParams();
   const spectate =
     new URLSearchParams(window.location.search).get("spectate") === "1";
@@ -3768,7 +3563,7 @@ async function initRoom() {
       joinRoom(roomId, accessCode);
     }
   } else {
-    showInfoModal("No room ID provided. Redirecting to lobby.", () => {
+    showInfoModal("Something went wrong. Taking you back to sign in.", () => {
       window.location.href = "/index.html";
     });
   }
@@ -3779,37 +3574,7 @@ window.addEventListener("load", () => {
   initRoom();
   updateTimeLabels();
   adjustLayout();
-  updateInviteLink();
   initializeAppDirectory();
-
-  document
-    .getElementById("copyInviteLink")
-    .addEventListener("click", copyInviteLink);
-
-  // Invite section collapse toggle (chevron tab at the top-right of the bar).
-  // Collapsing hands the freed vertical space back to the chat area.
-  const inviteToggle = document.getElementById("toggleInvite");
-  const inviteSection = document.getElementById("inviteSection");
-  if (inviteToggle && inviteSection) {
-    const setInviteCollapsed = (collapsed) => {
-      inviteSection.classList.toggle("collapsed", collapsed);
-      const ic = inviteToggle.querySelector("i");
-      if (ic)
-        ic.className = collapsed ? "fas fa-chevron-up" : "fas fa-chevron-down";
-      inviteToggle.setAttribute("aria-expanded", String(!collapsed));
-      const label = collapsed ? "Show invite link" : "Hide invite link";
-      inviteToggle.setAttribute("aria-label", label);
-      inviteToggle.title = label;
-      adjustLayout();
-    };
-    if (localStorage.getItem("inviteCollapsed") === "1")
-      setInviteCollapsed(true);
-    inviteToggle.addEventListener("click", () => {
-      const collapsed = !inviteSection.classList.contains("collapsed");
-      setInviteCollapsed(collapsed);
-      localStorage.setItem("inviteCollapsed", collapsed ? "1" : "0");
-    });
-  }
 
   // Sound
   const savedMute = localStorage.getItem("soundEnabled");
@@ -3818,10 +3583,6 @@ window.addEventListener("load", () => {
     updateMuteIcon();
   }
   muteToggleButton.addEventListener("click", toggleMute);
-
-  // Word filter toggle
-  const filterBtn = document.getElementById("filterToggle");
-  if (filterBtn) filterBtn.addEventListener("click", toggleWordFilter);
 
   // Layout toggle (desktop, client-side view preference). Shown only at <=5
   // users; refreshLayoutToggle() handles when it appears/disappears.
@@ -3844,12 +3605,6 @@ window.addEventListener("load", () => {
     document.body.appendChild(el);
     emoteAutocomplete = el;
   }
-});
-
-document.querySelector(".leave-room").addEventListener("click", () => {
-  if (isSpectating) socket.emit("staff unspectate");
-  else socket.emit("leave room");
-  window.location.href = "/index.html";
 });
 
 // One active tab per browser session. If another tab takes over this identity,

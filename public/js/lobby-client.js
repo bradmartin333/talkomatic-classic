@@ -1699,17 +1699,10 @@ socket.on("access code required", () => {
   promptAccessCode(roomId);
 });
 
-// FIX #4: Redirect with roomId ONLY. The server has already validated and
-// stored the access code in the session (it awaits the session save before
-// emitting this event), so room.html joins via the session - the code never
-// touches the URL, browser history, or analytics.
-socket.on("room joined", (data) => {
-  window.location.href = `/room.html?roomId=${data.roomId}`;
-});
-
-// FIX #4: Same for room creation - roomId only.
-socket.on("room created", (roomId) => {
-  window.location.href = `/room.html?roomId=${roomId}`;
+// There is only one room, so room.html needs no roomId in the URL - it
+// defaults to it itself (see readAndScrubUrlParams in room-client.js).
+socket.on("room joined", () => {
+  window.location.href = "/room.html";
 });
 
 // ============================================================================
@@ -2074,6 +2067,9 @@ function initLobby() {
     });
 
   setTimeout(() => {
+    // A remembered name auto-joins with no form interaction. A first-time
+    // visitor sees the name form and has to type something real - no random
+    // "GuestNNNNN" auto-join, so everyone in the room is identifiable.
     const savedUsername = localStorage.getItem("talkomaticUsername");
     const savedLocation = localStorage.getItem("talkomaticLocation");
 
@@ -2086,30 +2082,8 @@ function initLobby() {
       locationInput.value = currentLocation;
 
       setSignedInButtonState();
-      createRoomForm.classList.remove("hidden");
 
       emitJoinLobby(savedUsername, savedLocation || "On The Web");
-      showRoomList();
-    } else {
-      const guestDigits = Math.floor(10000 + Math.random() * 90000);
-      const guestUsername = `Guest${guestDigits}`;
-      const guestLocation = "Earth";
-
-      usernameInput.value = guestUsername;
-      locationInput.value = guestLocation;
-
-      localStorage.setItem("talkomaticUsername", guestUsername);
-      localStorage.setItem("talkomaticLocation", guestLocation);
-
-      currentUsername = guestUsername;
-      currentLocation = guestLocation;
-      isSignedIn = true;
-
-      setSignedInButtonState();
-      createRoomForm.classList.remove("hidden");
-
-      emitJoinLobby(guestUsername, guestLocation);
-      showRoomList();
     }
   }, 500);
 

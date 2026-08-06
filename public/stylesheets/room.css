@@ -14,7 +14,7 @@
   --tk-card: #000000;
   --tk-cream: #fdf5e6;
   --tk-cream-text: #000000;
-  --tk-chat-text: #3cf138;
+  --tk-chat-text: #ffa500;
   --tk-chat-bg: #000000;
   --tk-input-bg: #ffffff;
 }
@@ -105,8 +105,7 @@ html {
      =============================================================================*/
 
 /* Common navbar styles */
-.top-navbar,
-.second-navbar {
+.top-navbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -125,38 +124,17 @@ html {
 .navbar-left {
   justify-content: flex-start;
 }
-.navbar-center {
-  justify-content: center;
-}
 .navbar-right {
   justify-content: flex-end;
 }
 
-/* Top navbar specific styles: date-time display, branding, leave button */
+/* Top navbar specific styles: date-time display */
 .date-time {
   font-size: 14px;
   color: #ffff00;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-}
-
-.brand {
-  font-size: 24px;
-  color: var(--tk-accent);
-  text-align: center;
-}
-
-.leave-room {
-  font-size: 14px;
-  cursor: pointer;
-  background-color: var(--tk-card);
-  color: var(--tk-text);
-  border: 1px solid var(--tk-accent);
-  padding: 10px;
-  border-radius: 5px;
-  font-family: var(--tk-font-main, talkoSS, Arial, sans-serif);
-  white-space: nowrap;
 }
 
 /* Mute Toggle Button Styles */
@@ -183,47 +161,6 @@ html {
 .mute-toggle img {
   width: 24px;
   height: 24px;
-}
-
-/* Second navbar specific styles: room info */
-.second-navbar {
-  background-color: var(--tk-tile);
-}
-
-.room-type {
-  color: cyan;
-}
-
-.room-name {
-  font-size: 18px;
-  font-weight: bold;
-  text-align: center;
-}
-
-.room-id {
-  color: var(--tk-accent);
-}
-
-/* FIX #6: Room type + Emoticons button live side-by-side */
-.room-type-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1;
-  justify-content: flex-start;
-}
-
-@media screen and (max-width: 576px) {
-  .room-type-group {
-    gap: 6px;
-  }
-  .room-type-group .emotes-button {
-    padding: 4px 8px;
-    font-size: 12px;
-  }
-  .room-type {
-    font-size: 12px;
-  }
 }
 
 /* =============================================================================
@@ -342,114 +279,6 @@ html {
 }
 
 /* =============================================================================
-     Invite Section Styles
-     -----------------------------------------------------------------------------
-     Styles for the invite link section, allowing users to share the room link.
-     It contains text and a clickable link to copy the invite URL.
-     =============================================================================*/
-
-.invite-section {
-  background-color: var(--tk-tile);
-  padding: 10px 20px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  position: relative;
-}
-
-/* Collapse / expand tab pinned to the top-right of the invite section, so the
-   chat area can reclaim this space when the link is not needed. */
-.invite-toggle {
-  position: absolute;
-  top: 4px;
-  right: 8px;
-  width: 28px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  background-color: #2a2a2a;
-  color: #ffff00;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
-  line-height: 1;
-  transition: background-color 0.2s;
-}
-
-.invite-toggle:hover {
-  background-color: #3a3a3a;
-}
-
-/* Collapsed: hide the text and link, leaving a thin bar with just the tab. */
-.invite-section.collapsed {
-  padding-top: 4px;
-  padding-bottom: 4px;
-}
-
-.invite-section.collapsed .invite-text,
-.invite-section.collapsed .invite-container {
-  display: none;
-}
-
-.invite-section.collapsed .invite-toggle {
-  position: static;
-  align-self: flex-end;
-}
-
-.invite-text {
-  color: #ffff00;
-  font-size: 14px;
-  margin-bottom: 5px;
-}
-
-.invite-container {
-  display: inline-flex;
-  align-items: stretch;
-  background-color: #2a2a2a;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-/* Invite link and copy button */
-.invite-link {
-  color: cyan;
-  font-size: 16px;
-  padding: 5px 5px;
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-#copyInviteLink {
-  width: 30px;
-  min-width: 30px;
-  height: auto;
-  background-color: #000000;
-  border: none;
-  cursor: pointer;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  transition: background-color 0.3s;
-  padding: 0;
-  margin: 0;
-}
-
-/* Icon inside the copy button */
-#copyInviteLink img {
-  width: 20px;
-  height: 20px;
-}
-
-#copyInviteLink:hover {
-  background-color: #000000a1;
-}
-
-/* =============================================================================
      Responsive Styles
      -----------------------------------------------------------------------------
      Adjustments to layout and font sizes for tablet and mobile devices. Breakpoints 
@@ -459,16 +288,6 @@ html {
 
 /* Tablet and smaller desktop screens */
 @media screen and (max-width: 768px) {
-  .brand {
-    font-size: 20px;
-  }
-  .leave-room {
-    padding: 8px;
-  }
-  .room-name {
-    font-size: 16px;
-  }
-
   .date-time {
     font-size: 12px;
     display: flex;
@@ -488,21 +307,6 @@ html {
   .chat-input {
     font-size: 12px;
   }
-
-  .invite-text {
-    font-size: 12px;
-  }
-  .invite-link {
-    font-size: 14px;
-  }
-  #copyInviteLink {
-    width: 28px;
-    height: 28px;
-  }
-  #copyInviteLink img {
-    width: 18px;
-    height: 18px;
-  }
 }
 
 /* Mobile devices */
@@ -517,16 +321,6 @@ html {
   .page-container {
     height: 100%;
     min-height: 100%;
-  }
-
-  .brand {
-    font-size: 18px;
-  }
-  .leave-room {
-    padding: 6px;
-  }
-  .room-name {
-    font-size: 14px;
   }
 
   .date-time {
@@ -587,30 +381,8 @@ html {
     font-size: 16px; /* Prevent zoom on iOS */
   }
 
-  .invite-section {
-    padding: 3px 5px;
-  }
-  .invite-text {
-    font-size: 10px;
-  }
-  .invite-link {
-    font-size: 12px;
-  }
-  #copyInviteLink {
-    width: 24px;
-    height: 24px;
-  }
-  #copyInviteLink img {
-    width: 16px;
-    height: 16px;
-  }
-
   .navbar-left {
     display: none;
-  }
-
-  .navbar-center {
-    justify-content: flex-start;
   }
 }
 
@@ -1808,75 +1580,6 @@ html {
   .tb-icon-btn {
     width: 32px;
     height: 32px;
-  }
-}
-
-/* =============================================================================
-   FIX #6: Second navbar layout
-   -----------------------------------------------------------------------------
-   Three equal flex columns so the room name is truly centered:
-     LEFT:   [Emoticons button] [Room type]   (.room-type-group)
-     CENTER: Room name                         (.room-name)
-     RIGHT:  Room ID                           (.room-id)
-
-   The JS appends the button AFTER .room-type inside the group; `order: -1`
-   flips it visually so the button renders first. No JS changes needed.
-   =============================================================================*/
-
-.room-type-group {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 10px;
-  min-width: 0; /* allow shrinking instead of pushing siblings */
-}
-
-/* Button before the room type label, per design */
-.room-type-group .emotes-button {
-  order: -1;
-}
-
-/* Before JS wraps it (brief moment on load), keep the bare element balanced */
-.second-navbar > .room-type {
-  flex: 1;
-}
-
-.second-navbar .room-name {
-  flex: 1;
-  text-align: center;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.second-navbar .room-id {
-  text-align: right;
-  white-space: nowrap;
-}
-
-.second-navbar .room-uptime {
-  flex: 1;
-  color: #28a745;
-  text-align: right;
-}
-
-/* Mobile */
-@media screen and (max-width: 576px) {
-  .room-type-group {
-    gap: 6px;
-  }
-  .room-type-group .emotes-button {
-    padding: 4px 8px;
-    font-size: 12px;
-  }
-  .room-type {
-    font-size: 11px;
-    white-space: nowrap;
-  }
-  .second-navbar .room-id {
-    font-size: 11px;
   }
 }
 

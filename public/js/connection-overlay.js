@@ -1,17 +1,19 @@
 // public/js/connection-overlay.js
 // Full-screen overlay for connection events. On "server restarting" it shows a
-// countdown, then sends the user to the lobby (which reconnects to the fresh
-// server). On an unexpected disconnect it shows a "reconnecting" notice instead
-// of letting the page silently freeze. Attached by the lobby and room clients.
+// countdown, then reloads the page (which reconnects to the fresh server and
+// rejoins the one persistent room). On an unexpected disconnect it shows a
+// "reconnecting" notice instead of letting the page silently freeze. Attached
+// by the sign-in and room clients.
 (function () {
   "use strict";
   var restarting = false;
   var reconnectTimer = null;
   var buttonsTimer = null;
-  // When true (the room page), a restart does NOT redirect to the lobby - it
-  // shows an "updating" notice and lets Socket.IO reconnect, so the client can
-  // rejoin the same room in place. The lobby leaves this false and keeps the
-  // old countdown+redirect (for the lobby that is just a harmless refresh).
+  // When true (the room page), a restart does NOT reload the page - it shows
+  // an "updating" notice and lets Socket.IO reconnect, so the client can
+  // rejoin the same room in place. The sign-in page leaves this false and
+  // keeps the old countdown+reload (harmless there, since it has no room to
+  // stay in).
   var rejoinInPlace = false;
 
   function styles() {
@@ -55,7 +57,7 @@
     var o = overlay();
     o.innerHTML =
       '<div class="tk-conn-box"><div class="tk-conn-title">Talkomatic is updating</div>' +
-      '<div class="tk-conn-msg">Returning you to the lobby in <b id="tkConnN">' +
+      '<div class="tk-conn-msg">Reconnecting you in <b id="tkConnN">' +
       total +
       "</b> seconds…</div>" +
       '<div class="tk-conn-bar"><span id="tkConnBar"></span></div></div>';
@@ -126,7 +128,7 @@
       }),
     );
     actions.appendChild(
-      actionButton("Return to lobby", true, function () {
+      actionButton("Start over", true, function () {
         window.location.href = "/";
       }),
     );
@@ -155,7 +157,7 @@
       }),
     );
     actions.appendChild(
-      actionButton("Return to lobby", true, function () {
+      actionButton("Start over", true, function () {
         window.location.href = "/";
       }),
     );

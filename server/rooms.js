@@ -3280,9 +3280,6 @@ function startCleanupIntervals() {
     for (const [ip, ts] of state.ipLastRoomCreation.entries()) {
       if (now - ts > 300000) state.ipLastRoomCreation.delete(ip);
     }
-    for (const [ip, rec] of staffKeyAttempts.entries()) {
-      if (now > rec.resetAt) staffKeyAttempts.delete(ip);
-    }
     for (const roomId of state.roomSoloSince.keys()) {
       if (!state.rooms.has(roomId)) state.roomSoloSince.delete(roomId);
     }
