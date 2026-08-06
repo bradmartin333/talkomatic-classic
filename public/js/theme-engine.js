@@ -29,7 +29,7 @@
     { id: "card", label: "Cards", group: "Panels", def: "#000000", hint: "Room cards and dark surfaces" },
     { id: "cream", label: "Section strips", group: "Panels", def: "#fdf5e6", hint: "The Be Known As style strips" },
     { id: "cream-text", label: "Strip text", group: "Panels", def: "#000000", hint: "Text on the strips" },
-    { id: "chat-text", label: "Typing text", group: "Chat", def: "#ffa500", hint: "Text in the chat boxes", pages: ["room"] },
+    { id: "chat-text", label: "Typing text", group: "Chat", def: "#3cf138", hint: "Text in the chat boxes", pages: ["room"] },
     { id: "chat-bg", label: "Typing background", group: "Chat", def: "#000000", hint: "Chat box background", pages: ["room"] },
     { id: "chat-size", label: "Chat text size", group: "Chat", kind: "range", def: 18, min: 12, max: 28, unit: "px", hint: "How big chat text is in rooms", pages: ["room"] },
     { id: "radius", label: "Corner roundness", group: "Shape", kind: "range", def: 5, min: 0, max: 24, unit: "px", hint: "How rounded buttons and cards are" },

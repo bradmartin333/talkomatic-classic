@@ -1735,9 +1735,10 @@ socket.on("signin status", (data) => {
     localStorage.setItem("talkomaticLocation", currentLocation);
 
     setSignedInButtonState();
-    createRoomForm.classList.remove("hidden");
 
-    showRoomList();
+    // No lobby/room list any more: signing in goes straight into the one
+    // persistent room. "room joined" (already handled below) does the redirect.
+    socket.emit("join room", { roomId: "000001" });
   } else {
     signInMessage.style.display = "block";
     roomListContainer.style.display = "none";

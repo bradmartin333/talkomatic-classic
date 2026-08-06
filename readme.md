@@ -22,16 +22,22 @@
 
 Talkomatic was created in 1973 on the PLATO system at the University of Illinois. It was the first multi-user chat room ever built. This project is a faithful modern remake: no message log, no send button. Each person gets a section of the screen and everyone watches everyone else type live, letter by letter.
 
+**This fork is a stripped-down variant for a private, invite-only deployment** (behind an edge auth layer like Cloudflare Access, so only people you've already let in can reach it). Compared to [upstream](https://github.com/mohdmahmodi/talkomatic-classic), it has no accounts, no lobby/room-list menu, and no moderation apparatus — see [Differences from upstream](#differences-from-upstream) below.
+
 ## Features
 
 - **Live typing**: characters appear for everyone the moment you press them
-- **Rooms**: public, semi-private (6-digit access code), and private, in horizontal or vertical layouts
-- **Community suggestion board**: post ideas, reply, upvote, and see what gets approved and shipped
+- **One room**: sign in with a name and you're straight into it — no room list, no room creation
 - **Discord avatars**: optionally show your Discord profile picture next to your name
-- **Built-in apps**: collaborative jigsaw puzzle (with server-side image safety scanning), a shared piano, and a collaborative whiteboard
+- **Built-in apps**: collaborative jigsaw puzzle, a shared piano, and a collaborative whiteboard
 - **Themes**: swappable full-page themes, plus community themes
-- **Moderation**: staff dashboard with audit log, reports, appeals, IP bans, and a word filter
 - **Bot API**: token-based access for bots, with REST and Socket.IO ([docs](docs/api.md))
+
+## Differences from upstream
+
+Everyone who reaches this app is already someone you've let in (at the network/auth layer), so none of upstream's trust-and-safety tooling has a job to do here. Removed: staff roles and the mod dashboard, ban appeals, the audit log, IP bans, warnings, the shared-key leak watch, moderator applications, the invite system, user reports, the suggestion board, and NSFW image scanning (which pulled in `@tensorflow/tfjs`). The lobby/room-list UI is gone too — everyone lands in the same persistent room, created automatically on first boot and exempt from the usual empty-room cleanup, so it never expires.
+
+The mini-games, whiteboard, piano, puzzle, and themes are untouched.
 
 ## Tech
 
@@ -62,7 +68,6 @@ Everything works with zero configuration. To customize, copy `.env.example` to `
 | `ALLOWED_ORIGINS` | none | Comma-separated public URLs of your instance. Required when deploying on your own domain |
 | `DATA_DIR` | repo root | Where runtime JSON state is written |
 | `TRUST_PROXY` | `1` | Reverse-proxy hops to trust. Set `0` if exposed directly |
-| `DEV_KEY_HASH` | none | SHA-256 hash of the owner dev key |
 
 ## Deploying
 
@@ -78,7 +83,7 @@ The container listens on port 3000, binds `0.0.0.0`, and keeps all runtime state
 
 1. Create an Application pointing at this repository and set the build type to **Dockerfile**.
 2. Set environment variables: `SESSION_SECRET` (generate with `openssl rand -hex 32`) and `ALLOWED_ORIGINS` (the URL you will serve the app at, for example `https://chat.example.com`).
-3. Add a volume mount for `/app/data` so rooms, bans, and identity data survive redeploys.
+3. Add a volume mount for `/app/data` so the room and its Talkoboard/theme state survive redeploys.
 4. Point your domain at container port 3000. Dokploy's Traefik proxy handles HTTPS and the server already trusts one proxy hop.
 
 ### Monitoring
@@ -96,7 +101,7 @@ See the [API docs](docs/api.md) for response shapes and the bot API.
 
 ## Contributing
 
-Issues and pull requests are welcome. Read the [contributing guide](contributing.md) and the [code of conduct](CODE_OF_CONDUCT.md) first. If you want to suggest a feature as a user, the in-app Suggestion Board in the lobby is the fastest way to reach us.
+This is a personal fork trimmed for one private deployment, not a project taking outside contributions. For the full-featured version, see [upstream](https://github.com/mohdmahmodi/talkomatic-classic).
 
 ## License
 

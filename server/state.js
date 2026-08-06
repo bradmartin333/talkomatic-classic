@@ -101,12 +101,6 @@ const CONFIG = {
     // new code instead of silently rejoining with a stale protocol.
     PROTOCOL: 1,
   },
-
-  // Dev mode: SHA-256 hash of the secret dev key, set in .env as DEV_KEY_HASH.
-  // Generate with: crypto.createHash('sha256').update('your_key').digest('hex')
-  DEV: {
-    KEY_HASH: process.env.DEV_KEY_HASH || "",
-  },
 };
 
 const ERROR_CODES = {

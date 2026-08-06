@@ -43,11 +43,7 @@ const {
   validateObject,
 } = require("./server/security");
 const rooms = require("./server/rooms");
-const roles = require("./server/roles");
-const appeals = require("./server/appeals");
-const ipban = require("./server/ipban");
 const puzzle = require("./server/puzzle");
-const nsfw = require("./server/nsfw");
 const communityThemes = require("./server/themes");
 
 // ── Global Error Handlers ───────────────────────────────────────────────────
@@ -60,46 +56,14 @@ process.on("uncaughtException", (error) => {
 });
 
 // On a clean shutdown, flush every store to disk so nothing is lost in the
-// debounce window. Invites, identity, applications, reports, mod keys, the audit
-// log, and the IP ban list all persist across restarts and version updates -
-// each store's load() tolerates old/missing fields so data migrates forward
-// instead of disappearing.
+// debounce window. Each store's load() tolerates old/missing fields so data
+// migrates forward instead of disappearing.
 function gracefulFlush() {
-  try {
-    require("./server/invites").flushSync();
-  } catch (e) {}
-  try {
-    require("./server/identity").flushSync();
-  } catch (e) {}
-  try {
-    require("./server/applications").flushSync();
-  } catch (e) {}
-  try {
-    require("./server/reports").flushSync();
-  } catch (e) {}
-  try {
-    require("./server/appeals").flushSync();
-  } catch (e) {}
-  try {
-    require("./server/suggestions").flushSync();
-  } catch (e) {}
   try {
     require("./server/themes").flushSync();
   } catch (e) {}
   try {
-    require("./server/banhistory").flushSync();
-  } catch (e) {}
-  try {
-    require("./server/blocklist").flushSync();
-  } catch (e) {}
-  try {
-    require("./server/warnings").flushSync();
-  } catch (e) {}
-  try {
     rooms.saveBoardSync(); // persist Talkoboard strokes across the restart
-  } catch (e) {}
-  try {
-    require("./server/staffchat").flushSync(); // Desk chat survives restarts
   } catch (e) {}
 }
 let shuttingDown = false;
@@ -401,77 +365,6 @@ io.use((socket, next) => {
       } catch (_) {}
     }
 
-    // Blocked if the exact address is banned OR it falls inside a banned range
-    // (IPv6 /64), so rotating within a /64 does not evade the ban.
-    const activeBlock =
-      ipban.findActiveBlock(clientIp) ||
-      (deviceId ? ipban.findActiveIdBlock(deviceId) : null);
-    if (activeBlock) {
-      const block = activeBlock.block;
-      const expiry = block && typeof block === "object" ? block.expiry : block;
-      const err = new Error("IP blocked");
-      // Surfaced to the client's connect_error handler so the lobby can show
-      // a clear ban screen with a live countdown (or "permanent").
-      err.data = {
-        banned: true,
-        permanent: expiry >= Number.MAX_SAFE_INTEGER,
-        expiry,
-        reason: (block && block.reason) || null,
-        // Who placed the ban and when, so the ban screen can name the staff
-        // member. Only the staff label is exposed, never the raw IP.
-        by: (block && block.by) || null,
-        bannedAt: (block && typeof block === "object" && block.ts) || null,
-      };
-      return next(err);
-    }
-    // Opportunistically drop a stale exact entry so the map does not grow.
-    const stale = state.blockedIPs.get(clientIp);
-    if (stale !== undefined && !ipban.isActiveBlock(stale))
-      state.blockedIPs.delete(clientIp);
-
-    // Dev mode: validate devKey by hash against the configured dev keys
-    // (.env DEV_KEY_HASH supports multiple labeled keys). Owner-only.
-    const devKey = socket.handshake.auth.devKey;
-    const devMatch = devKey ? roles.getDevKey(devKey) : null;
-    if (devMatch) {
-      socket.isDev = true;
-      socket.staffLabel = devMatch.label;
-      socket.devKeyHash = devMatch.hash;
-      socket.isHidden = !!socket.handshake?.session?.isDevHidden;
-      // Track which IPs this key connects from; flag a brand-new one.
-      socket.keyNewIp = roles.recordKeyUse(
-        devMatch.hash,
-        devMatch.label,
-        "dev",
-        clientIp,
-      ).newIp;
-      console.log(
-        `[DEV] Dev mode activated (${devMatch.label}) for IP:${clientIp}`,
-      );
-    }
-
-    // Mod mode: validate modKey by hash against mod-keys.json. Dev outranks mod,
-    // so only check when the connection is not already a dev.
-    if (!socket.isDev) {
-      const modKey = socket.handshake.auth.modKey;
-      const mk = modKey ? roles.getModKeyByPlain(modKey) : null;
-      if (mk) {
-        socket.isMod = true;
-        socket.modKeyHash = mk.hash;
-        socket.modLevel = mk.level || 2;
-        socket.staffLabel = mk.label;
-        // Mods can hide their badge with the same persisted toggle as devs.
-        socket.isHidden = !!socket.handshake?.session?.isDevHidden;
-        socket.keyNewIp = roles.recordKeyUse(
-          mk.hash,
-          mk.label,
-          "mod",
-          clientIp,
-        ).newIp;
-        console.log(`[MOD] Mod mode activated (${mk.label}) for IP:${clientIp}`);
-      }
-    }
-
     if (CONFIG.FEATURES.ENABLE_STRICT_ANTIBOT && !browser.isBrowser) {
       if (CONFIG.FEATURES.ENABLE_BOT_TOKENS) {
         if (!botToken) return next(new Error("Bot token required"));
@@ -735,9 +628,8 @@ app.get("/healthz", (req, res) => {
 app.get(`${API}/health`, (req, res) => {
   const stats = rooms.getRoomStatistics();
   const mem = process.memoryUsage();
-  const nsfwReady = nsfw.isReady();
   res.json({
-    status: nsfwReady ? "ok" : "degraded",
+    status: "ok",
     timestamp: Date.now(),
     uptimeSeconds: Math.floor(process.uptime()),
     version: {
@@ -754,7 +646,6 @@ app.get(`${API}/health`, (req, res) => {
     users: { inRooms: stats.totalUsers, sockets: io.engine.clientsCount },
     subsystems: {
       socketio: "ok",
-      imageSafetyScanner: nsfwReady ? "ok" : "loading",
     },
   });
 });
@@ -777,25 +668,7 @@ app.post(`${API}/bot-tokens/request`, handleBotTokenRequest);
 app.get(`${API}/bot-tokens/info`, handleBotTokenInfo);
 app.use("/api", antibotMiddleware);
 
-// The ban screen is the one place where the caller is ALWAYS a blocked IP, and
-// enhancedRateLimit puts blocked IPs on the suspicious bucket: ten requests a
-// minute, then a five minute lockout. That budget is gone in seconds, and what
-// breaks is exactly what a banned user needs - the poll that notices their ban
-// was lifted, and the appeal conversation with staff. Both are cheap reads,
-// both are already throttled where it matters (the appeal store caps messages
-// per appeal and enforces a cooldown), so they skip the limiter entirely.
-const BAN_SCREEN_PATHS = new Set([
-  `${API}/ban-status`,
-  `${API}/appeal`,
-  `${API}/appeal/message`,
-]);
-app.use("/api", (req, res, next) => {
-  // originalUrl, not req.path: inside a mounted middleware the mount point is
-  // stripped, so req.path here is "/v1/ban-status" rather than the full route.
-  const path = (req.originalUrl || "").split("?")[0];
-  if (BAN_SCREEN_PATHS.has(path)) return next();
-  return enhancedRateLimit(req, res, next);
-});
+app.use("/api", enhancedRateLimit);
 
 app.get(`${API}/config`, (req, res) => {
   const cached = state.apiCache.get("config");
@@ -825,207 +698,9 @@ app.get(`${API}/me`, (req, res) => {
   else res.json({ isSignedIn: false, isBot: !!req.isBot });
 });
 
-// Ban appeal, submitted straight from the ban screen. The IP block only rejects
-// socket connections, so a banned user can still reach this HTTP route. We only
-// accept an appeal from an IP that is actually blocked, capture a snapshot of
-// the ban it contests, and surface it to staff in the Appeals tab. One open
-// appeal per IP, so the inbox cannot be flooded.
-app.post(`${API}/appeal`, (req, res) => {
-  try {
-    const ip = getClientIP(req);
-    const rawDevice =
-      typeof req.body?.deviceId === "string"
-        ? req.body.deviceId
-        : req.session?.did || "";
-    const deviceId = /^[a-f0-9-]{8,64}$/i.test(rawDevice)
-      ? rawDevice.toLowerCase()
-      : null;
-    // Match a range ban too, so a range-banned user (whose exact address is not
-    // itself a key) can still submit an appeal from the ban screen.
-    const active =
-      ipban.findActiveBlock(ip) ||
-      (deviceId ? ipban.findActiveIdBlock(deviceId) : null);
-    if (!active) return res.json({ ok: false, code: "not_banned" });
-    const block = active.block;
-
-    const message = sanitizeMessage(
-      typeof req.body?.message === "string" ? req.body.message : "",
-    ).slice(0, 1000);
-    if (message.trim().length < 3)
-      return res.json({ ok: false, code: "too_short" });
-
-    // Identity comes from the session the banned browser still carries, so a
-    // moderator can trace the appealing user's activity by their userId.
-    const name = req.session?.username || null;
-    const userId = req.session?.userId || null;
-    const b = block && typeof block === "object" ? block : {};
-
-    const result = appeals.submit({
-      ip,
-      deviceId,
-      userId,
-      name,
-      message,
-      ban: {
-        by: b.by || null,
-        label: b.label || null,
-        reason: b.reason || null,
-        expiry: b.expiry || 0,
-        permanent: (b.expiry || 0) >= Number.MAX_SAFE_INTEGER,
-        ts: b.ts || null,
-      },
-    });
-    if (!result.ok) return res.json(result);
-    try {
-      rooms.announceAppeal(result.id);
-    } catch (e) {
-      console.error("announceAppeal failed:", e);
-    }
-    res.json({ ok: true, id: result.id });
-  } catch (e) {
-    console.error("appeal route error:", e);
-    res.status(500).json({ ok: false, code: "server_error" });
-  }
-});
-
-// The appellant's own view of their appeal: the conversation, whether they can
-// still write, and how it was decided. Polled by the ban screen, which has no
-// socket to push to it. Never exposes anything about the moderator beyond the
-// label they already sign their messages with.
-function appealForBrowser(req) {
-  const ip = getClientIP(req);
-  const rawDevice =
-    typeof req.query?.deviceId === "string"
-      ? req.query.deviceId
-      : typeof req.body?.deviceId === "string"
-        ? req.body.deviceId
-        : req.session?.did || "";
-  const deviceId = /^[a-f0-9-]{8,64}$/i.test(rawDevice)
-    ? rawDevice.toLowerCase()
-    : null;
-  // Which ban they are serving right now. The appeal shown is the one about
-  // THIS ban: an old one from a ban they already served is history and must
-  // not stand in the way of appealing the ban they are actually under.
-  const active =
-    ipban.findActiveBlock(ip) ||
-    (deviceId ? ipban.findActiveIdBlock(deviceId) : null);
-  const b = active && typeof active.block === "object" ? active.block : null;
-  const banKey = active
-    ? appeals.banKeyOf({
-        ts: b ? b.ts : null,
-        expiry: b ? b.expiry : active.block,
-        reason: b ? b.reason : null,
-      })
-    : null;
-  return {
-    ip,
-    deviceId,
-    banned: !!active,
-    banKey,
-    appeal: appeals.forUser(ip, deviceId, banKey),
-  };
-}
-
-function appealPayload(a, ctx) {
-  // No appeal for the ban they are under: the form, not a closed door. This is
-  // the case that was locking people out - a decision on a previous ban used
-  // to answer here and there was no way past it.
-  if (!a)
-    return {
-      ok: true,
-      has: false,
-      canFile: !!(ctx && ctx.banned),
-    };
-  return {
-    ok: true,
-    has: true,
-    id: a.id,
-    at: a.at,
-    status: a.status,
-    resolution: a.resolution || null,
-    locked: !!a.locked,
-    canWrite: a.status === "open" && !a.locked,
-    left: Math.max(
-      0,
-      appeals.USER_MSG_CAP -
-        (a.messages || []).filter((m) => m.from === "user").length,
-    ),
-    messages: (a.messages || []).map((m) => ({
-      id: m.id,
-      ts: m.ts,
-      from: m.from,
-      // Who they are talking to: the name, the rank, and the picture. Nothing
-      // here is private - it is the same flair the moderator wears in a room.
-      by: m.from === "staff" ? m.by || "staff" : null,
-      role: m.from === "staff" ? m.role || "mod" : null,
-      level: m.from === "staff" ? (m.level == null ? 2 : m.level) : null,
-      avatar: m.from === "staff" ? m.avatar || null : null,
-      text: m.text || "",
-      reply: m.reply || null,
-    })),
-  };
-}
-
-app.get(`${API}/appeal`, (req, res) => {
-  try {
-    const ctx = appealForBrowser(req);
-    res.json(appealPayload(ctx.appeal, ctx));
-  } catch (e) {
-    console.error("appeal read error:", e);
-    res.status(500).json({ ok: false, code: "server_error" });
-  }
-});
-
-app.post(`${API}/appeal/message`, (req, res) => {
-  try {
-    const ctx = appealForBrowser(req);
-    const { appeal } = ctx;
-    if (!appeal) return res.json({ ok: false, code: "no_appeal" });
-    const text = sanitizeMessage(
-      typeof req.body?.message === "string" ? req.body.message : "",
-    ).slice(0, 1000);
-    const replyTo = Number(req.body?.replyTo) || null;
-    const r = appeals.userReply(appeal, text, replyTo);
-    if (!r.ok) return res.json(r);
-    try {
-      rooms.announceAppealMessage(appeal.id);
-    } catch (e) {
-      console.error("announceAppealMessage failed:", e);
-    }
-    res.json(appealPayload(appeal, ctx));
-  } catch (e) {
-    console.error("appeal message error:", e);
-    res.status(500).json({ ok: false, code: "server_error" });
-  }
-});
-
-// Is the requester's IP still blocked? The ban screen polls this over HTTP
-// (which works while the socket is refused) so it can reload itself the moment
-// a ban is lifted, instead of stranding the user until they refresh by hand.
-app.get(`${API}/ban-status`, (req, res) => {
-  const ip = getClientIP(req);
-  // Range-aware: a range-banned user must keep reading banned:true here (matches
-  // the socket gate), or the ban screen would think they were unbanned and
-  // reload-loop. Mirrors the socket gate exactly, session identity included.
-  const active =
-    ipban.findActiveBlock(ip) ||
-    (req.session?.did ? ipban.findActiveIdBlock(req.session.did) : null);
-  const block = active ? active.block : null;
-  const expiry = block && typeof block === "object" ? block.expiry : block;
-  const banned = !!active;
-  res.json({
-    banned,
-    permanent: banned && expiry >= Number.MAX_SAFE_INTEGER,
-    expiry: banned ? expiry : 0,
-  });
-});
-
 // ── Collaborative puzzle: one shared board per room ─────────────────────────
 // The image is uploaded as a raw JPEG body (no multipart). The uploader must be
-// a member of the room. Two safety gates: the browser runs a fast nsfwjs
-// pre-check (attested in x-nsfw-scan), and the server then classifies the
-// ACTUAL uploaded bytes itself (server/nsfw.js) - the attestation alone is
-// self-reported and forgeable, so the server scan is the one that counts.
+// a member of the room.
 app.post(
   `${API}/puzzle/:roomId/image`,
   express.raw({ type: () => true, limit: "6mb" }),
@@ -1038,19 +713,8 @@ app.post(
       if (!userId || !member)
         return sendErrorResponse(res, ERROR_CODES.FORBIDDEN, "You are not in this room.", 403);
 
-      const isStaff = !!(member.isDev || member.isMod);
-      if (!state.puzzleEnabled && !isStaff)
+      if (!state.puzzleEnabled)
         return sendErrorResponse(res, ERROR_CODES.FORBIDDEN, "Puzzles are currently turned off.", 403);
-
-      // Client-side nsfwjs must have run and passed. Enforcement is client-side
-      // by design; the server re-checks the reported scores. Thresholds mirror
-      // the browser scan in public/pages/puzzle.html - keep the two in sync.
-      let att = null;
-      try { att = JSON.parse(req.get("x-nsfw-scan") || "null"); } catch { att = null; }
-      const sc = (att && att.scores) || {};
-      const porn = +sc.Porn || 0, hentai = +sc.Hentai || 0, sexy = +sc.Sexy || 0;
-      if (!att || att.safe !== true || porn > 0.3 || hentai > 0.3 || sexy > 0.5 || porn + hentai + sexy > 0.6)
-        return sendErrorResponse(res, ERROR_CODES.FORBIDDEN, "That image did not pass the safety check.", 403);
 
       const iw = parseInt(req.query.w, 10) | 0;
       const ih = parseInt(req.query.h, 10) | 0;
@@ -1062,35 +726,8 @@ app.post(
       if (!Buffer.isBuffer(image) || image.length < 64)
         return sendErrorResponse(res, ERROR_CODES.BAD_REQUEST, "no image", 400);
 
-      // Server-side classification of the actual bytes. Fails closed: a scan
-      // error rejects the upload rather than letting it through unchecked.
-      let verdict;
-      try {
-        verdict = await nsfw.scanJpeg(image);
-      } catch (e) {
-        console.error("puzzle nsfw scan failed:", e.message);
-        return sendErrorResponse(
-          res,
-          ERROR_CODES.SERVER_ERROR,
-          "The safety check is unavailable right now. Try again in a minute.",
-          503,
-        );
-      }
-      if (!verdict.safe) {
-        console.log(
-          `[NSFW] Blocked puzzle upload in room ${roomId} by ${req.session?.username || "?"} ` +
-            `(Porn ${verdict.scores.Porn.toFixed(2)}, Hentai ${verdict.scores.Hentai.toFixed(2)}, Sexy ${verdict.scores.Sexy.toFixed(2)})`,
-        );
-        return sendErrorResponse(
-          res,
-          ERROR_CODES.FORBIDDEN,
-          "That image did not pass the safety check.",
-          403,
-        );
-      }
-
       const started = puzzle.start(
-        roomId, userId, req.session?.username, image, { iw, ih }, target, isStaff,
+        roomId, userId, req.session?.username, image, { iw, ih }, target, false,
       );
       if (!started.ok)
         return sendErrorResponse(
@@ -1397,10 +1034,10 @@ app.post(`${API}/rooms/:id/join`, apiAuth, async (req, res) => {
 
 async function start() {
   await rooms.loadRooms();
+  rooms.ensureMainRoom();
   rooms.loadBoard(); // restore saved Talkoboard strokes for the loaded rooms
   rooms.registerSocketHandlers({ buildId: () => BUILD_ID });
   rooms.startCleanupIntervals();
-  nsfw.warmup(); // preload the puzzle image classifier
 
   setTimeout(() => {
     rooms.purgeAllGhostUsers();
@@ -1417,7 +1054,6 @@ async function start() {
   Node.js ${process.version}
   Rooms: ${stats.totalRooms}/${stats.currentLimit} | Users: ${stats.totalUsers}
   Antibot: ${CONFIG.FEATURES.ENABLE_STRICT_ANTIBOT ? "ON" : "OFF"} | Bot Tokens: ${CONFIG.FEATURES.ENABLE_BOT_TOKENS ? "ON" : "OFF"}
-  Dev Mode: ${CONFIG.DEV.KEY_HASH ? "CONFIGURED" : "NOT SET"}
   Session Secret: ${SESSION_SECRET ? "SET (persistent)" : "MISSING (ephemeral - sessions reset on restart)"}
 ══════════════════════════════════════════════════════`);
   });
