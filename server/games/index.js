@@ -958,6 +958,36 @@ function chat(roomId, user, tableId, text) {
 
   const playing = t.seats.some((s) => s.userId === user.userId);
   t.typing.delete(user.userId);
+
+  // Some games treat plain chat as a play. Draw & Guess does: typing in the
+  // feed is guessing, so there is no second box to find. The game decides;
+  // the floor only asks. A line it does not claim falls through and is posted
+  // as an ordinary message below.
+  let nearMiss = false;
+  if (t.state === "playing" && t.game) {
+    const rules = rulesFor(t.type);
+    if (rules && rules.chatGuess) {
+      const out = rules.chatGuess(t.game, user.userId, body);
+      if (out && out.near) {
+        // Nearly right. The line still posts as an ordinary message; only the
+        // person who typed it is told they were close.
+        nearMiss = true;
+      } else if (out) {
+        t.misses.delete(user.userId); // they are clearly still here
+        // The word itself is never echoed: that would hand it to everybody
+        // still guessing. The announcement covers it.
+        if (out.announce) say(t, out.announce, out.tone);
+        if (rules.isOver(t.game)) {
+          finishMatch(t);
+          emitFloor(t.roomId);
+        } else {
+          armTurn(t);
+          emitTable(t);
+        }
+        return { ok: true, guessed: true };
+      }
+    }
+  }
   // Role and picture are stamped from the room record, never from the client,
   // so a badge cannot be faked by a patched page.
   const who = deps.userInfo(t.roomId, user.userId) || {};
@@ -970,7 +1000,7 @@ function chat(roomId, user, tableId, text) {
     text: body,
     watching: !playing,
   });
-  return { ok: true };
+  return nearMiss ? { ok: true, close: true } : { ok: true };
 }
 
 function typing(roomId, userId, tableId, on) {

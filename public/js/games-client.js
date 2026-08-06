@@ -1285,10 +1285,7 @@
           class:
             "gm-chat-line" +
             (m.userId === myId() ? " gm-chat-mine" : "") +
-            (m.watching ? " gm-chat-watch" : "") +
-            // A guess that missed. Same shape as a message, coloured so the
-            // feed reads at a glance: red tried, green got it.
-            (m.kind === "guess" ? " gm-chat-wrong" : ""),
+            (m.watching ? " gm-chat-watch" : ""),
         });
         // Avatar, badge and name live in one cell so the grid stays two
         // columns and a long message wraps under itself, not around the name.

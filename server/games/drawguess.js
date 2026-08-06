@@ -54,14 +54,17 @@ function offerWords(used) {
 
 function create(players) {
   const state = {
-    players: players.map((p) => ({
+    players: players.map((p, i) => ({
       userId: p.userId,
       username: p.username,
       score: 0,
-      joinedAt: Date.now(),
+      seat: i, // fixed place in the turn order, never reused
       noDraw: false, // opted out of taking a turn
     })),
-    drawn: {}, // userId -> turns taken, drives the rotation
+    nextSeat: players.length,
+    lastSeat: -1, // seat of whoever drew last, so the pen resumes after them
+    lap: 0, // completed times round the table
+    drawn: {}, // userId -> turns actually drawn, for display
     turn: 0,
     drawerId: null,
     phase: "waiting",
@@ -85,22 +88,31 @@ function create(players) {
   return state;
 }
 
-// Whoever has drawn fewest, oldest player first on a tie. People who opted out
-// are only considered when nobody else is willing, so a table of opt-outs still
-// plays rather than deadlocking.
+// The pen goes round the table in the order people sat down, then back to the
+// top: first to join draws first, then the second, and so on.
+//
+// The pointer is a seat number rather than a position in the array, because
+// seats are handed out once and never reused. Somebody leaving therefore does
+// not shuffle everybody else along, and the pen still resumes after whoever
+// last held it even if that person is the one who left.
+//
+// Returns { p, lap } where lap is true when picking this player means we have
+// come the whole way round and started a new one.
 function pickDrawer(state) {
-  const best = (skipOptOut) => {
-    let found = null;
-    for (const p of state.players) {
-      if (skipOptOut && p.noDraw) continue;
-      const n = state.drawn[p.userId] || 0;
-      if (n >= ROUNDS) continue;
-      if (!found || n < found.n || (n === found.n && p.joinedAt < found.p.joinedAt))
-        found = { p, n };
-    }
-    return found ? found.p : null;
+  const order = state.players.slice().sort((a, b) => a.seat - b.seat);
+  if (!order.length) return null;
+
+  // People who opted out are passed over, unless nobody at all is willing, in
+  // which case a table of opt-outs still plays rather than deadlocking.
+  const sweep = (skipOptOut) => {
+    const ok = (p) => !skipOptOut || !p.noDraw;
+    const after = order.find((p) => p.seat > state.lastSeat && ok(p));
+    if (after) return { p: after, lap: false };
+    const top = order.find(ok);
+    if (top) return { p: top, lap: true };
+    return null;
   };
-  return best(true) || best(false);
+  return sweep(true) || sweep(false);
 }
 
 // Decide what happens next: wait for company, hand out a word, or finish.
@@ -122,14 +134,24 @@ function advance(state) {
     return;
   }
   const next = pickDrawer(state);
-  if (!next) {
+  const finish = () => {
     state.phase = "done";
     state.over = true;
     state.drawerId = null;
     state.endsAt = 0;
-    return;
+  };
+  if (!next) return finish();
+
+  // Coming back round to the top finishes a lap. The game runs for ROUNDS of
+  // them, so everybody gets the same number of goes however many people are
+  // at the table.
+  if (next.lap && state.lastSeat >= 0) {
+    state.lap++;
+    if (state.lap >= ROUNDS) return finish();
   }
-  state.drawerId = next.userId;
+
+  state.drawerId = next.p.userId;
+  state.lastSeat = next.p.seat;
   state.phase = "choosing";
   state.choices = offerWords(state.used);
   state.endsAt = Date.now() + CHOOSE_MS;
@@ -164,13 +186,10 @@ function toReveal(state) {
   }
 }
 
-// Hand the pen on without costing them a go, so "not this one" is cheap and
-// people actually use it instead of sitting on the clock.
+// Hand the pen straight on to the next seat. It costs them their slot this lap
+// but is not recorded as a turn drawn, so "not this one" stays cheap and people
+// use it instead of sitting on the clock.
 function passTurn(state) {
-  const current = state.drawerId;
-  const p = state.players.find((x) => x.userId === current);
-  if (p) p.joinedAt = Date.now(); // back of the tie-break queue
-  state.drawn[current] = (state.drawn[current] || 0) + 1;
   advance(state);
 }
 
@@ -443,6 +462,28 @@ function move(state, userId, mv) {
   return { ok: false, err: "Unknown action." };
 }
 
+// Talking in the feed IS guessing. Nobody should have to find a second box to
+// type into, and in a drawing game everything anybody says is an attempt.
+//
+// Returns null when the line is just talk and should be posted as an ordinary
+// message: the drawer chatting, somebody who already got it, or anything said
+// outside the drawing phase. The floor only treats it as a play when this
+// hands back a move result.
+function chatGuess(state, userId, text) {
+  if (state.over || state.phase !== "drawing") return null;
+  if (userId === state.drawerId) return null;
+  if (state.guessed.some((g) => g.userId === userId)) return null;
+  if (!state.players.some((p) => p.userId === userId)) return null;
+
+  const out = move(state, userId, { kind: "guess", text });
+  if (!out || !out.ok) return null;
+  // A miss stays a normal chat line, so the feed reads as conversation rather
+  // than a column of failures. A near miss is still worth a quiet nudge to the
+  // person who typed it, so it is reported without claiming the line.
+  if (!out.correct) return out.close ? { ok: true, near: true } : null;
+  return out;
+}
+
 function sanitizeStroke(s) {
   if (!s || typeof s !== "object") return null;
   const num = (v) => {
@@ -505,11 +546,13 @@ function tick(state, now) {
 function addPlayer(state, p) {
   if (state.over) return false;
   if (state.players.some((x) => x.userId === p.userId)) return false;
+  // They take the next free seat, so they join the back of the turn order and
+  // draw when the pen reaches them.
   state.players.push({
     userId: p.userId,
     username: p.username,
     score: 0,
-    joinedAt: Date.now(),
+    seat: state.nextSeat++,
     noDraw: false,
   });
   state.drawn[p.userId] = 0;
@@ -587,10 +630,15 @@ function view(state, userId) {
   const revealing = state.phase === "reveal" || state.phase === "done";
   const drawer = state.players.find((p) => p.userId === state.drawerId);
   const me = state.players.find((p) => p.userId === userId);
-  const done = state.players.reduce(
-    (n, p) => n + Math.min(ROUNDS, state.drawn[p.userId] || 0),
-    0,
-  );
+  const done = state.turn;
+
+  // Who the pen goes to after this turn, so the table can see it coming. Null
+  // when this is the last turn of the last lap.
+  const upNext = state.over ? null : pickDrawer(state);
+  const lastOfGame =
+    !upNext || (upNext.lap && state.lastSeat >= 0 && state.lap + 1 >= ROUNDS);
+  const nextDrawer = lastOfGame ? null : upNext.p;
+
   return {
     phase: state.phase,
     endsAt: state.endsAt,
@@ -603,8 +651,11 @@ function view(state, userId) {
     turn: done,
     totalTurns: state.players.length * ROUNDS,
     rounds: ROUNDS,
+    round: Math.min(state.lap + 1, ROUNDS),
     drawerId: state.drawerId,
     drawerName: drawer ? drawer.username : null,
+    nextDrawerId: nextDrawer ? nextDrawer.userId : null,
+    nextDrawerName: nextDrawer ? nextDrawer.username : null,
     amDrawer,
     // The word goes to the drawer only, and to everyone once it is revealed.
     word: amDrawer ? prettyPrompt(state.word) : null,
@@ -649,6 +700,10 @@ function view(state, userId) {
         got: state.guessed.some((g) => g.userId === p.userId),
         noDraw: !!p.noDraw,
         drawn: state.drawn[p.userId] || 0,
+        // Where they sit in the rotation, so the list can be shown in turn
+        // order as well as by score.
+        seat: p.seat,
+        next: !!nextDrawer && p.userId === nextDrawer.userId,
       })),
     over: state.over,
   };
@@ -676,6 +731,7 @@ module.exports = {
   backgrounds: BACKGROUNDS,
   create,
   move,
+  chatGuess,
   turnOf,
   tick,
   isOver,

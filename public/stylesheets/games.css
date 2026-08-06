@@ -1267,21 +1267,13 @@ button.gm-side-fold:hover {
   padding-left: 1px;
 }
 
-/* Guesses read at a glance: green for got it, red for a miss. */
+/* Getting it stands out in green. A miss is left looking like any other
+   message: in a drawing game everything said is a guess, so striking them all
+   through turned the feed into a wall of crossed-out red. */
 .gm-chat-sys.gm-chat-good {
   color: var(--tk-success, #4caf50);
   font-style: normal;
   font-weight: bold;
-}
-
-.gm-chat-wrong .gm-chat-text {
-  color: var(--tk-error, #ff5252);
-  text-decoration: line-through;
-  text-decoration-color: rgba(255, 82, 82, 0.5);
-}
-
-.gm-chat-wrong .gm-chat-who {
-  opacity: 0.8;
 }
 .gm-nodraw {
   color: var(--tk-muted);
