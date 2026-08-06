@@ -630,6 +630,19 @@ function requireModLevel(socket, minLevel) {
   return false;
 }
 
+// Marks the Desk's #queues card for one queue item as handled, so a card
+// acted on from the dashboard stops asking to be acted on in the Desk. Actions
+// aimed at a USER stamp themselves through logStaff; this is for the ones
+// aimed at a numbered item (an application, an appeal, a suggestion).
+function stampQueueItem(socket, qkind, itemId, action) {
+  try {
+    staffchat.stampQueue(
+      (m) => m.qkind === qkind && m.card && m.card.itemId === Number(itemId),
+      { by: socket?.staffLabel || (socket?.isDev ? "dev" : "mod"), action },
+    );
+  } catch (_) {}
+}
+
 // Records one privileged action to the audit log (board feed + audit-log.jsonl
 // + modlog.txt). target/room accept a string or an object ({id,username} for
 // users, room objects for rooms). `details` carries free text (e.g. the body
@@ -873,6 +886,14 @@ function announceAppeal(id) {
     target: a.userId ? `user:${a.name || "user"}(${a.userId})` : null,
     by: a.name || null,
     minLevel: 2,
+    card: {
+      ids: [a.userId, a.deviceId].filter(Boolean),
+      by: a.name || "A banned user",
+      itemId: id,
+      deviceId: a.deviceId || null,
+      reason: a.message || null,
+      lines: a.ban && a.ban.reason ? ["Banned for: " + a.ban.reason] : null,
+    },
   });
   broadcastAppealsList();
 }
@@ -2468,6 +2489,7 @@ function registerSocketHandlers(opts) {
     state,
     formatUserForSocket,
     findSocketsByUserId,
+    roomCapacity,
     roles,
     audit,
   });
@@ -6400,6 +6422,12 @@ function registerSocketHandlers(opts) {
           );
         }
         broadcastAppealsList();
+        stampQueueItem(
+          socket,
+          "appeal",
+          id,
+          decision === "lift" ? "ban lifted" : "dismissed",
+        );
         socket.emit("staff appeals", buildAppealsList(!!socket.isDev));
       }),
     );
@@ -6425,7 +6453,7 @@ function registerSocketHandlers(opts) {
           });
         socket._lastSuggestion = now;
         const name = socket.handshake.session?.username || null;
-        suggestions.submit({
+        const sres = suggestions.submit({
           deviceId: socket.deviceId || null,
           userId: socket.handshake.session?.userId || null,
           name,
@@ -6436,6 +6464,12 @@ function registerSocketHandlers(opts) {
           text: `${name || "A user"} suggested: ${text}`,
           by: name,
           minLevel: 2,
+          card: {
+            ids: [socket.handshake.session?.userId].filter(Boolean),
+            by: name || "A user",
+            itemId: sres && sres.id ? sres.id : null,
+            reason: text,
+          },
         });
         broadcastSuggestionsList();
         socket.emit("suggestion result", { ok: true });
@@ -6471,6 +6505,7 @@ function registerSocketHandlers(opts) {
           "-",
         );
         broadcastSuggestionsList();
+        stampQueueItem(socket, "suggestion", id, decision);
         socket.emit("staff suggestions", buildSuggestionsList(!!socket.isDev));
       }),
     );
@@ -6785,6 +6820,23 @@ function registerSocketHandlers(opts) {
           targetRole,
           reports: tally.distinct || null,
           minLevel: 2,
+          // The Desk draws its own card from these and puts warn / kick /
+          // block / discard on it, firing the same events the board does.
+          card: {
+            ids: [targetUserId, targetSocket?.deviceId].filter(Boolean),
+            by: reporter,
+            byRole,
+            target: targetName,
+            targetRole,
+            targetUserId,
+            deviceId: targetSocket?.deviceId || null,
+            category: catLabel,
+            reason: reason || null,
+            quote: targetText || null,
+            reports: tally.distinct || null,
+            roomId: room ? room.id : null,
+            roomName: room ? room.name : null,
+          },
         });
         socket.emit("report received", {});
         broadcastReportsList(); // live-update open dashboards
@@ -6857,6 +6909,17 @@ function registerSocketHandlers(opts) {
           text: `New mod application from ${socket.handshake.session?.username || "a user"}`,
           by: socket.handshake.session?.username || null,
           minLevel: 2,
+          // Everything a reviewer needs to decide, so approving does not mean
+          // going to find the application first.
+          card: {
+            ids: [socket.deviceId].filter(Boolean),
+            by: socket.handshake.session?.username || "a user",
+            itemId: res.id,
+            deviceId: socket.deviceId || null,
+            discord,
+            reason: why,
+            lines: availability ? ["Around: " + availability] : null,
+          },
         });
         broadcastAppsList();
         socket.emit("mod application result", { ok: true });
@@ -6974,6 +7037,12 @@ function registerSocketHandlers(opts) {
           );
         }
         broadcastAppsList();
+        stampQueueItem(
+          socket,
+          "application",
+          id,
+          decision === "approve" ? "approved" : "declined",
+        );
         socket.emit("staff action result", {
           action: "review application",
           ok: true,

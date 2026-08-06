@@ -324,13 +324,118 @@ function system(key, text, extra) {
 // Queue cards, fed from audit.recordNotification - the one place every
 // report, appeal, application, suggestion and abuse flag already passes
 // through. The card keeps the feed's audience level.
+//
+// `opts.card` is the structured version of the same event: the Desk draws a
+// real card from it and puts the matching buttons on it. `text` is still
+// stored, and is what older clients (and the search index) read.
 function systemQueues(qkind, text, opts) {
   if (qkind === "report") noteEvent("report");
+  const card = opts && opts.card ? sanitizeCard(qkind, opts.card) : null;
   return system("queues", text, {
     qkind: qkind || "notice",
     minLevel: (opts && opts.minLevel) || null,
     devOnly: !!(opts && opts.devOnly),
+    ...(card ? { card } : {}),
   });
+}
+
+// Everything on a card is either a short string or a number, and every string
+// is capped. The client renders all of it with textContent, but a card that
+// can carry unbounded text is a way to blow up the saved file.
+const cut = (v, n) => (v == null ? null : String(v).slice(0, n || 200));
+
+function sanitizeCard(qkind, c) {
+  const out = {
+    // What an action on this person or thing should stamp. Several ids can
+    // point at one card: a report is keyed by user id, but a block lands on
+    // the device id, and both mean "this report is handled".
+    ids: Array.isArray(c.ids)
+      ? c.ids.filter(Boolean).map((x) => cut(x, 100)).slice(0, 6)
+      : [],
+    by: cut(c.by, 60),
+    byRole: cut(c.byRole, 10),
+    target: cut(c.target, 60),
+    targetRole: cut(c.targetRole, 10),
+    targetUserId: cut(c.targetUserId, 100),
+    deviceId: cut(c.deviceId, 100),
+    category: cut(c.category, 60),
+    reason: cut(c.reason, 300),
+    quote: cut(c.quote, 300),
+    reports: Number(c.reports) || null,
+    itemId: Number.isFinite(Number(c.itemId)) ? Number(c.itemId) : null,
+    roomId: cut(c.roomId, 60),
+    roomName: cut(c.roomName, 60),
+    discord: cut(c.discord, 60),
+    lines: Array.isArray(c.lines)
+      ? c.lines.filter(Boolean).map((x) => cut(x, 160)).slice(0, 12)
+      : null,
+  };
+  for (const k in out) if (out[k] == null) delete out[k];
+  if (!out.ids.length) delete out.ids;
+  return out;
+}
+
+// ── Queue cards: handled, and cleaned up ────────────────────────────────────
+// A card is stamped the moment anybody acts on what it is about, wherever they
+// did it - the dashboard, a room, or the Desk itself. The card stays put with
+// "handled by X" on it rather than vanishing, so two people do not both go
+// looking for the same report.
+function stampQueue(match, done) {
+  const list = desk.channels.queues || [];
+  let touched = false;
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i];
+    if (!m.card || m.done) continue;
+    if (!match(m)) continue;
+    m.done = { by: cut(done.by, 60), action: cut(done.action, 60), ts: Date.now() };
+    broadcast("queues", m, true);
+    touched = true;
+  }
+  if (touched) scheduleSave();
+}
+
+// Only actions that actually settle a queue item stamp one. Spectating a
+// reported user, or renaming a room they happen to be in, is not the same as
+// dealing with the report, and a card that clears itself for the wrong reason
+// is worse than one that has to be cleared by hand.
+const SETTLES_QUEUE =
+  /^(kick|ban|ip block|unblock ip|warn|wipe buffer|dismiss report|freeze|reset location|turn pfp off|piano mute|approve mod application|reject mod application|dismiss appeal|lift ban|approve suggestion|decline suggestion|revoke mod)/;
+
+// Somebody acted on a user: stamp every open card about that user.
+function stampQueueForTarget(byLabel, action, id) {
+  if (!id || !SETTLES_QUEUE.test(String(action || ""))) return;
+  stampQueue(
+    (m) =>
+      (m.card.ids || []).includes(id) ||
+      m.card.targetUserId === id ||
+      m.card.deviceId === id,
+    { by: byLabel, action },
+  );
+}
+
+// Queue cards are a working tray, not an archive: the dashboard feed and the
+// audit log are where things are kept. Anything older than a day goes, so a
+// week away does not mean scrolling through a thousand handled reports.
+const QUEUE_TTL_MS = 24 * 60 * 60 * 1000;
+
+function pruneQueues() {
+  const list = desk.channels.queues || [];
+  const cutoff = Date.now() - QUEUE_TTL_MS;
+  const gone = [];
+  const kept = [];
+  for (const m of list) {
+    if (m.ts < cutoff) {
+      gone.push(m.id);
+      byId.delete(m.id);
+    } else kept.push(m);
+  }
+  if (!gone.length) return;
+  desk.channels.queues = kept;
+  scheduleSave();
+  if (!io()) return;
+  for (const [, s] of io().sockets.sockets)
+    if (s.connected && s.deskHello && canRead(s, "queues"))
+      s.emit("desk drop", { key: "queues", ids: gone });
 }
 
 // ── The daily tally ─────────────────────────────────────────────────────────
@@ -420,7 +525,22 @@ function postDailyStats(d) {
     kind: "system",
     author: null,
     qkind: "stats",
+    // The sentence stays: it is what search matches on, and what a client
+    // that does not know about `stats` still shows.
     text: when + ": " + bits.join(", ") + ".",
+    // The numbers on their own, so the Desk can lay the day out properly
+    // instead of reading a paragraph back to you.
+    stats: {
+      day: d.start,
+      when,
+      visitors,
+      rooms: d.rooms || 0,
+      peak: d.peak || 0,
+      actions: d.actions || 0,
+      reports: d.reports || 0,
+      pings: d.pings || 0,
+      strokes: d.boardStrokes || 0,
+    },
   });
   if (msg) broadcast("stats", msg);
 }
@@ -598,6 +718,9 @@ function buildPresence(recipient) {
       name: room.name,
       type: room.type,
       n: visible,
+      // How many it holds, so "4" can be shown as "4 of 5" and a full room can
+      // offer to be watched instead of joined.
+      cap: ctx.roomCapacity ? ctx.roomCapacity(room) : null,
       locked: !!room.locked,
       slow: !!room.slowMode,
       staff: [...(roomsWithStaff.get(id) || [])],
@@ -693,6 +816,14 @@ function onRoomText(socket, roomId, text) {
 // so the card ends up a record of what was actually done about it. Called
 // from logStaff; must stay cheap because logStaff fires on everything.
 function noteStaffAction(byLabel, action, targetStr, roomTag) {
+  // Queue cards are stamped from here too, because this is the one place every
+  // staff action already passes through, whoever did it and wherever from.
+  if (targetStr && targetStr.startsWith("user:")) {
+    const o = targetStr.lastIndexOf("(");
+    const c = targetStr.lastIndexOf(")");
+    const id = o !== -1 && c > o ? targetStr.slice(o + 1, c) : null;
+    stampQueueForTarget(byLabel, action, id);
+  }
   if (!roomTag || typeof roomTag !== "string") return;
   const open = roomTag.lastIndexOf("(");
   const close = roomTag.lastIndexOf(")");
@@ -734,6 +865,10 @@ function init(context) {
     ensureDay();
     samplePeak();
   }, 60000).unref();
+  // Yesterday's handled reports are not today's work. Swept on the hour, and
+  // once at boot so a restart does not leave a week of them sitting there.
+  pruneQueues();
+  setInterval(pruneQueues, 60 * 60 * 1000).unref();
 }
 
 function register(socket, safe) {
@@ -1144,6 +1279,7 @@ function register(socket, safe) {
         type: room.type,
         locked: !!room.locked,
         slow: !!room.slowMode,
+        cap: ctx.roomCapacity ? ctx.roomCapacity(room) : null,
         users,
       });
     }),
@@ -1192,5 +1328,6 @@ module.exports = {
   noteEvent,
   presenceDirty,
   rosterDirty,
+  stampQueue,
   flushSync,
 };

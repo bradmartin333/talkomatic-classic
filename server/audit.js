@@ -178,6 +178,9 @@ function recordKeyAlert({ role, label, ip, kind, detail }) {
 function recordNotification({
   kind, label, role, text, target, room, by, minLevel,
   ip, targetIp, targetUserId, byUserId, reports, byRole, targetRole,
+  // The same event in fields rather than a sentence, for the Desk's #queues
+  // cards. Never stored on the audit entry: the log stays a log.
+  card,
 }) {
   const lvl = minLevel === 1 ? 1 : 2;
   const entry = push({
@@ -209,6 +212,7 @@ function recordNotification({
   try {
     require("./staffchat").systemQueues(kind || "notice", text || "", {
       minLevel: lvl,
+      card: card || null,
     });
   } catch (_) {}
   return entry;

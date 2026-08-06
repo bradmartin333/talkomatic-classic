@@ -112,6 +112,16 @@ function record({ hash, label, role, action, target, room, ip }) {
     room: room || null,
     ip: ip || null, // the mod's own address, dev-only
     minLevel: 2,
+    // Read as a list rather than a paragraph: what tripped it, then what they
+    // actually did. The flag is a prompt to go and look, never a verdict.
+    card: {
+      target: who,
+      targetRole: role || "mod",
+      reason: reasons.join("; "),
+      lines: arr
+        .slice(-10)
+        .map((e) => e.action + (e.target ? " > " + targetName(e.target) : "")),
+    },
   });
 }
 

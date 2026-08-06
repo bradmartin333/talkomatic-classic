@@ -223,8 +223,14 @@
       );
     };
     const parts = [
-      alt(channels.map((c) => c.name), "#"),
-      alt(people.map((p) => p.label), "@"),
+      alt(
+        channels.map((c) => c.name),
+        "#",
+      ),
+      alt(
+        people.map((p) => p.label),
+        "@",
+      ),
     ].filter(Boolean);
     nameIndex = {
       re: parts.length ? new RegExp(parts.join("|"), "gi") : null,
@@ -260,15 +266,14 @@
     return s;
   }
 
-  // Message text with #channels and @names picked out. Everything that is not
-  // a known name stays a plain text node, so nothing user-authored is ever
+  // #channels and @names picked out of a run of plain text. Everything that is
+  // not a known name stays a text node, so nothing user-authored is ever
   // parsed as markup.
-  function textEl(text, cls) {
-    const wrap = el("span", cls || "dk-mtext");
+  function namesInto(parent, text) {
     const re = names().re;
     if (!re || !text) {
-      wrap.textContent = text || "";
-      return wrap;
+      if (text) parent.appendChild(document.createTextNode(text));
+      return;
     }
     re.lastIndex = 0;
     let last = 0;
@@ -281,12 +286,145 @@
       // Not a name in the middle of a word, an email, or another token.
       if (/[\w@#]/.test(before) || /[\w]/.test(after)) continue;
       if (at > last)
-        wrap.appendChild(document.createTextNode(text.slice(last, at)));
-      wrap.appendChild(tok[0] === "#" ? chanLink(tok) : mentionChip(tok));
+        parent.appendChild(document.createTextNode(text.slice(last, at)));
+      parent.appendChild(tok[0] === "#" ? chanLink(tok) : mentionChip(tok));
       last = at + tok.length;
     }
     if (last < text.length)
-      wrap.appendChild(document.createTextNode(text.slice(last)));
+      parent.appendChild(document.createTextNode(text.slice(last)));
+  }
+
+  // ── Markdown, the small useful half of it ─────────────────────────────────
+  // `code`, **bold**, __bold__, ~~strike~~, *italic*, _italic_, links, bullet
+  // lists and ``` blocks. Deliberately not a markdown engine: no HTML is ever
+  // parsed, every leaf is a text node, and anything that does not match a rule
+  // is left exactly as it was typed.
+  const MD_SRC =
+    "(`+)([\\s\\S]+?)\\1" + // 1,2 code span
+    "|\\*\\*([\\s\\S]+?)\\*\\*" + // 3 bold
+    "|__([\\s\\S]+?)__" + // 4 bold
+    "|~~([\\s\\S]+?)~~" + // 5 strike
+    "|\\*([^*\\n]+?)\\*" + // 6 italic
+    "|_([^_\\n]+?)_" + // 7 italic
+    "|(https?:\\/\\/[^\\s<>]+)"; // 8 link
+
+  // Trailing punctuation is nearly always the sentence, not the address.
+  function trimUrl(u) {
+    let end = u.length;
+    while (end > 0 && /[.,!?;:'"]/.test(u[end - 1])) end--;
+    // Keep a closing bracket only when the address opened one.
+    while (
+      end > 0 &&
+      u[end - 1] === ")" &&
+      (u.slice(0, end).match(/\(/g) || []).length <
+        (u.slice(0, end).match(/\)/g) || []).length
+    )
+      end--;
+    return u.slice(0, end);
+  }
+
+  function linkEl(url) {
+    const a = document.createElement("a");
+    a.className = "dk-link";
+    a.href = url;
+    a.textContent = url.length > 70 ? url.slice(0, 67) + "..." : url;
+    a.title = url;
+    a.target = "_blank";
+    // Staff chat is not a place to leak a referrer or hand a tab opener out.
+    a.rel = "noopener noreferrer nofollow";
+    a.addEventListener("click", (e) => e.stopPropagation());
+    return a;
+  }
+
+  function inlineInto(parent, text) {
+    if (!text) return;
+    // A fresh regex per call: this recurses into emphasis, and a shared
+    // lastIndex across those levels would eat text.
+    const re = new RegExp(MD_SRC, "g");
+    let last = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      const at = m.index;
+      const before = at > 0 ? text[at - 1] : "";
+      // snake_case and file_names are not italics.
+      if (
+        m[7] != null &&
+        (/\w/.test(before) || /\w/.test(text[re.lastIndex] || ""))
+      )
+        continue;
+      if (at > last) namesInto(parent, text.slice(last, at));
+      last = at + m[0].length;
+      if (m[2] != null) {
+        parent.appendChild(el("code", "dk-code-in", m[2]));
+      } else if (m[3] != null || m[4] != null) {
+        const b = el("strong", "dk-b");
+        inlineInto(b, m[3] != null ? m[3] : m[4]);
+        parent.appendChild(b);
+      } else if (m[5] != null) {
+        const s = el("s", "dk-s");
+        inlineInto(s, m[5]);
+        parent.appendChild(s);
+      } else if (m[6] != null || m[7] != null) {
+        const i = el("em", "dk-i");
+        inlineInto(i, m[6] != null ? m[6] : m[7]);
+        parent.appendChild(i);
+      } else if (m[8] != null) {
+        const url = trimUrl(m[8]);
+        parent.appendChild(linkEl(url));
+        last = at + url.length;
+        re.lastIndex = last;
+      }
+    }
+    if (last < text.length) namesInto(parent, text.slice(last));
+  }
+
+  // Block level: fenced code, bullet lists, and paragraphs of lines.
+  function textEl(text, cls) {
+    const wrap = el("span", cls || "dk-mtext");
+    const src = String(text == null ? "" : text);
+    const lines = src.split("\n");
+    let para = [];
+    const flush = () => {
+      if (!para.length) return;
+      const p = el("span", "dk-p");
+      para.forEach((ln, i) => {
+        if (i) p.appendChild(document.createElement("br"));
+        inlineInto(p, ln);
+      });
+      wrap.appendChild(p);
+      para = [];
+    };
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (/^\s*```/.test(line)) {
+        flush();
+        const buf = [];
+        i++;
+        while (i < lines.length && !/^\s*```/.test(lines[i]))
+          buf.push(lines[i++]);
+        i++; // the closing fence, if it is there
+        const pre = el("pre", "dk-code-bl");
+        pre.textContent = buf.join("\n");
+        wrap.appendChild(pre);
+        continue;
+      }
+      if (/^\s*[-*+]\s+\S/.test(line)) {
+        flush();
+        const ul = el("ul", "dk-ul");
+        while (i < lines.length && /^\s*[-*+]\s+\S/.test(lines[i])) {
+          const li = document.createElement("li");
+          inlineInto(li, lines[i].replace(/^\s*[-*+]\s+/, ""));
+          ul.appendChild(li);
+          i++;
+        }
+        wrap.appendChild(ul);
+        continue;
+      }
+      para.push(line);
+      i++;
+    }
+    flush();
     return wrap;
   }
 
@@ -523,6 +661,22 @@
       }
     });
 
+    // The server swept old queue cards. Drop them here too rather than leaving
+    // a tray that only empties on reload.
+    socket.on("desk drop", (d) => {
+      if (!d || !d.key || !Array.isArray(d.ids) || !d.ids.length) return;
+      const gone = new Set(d.ids);
+      const c = cacheFor(d.key);
+      c.messages = c.messages.filter((m) => !gone.has(m.id));
+      if (panelOpen && mode === "chat" && viewKey() === d.key) {
+        if (els.list)
+          for (const id of gone) {
+            const node = els.list.querySelector('[data-id="' + id + '"]');
+            if (node) node.remove();
+          }
+      }
+    });
+
     socket.on("desk threads", (d) => {
       threads = (d && d.threads) || [];
       if (view.kind === "thread" && !threads.some((t) => t.id === view.key)) {
@@ -605,7 +759,9 @@
       if (!d || !Array.isArray(d.offline) || !d.offline.length) return;
       toast(
         d.offline.join(", ") +
-          (d.offline.length === 1 ? " is offline - they" : " are offline - they") +
+          (d.offline.length === 1
+            ? " is offline - they"
+            : " are offline - they") +
           " will see it when they are back.",
       );
     });
@@ -1205,7 +1361,28 @@
 
     els.list = el("div", "dk-msgs");
     els.list.setAttribute("aria-live", "polite");
+    // Reading back through something while the room is busy: the moment you
+    // scroll away from the bottom, new arrivals stop yanking you down and are
+    // counted on a bar instead.
+    els.list.addEventListener("scroll", () => {
+      if (nearBottom() && missed) clearMissed();
+    });
     main.appendChild(els.list);
+
+    els.jump = el("div", "dk-jump");
+    els.jump.style.display = "none";
+    const jumpBtn = el("button", "dk-jump-b");
+    jumpBtn.type = "button";
+    jumpBtn.title = "Jump to the latest";
+    els.jumpText = el("span", "dk-jump-t", "");
+    jumpBtn.appendChild(els.jumpText);
+    jumpBtn.appendChild(icon("fa-arrow-down"));
+    jumpBtn.addEventListener("click", () => {
+      clearMissed();
+      if (els.list) els.list.scrollTop = els.list.scrollHeight;
+    });
+    els.jump.appendChild(jumpBtn);
+    main.appendChild(els.jump);
 
     // ── Composer ──
     // Some channels are written by the server. Rather than show a box that
@@ -1325,7 +1502,12 @@
     // typed name, or take it off one.
     ta.addEventListener("click", () => updatePalette(ta));
     ta.addEventListener("keyup", (e) => {
-      if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End")
+      if (
+        e.key === "ArrowLeft" ||
+        e.key === "ArrowRight" ||
+        e.key === "Home" ||
+        e.key === "End"
+      )
         updatePalette(ta);
     });
     ta.addEventListener("blur", () => setTimeout(hidePalette, 150));
@@ -1347,6 +1529,26 @@
   function nearBottom() {
     const l = els.list;
     return l && l.scrollHeight - l.scrollTop - l.clientHeight < 120;
+  }
+
+  // How many messages have landed since you scrolled away from the bottom.
+  // Only ever counts what arrived while you were reading something above:
+  // scrolling back down, or switching view, clears it.
+  let missed = 0;
+  function renderJump() {
+    if (!els.jump || !els.jumpText) return;
+    if (!missed) {
+      els.jump.style.display = "none";
+      return;
+    }
+    els.jump.style.display = "";
+    els.jumpText.textContent =
+      missed === 1 ? "1 new message" : missed + " new messages";
+  }
+  function clearMissed() {
+    if (!missed) return;
+    missed = 0;
+    renderJump();
   }
 
   function renderMessages(keepScroll) {
@@ -1408,7 +1610,9 @@
       list.scrollTop = prevTop + (list.scrollHeight - prevHeight);
     } else {
       list.scrollTop = list.scrollHeight;
+      missed = 0;
     }
+    renderJump();
   }
 
   // Scroll to the message nearest a timestamp and flash it - the landing half
@@ -1436,7 +1640,13 @@
     if (!prev || dayKey(prev.ts) !== dayKey(msg.ts))
       list.appendChild(el("div", "dk-day", dayLabel(msg.ts)));
     list.appendChild(row(msg, prev));
-    if (stick) list.scrollTop = list.scrollHeight;
+    if (stick) {
+      list.scrollTop = list.scrollHeight;
+    } else {
+      // Reading above: say how much has come in rather than moving the page.
+      missed++;
+      renderJump();
+    }
   }
 
   function updateRow(msg) {
@@ -1450,21 +1660,396 @@
     node.replaceWith(row(msg, prev));
   }
 
+  // ── Queue cards ───────────────────────────────────────────────────────────
+  // #queues is a working tray, not a log. Every card says what happened in
+  // fields rather than a paragraph, and carries the buttons you would have
+  // gone to the dashboard for. The buttons fire the SAME staff events the
+  // dashboard fires, so every permission check stays on the server - and
+  // because the server stamps the card from its own action log, handling
+  // something anywhere marks it handled here, whoever did it and wherever.
+  const QICON = {
+    report: "fa-flag",
+    appeal: "fa-scale-balanced",
+    application: "fa-file-signature",
+    suggestion: "fa-lightbulb",
+    invite: "fa-user-plus",
+    abuse: "fa-triangle-exclamation",
+    stats: "fa-chart-simple",
+  };
+  const QNAME = {
+    report: "Report",
+    appeal: "Ban appeal",
+    application: "Mod application",
+    suggestion: "Suggestion",
+    abuse: "Worth a look",
+    invite: "Invites",
+    stats: "Daily summary",
+  };
+
+  const isDev = () => !!me && me.role === "dev";
+  const isFullMod = () => !!me && (me.role === "dev" || (me.level || 2) >= 2);
+
+  function qField(label, value, cls) {
+    const f = el("div", "dk-q-f" + (cls ? " " + cls : ""));
+    f.appendChild(el("span", "dk-q-fl", label));
+    const v = el("span", "dk-q-fv");
+    inlineInto(v, String(value == null ? "" : value));
+    f.appendChild(v);
+    return f;
+  }
+  function qChip(text, cls, fa) {
+    const s = el("span", "dk-q-chip" + (cls ? " " + cls : ""));
+    if (fa) s.appendChild(icon(fa));
+    s.appendChild(document.createTextNode(text));
+    return s;
+  }
+
+  function queueHeadline(kind, c) {
+    if (kind === "report")
+      return (c.by || "Someone") + " reported " + (c.target || "a user");
+    if (kind === "application")
+      return (c.by || "Someone") + " wants to help moderate";
+    if (kind === "appeal")
+      return (c.by || "A banned user") + " is appealing a ban";
+    if (kind === "suggestion")
+      return (c.by || "A user") + " suggested something";
+    if (kind === "abuse")
+      return (c.target || "A moderator") + " is worth a look";
+    return c.by || "";
+  }
+
+  function queueBody(kind, c, m) {
+    const b = el("div", "dk-q-b");
+
+    if (kind === "report") {
+      const chips = el("div", "dk-q-chips");
+      if (c.category) chips.appendChild(qChip(c.category, "cat", "fa-tag"));
+      if (c.reports)
+        chips.appendChild(
+          qChip(
+            c.reports + (c.reports === 1 ? " reporter" : " reporters"),
+            c.reports >= 3 ? "hot" : "",
+            "fa-user-group",
+          ),
+        );
+      if (c.targetRole)
+        chips.appendChild(
+          qChip("reported user is staff", "warn", "fa-user-shield"),
+        );
+      if (c.roomName) chips.appendChild(qChip(c.roomName, "", "fa-door-open"));
+      b.appendChild(chips);
+      if (c.reason) b.appendChild(qField("Their note", c.reason));
+      if (c.quote)
+        b.appendChild(qField("Their chat box read", c.quote, "quote"));
+      return b;
+    }
+
+    if (kind === "application") {
+      const chips = el("div", "dk-q-chips");
+      if (c.discord)
+        chips.appendChild(qChip("@" + c.discord, "", "fa-comments"));
+      for (const l of c.lines || [])
+        chips.appendChild(qChip(l, "", "fa-clock"));
+      if (chips.childNodes.length) b.appendChild(chips);
+      if (c.reason) b.appendChild(qField("Why they want to help", c.reason));
+      return b;
+    }
+
+    if (kind === "appeal") {
+      for (const l of c.lines || []) b.appendChild(qField("Ban", l));
+      if (c.reason) b.appendChild(qField("What they say", c.reason, "quote"));
+      return b;
+    }
+
+    if (kind === "suggestion") {
+      if (c.reason) b.appendChild(qField("The idea", c.reason, "quote"));
+      return b;
+    }
+
+    if (kind === "abuse") {
+      if (c.reason) b.appendChild(qField("What tripped it", c.reason));
+      if (c.lines && c.lines.length) {
+        const l = el("div", "dk-q-acts-list");
+        l.appendChild(el("span", "dk-q-fl", "Their last actions"));
+        const strip = el("div", "dk-q-chips");
+        for (const line of c.lines) strip.appendChild(qChip(line, "quiet"));
+        l.appendChild(strip);
+        b.appendChild(l);
+      }
+      b.appendChild(
+        el(
+          "div",
+          "dk-q-note",
+          "A prompt to go and read their record, never a verdict. Every one of these has an innocent explanation.",
+        ),
+      );
+      return b;
+    }
+
+    if (m.text) b.appendChild(qField("", m.text));
+    return b;
+  }
+
+  // The duration picker the dashboard uses, so a block from here is the same
+  // decision it is there.
+  function pickDuration(title, then) {
+    const durs = [
+      { label: "1 hour", value: "1h" },
+      { label: "24 hours", value: "24h" },
+      { label: "7 days", value: "7d" },
+      { label: "Permanent", value: "permanent" },
+    ];
+    if (!window.StaffUI || !window.StaffUI.menu) return then("24h");
+    let ctrl;
+    ctrl = StaffUI.menu({
+      title,
+      icon: '<i class="fas fa-ban"></i>',
+      groups: [
+        {
+          title: "How long",
+          items: durs.map((d) => ({
+            icon: '<i class="fas fa-clock"></i>',
+            label: d.label,
+            danger: d.value === "permanent",
+            onClick: () => then(d.value),
+          })),
+        },
+      ],
+    });
+    return ctrl;
+  }
+
+  function queueActions(kind, c, m) {
+    const bar = el("div", "dk-q-acts");
+    const add = (label, fa, cls, fn) => {
+      const b = btn("dk-minib" + (cls ? " " + cls : ""), label, fa);
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        // Same window a slash command opens: whatever the server says about
+        // this - "they already left", "not your call" - has to reach the
+        // person who pressed the button.
+        lastCommandAt = Date.now();
+        fn();
+      });
+      bar.appendChild(b);
+    };
+
+    if (kind === "report" && c.targetUserId) {
+      add("Warn", "fa-triangle-exclamation", "", () =>
+        ask(
+          {
+            title: "Warn " + (c.target || "them"),
+            label: "Message (optional)",
+            placeholder: "Please follow the Talkomatic rules.",
+            max: 1000,
+            icon: '<i class="fas fa-triangle-exclamation"></i>',
+          },
+          (message) =>
+            socket.emit("staff warn user", {
+              targetUserId: c.targetUserId,
+              message: String(message || "").trim(),
+            }),
+        ),
+      );
+      add("Kick", "fa-door-open", "", () =>
+        socket.emit("staff kick", { targetUserId: c.targetUserId }),
+      );
+      if (isFullMod())
+        add("Block", "fa-ban", "danger", () =>
+          pickDuration("Block " + (c.target || "this user"), (duration) =>
+            ask(
+              {
+                title: "Block for " + duration,
+                label: "Reason (optional, saved to the ban list)",
+                max: 500,
+                icon: '<i class="fas fa-ban"></i>',
+              },
+              (reason) =>
+                socket.emit("staff ip block", {
+                  targetUserId: c.targetUserId,
+                  duration,
+                  reason: String(reason || "").trim(),
+                }),
+            ),
+          ),
+        );
+      if (isFullMod())
+        add("Discard", "fa-xmark", "", () =>
+          socket.emit("staff dismiss report", {
+            targetUserId: c.targetUserId,
+          }),
+        );
+      if (c.roomId) add("Inspect", "fa-eye", "", () => openInspector(c.roomId));
+      return bar;
+    }
+
+    if (kind === "application" && c.itemId) {
+      add("Approve as L1", "fa-check", "primary", () =>
+        ask(
+          {
+            title: "Approve " + (c.by || "this applicant"),
+            message:
+              "They get a junior (L1) mod key straight away." +
+              (c.discord
+                ? " Remember to give @" +
+                  c.discord +
+                  " the mod role in the Talkomatic Discord."
+                : ""),
+            label: "Message to them (optional)",
+            max: 300,
+            icon: '<i class="fas fa-check"></i>',
+          },
+          (reason) =>
+            socket.emit("mod application review", {
+              id: c.itemId,
+              decision: "approve",
+              reason: String(reason || "").trim(),
+            }),
+        ),
+      );
+      add("Decline", "fa-xmark", "danger", () =>
+        ask(
+          {
+            title: "Decline " + (c.by || "this applicant"),
+            label: "Message to them (optional)",
+            max: 300,
+            icon: '<i class="fas fa-xmark"></i>',
+          },
+          (reason) =>
+            socket.emit("mod application review", {
+              id: c.itemId,
+              decision: "reject",
+              reason: String(reason || "").trim(),
+            }),
+        ),
+      );
+      return bar;
+    }
+
+    if (kind === "appeal" && c.itemId) {
+      if (isDev())
+        add("Lift the ban", "fa-unlock", "primary", () =>
+          socket.emit("staff resolve appeal", {
+            id: c.itemId,
+            decision: "lift",
+          }),
+        );
+      add("Dismiss", "fa-xmark", "", () =>
+        socket.emit("staff resolve appeal", {
+          id: c.itemId,
+          decision: "dismiss",
+        }),
+      );
+      return bar;
+    }
+
+    if (kind === "suggestion" && c.itemId) {
+      add("Approve", "fa-check", "primary", () =>
+        socket.emit("staff resolve suggestion", {
+          id: c.itemId,
+          decision: "approve",
+        }),
+      );
+      add("Decline", "fa-xmark", "", () =>
+        socket.emit("staff resolve suggestion", {
+          id: c.itemId,
+          decision: "decline",
+        }),
+      );
+      return bar;
+    }
+
+    if (c.roomId) {
+      add("Inspect", "fa-eye", "", () => openInspector(c.roomId));
+      return bar;
+    }
+    return bar.childNodes.length ? bar : null;
+  }
+
+  function queueCard(m) {
+    const c = m.card || {};
+    const kind = m.qkind || "notice";
+    const r = el("div", "dk-q q-" + kind + (m.done ? " is-done" : ""));
+    r.dataset.id = m.id;
+
+    const head = el("div", "dk-q-h");
+    const ico = el("span", "dk-q-ico");
+    ico.appendChild(icon(QICON[kind] || "fa-circle-info"));
+    head.appendChild(ico);
+    const who = el("div", "dk-q-who");
+    who.appendChild(el("span", "dk-q-kind", QNAME[kind] || "Notice"));
+    who.appendChild(el("span", "dk-q-hl", queueHeadline(kind, c)));
+    head.appendChild(who);
+    const t = el("span", "dk-q-t", clockTime(m.ts));
+    t.title = new Date(m.ts).toLocaleString();
+    head.appendChild(t);
+    r.appendChild(head);
+
+    r.appendChild(queueBody(kind, c, m));
+
+    if (m.done) {
+      const d = el("div", "dk-q-done");
+      d.appendChild(icon("fa-circle-check"));
+      d.appendChild(
+        document.createTextNode(
+          " " +
+            (m.done.action || "handled") +
+            " by " +
+            (m.done.by || "staff") +
+            " - " +
+            relTime(m.done.ts),
+        ),
+      );
+      r.appendChild(d);
+    } else {
+      const acts = queueActions(kind, c, m);
+      if (acts && acts.childNodes.length) r.appendChild(acts);
+    }
+    return r;
+  }
+
+  // ── The daily summary ─────────────────────────────────────────────────────
+  // Nobody types in #stats, so the server's post does not have to pretend to
+  // be a message. One headline, then the numbers as numbers.
+  function statsCard(m) {
+    const s = m.stats || {};
+    const r = el("div", "dk-st");
+    r.dataset.id = m.id;
+
+    const head = el("div", "dk-st-h");
+    head.appendChild(icon("fa-chart-simple"));
+    head.appendChild(el("span", "dk-st-day", s.when || "Yesterday"));
+    const t = el("span", "dk-q-t", clockTime(m.ts));
+    t.title = new Date(m.ts).toLocaleString();
+    head.appendChild(t);
+    r.appendChild(head);
+
+    const grid = el("div", "dk-st-g");
+    const tile = (n, label, fa, cls) => {
+      const c = el("div", "dk-st-c" + (cls ? " " + cls : ""));
+      const top = el("div", "dk-st-n");
+      top.appendChild(icon(fa));
+      top.appendChild(el("span", null, String(n)));
+      c.appendChild(top);
+      c.appendChild(el("div", "dk-st-l", label));
+      grid.appendChild(c);
+    };
+    tile(s.visitors || 0, "people stopped by", "fa-users", "lead");
+    tile(s.peak || 0, "on at the busiest", "fa-signal");
+    tile(s.rooms || 0, "rooms opened", "fa-door-open");
+    tile(s.actions || 0, "staff actions", "fa-gavel");
+    tile(s.reports || 0, "reports", "fa-flag", s.reports ? "warn" : "");
+    tile(s.pings || 0, "calls for backup", "fa-hand", s.pings ? "warn" : "");
+    r.appendChild(grid);
+    return r;
+  }
+
   // One message row. `prev` decides whether the author header repeats.
   function row(m, prev) {
     if (m.kind === "ping") return pingCard(m);
     if (m.kind === "system") {
-      // Queue cards carry the same icon language the dashboard feed uses,
-      // one color per kind, on the icon itself.
-      const QICON = {
-        report: "fa-flag",
-        appeal: "fa-scale-balanced",
-        application: "fa-file-signature",
-        suggestion: "fa-lightbulb",
-        invite: "fa-user-plus",
-        abuse: "fa-triangle-exclamation",
-        stats: "fa-chart-simple",
-      };
+      if (m.stats) return statsCard(m);
+      if (m.card) return queueCard(m);
       const r = el("div", "dk-sys" + (m.qkind ? " card q-" + m.qkind : ""));
       r.dataset.id = m.id;
       r.appendChild(icon(QICON[m.qkind] || "fa-circle-info"));
@@ -1792,19 +2377,20 @@
     insp.addEventListener("click", () => openInspector(p.roomId));
     bar.appendChild(insp);
     const join = btn("dk-minib", "Join", "fa-door-open");
+    // The live room list knows how full it is; the card only knows how many
+    // were in it when the ping went up.
     join.addEventListener("click", () =>
-      window.open(
-        "/room.html?roomId=" + encodeURIComponent(p.roomId),
-        "_blank",
+      enterRoom(
+        (presence.rooms || []).find((x) => x.id === p.roomId) || {
+          id: p.roomId,
+          name: p.roomName,
+        },
       ),
     );
     bar.appendChild(join);
     const watch = btn("dk-minib", "Watch", "fa-binoculars");
     watch.addEventListener("click", () =>
-      window.open(
-        "/room.html?roomId=" + encodeURIComponent(p.roomId) + "&spectate=1",
-        "_blank",
-      ),
+      window.open(roomUrl(p.roomId, true), "_blank"),
     );
     bar.appendChild(watch);
     r.appendChild(bar);
@@ -1816,15 +2402,22 @@
   // so the pane reads at a glance instead of scrolling forever.
   // Room types, in the same words the lobby uses.
   const ROOM_TYPE = {
-    public: { cls: "pub", icon: "fa-globe", label: "Public room" },
+    public: {
+      cls: "pub",
+      icon: "fa-globe",
+      short: "public",
+      label: "Public room - anybody can walk in",
+    },
     "semi-private": {
       cls: "semi",
       icon: "fa-user-check",
+      short: "code only",
       label: "Semi-private, needs an access code",
     },
     private: {
       cls: "priv",
       icon: "fa-lock",
+      short: "private",
       label: "Private room, invite only",
     },
   };
@@ -1931,60 +2524,136 @@
       el("div", "dk-side-h", "Rooms - " + presence.rooms.length),
     );
     for (const room of presence.rooms.slice(0, 20)) {
-      // Two lines: what the room is, then what you can do about it. Squeezing
-      // a name, two state icons, a headcount and two buttons onto one line
-      // left the name with about four characters.
+      // Three lines, all of them saying what they mean. The old card had a
+      // bare icon and a bare number in the corner and you had to already know
+      // that they meant "public" and "how many are in it".
       const card = el("div", "dk-room");
       const t = ROOM_TYPE[room.type] || ROOM_TYPE.public;
+      const full = !!room.cap && room.n >= room.cap;
 
       const top = el("div", "dk-room-top");
-      const dot = el("span", "dk-rtype " + t.cls);
-      dot.appendChild(icon(t.icon));
-      dot.title = t.label;
-      top.appendChild(dot);
-
       const name = el("span", "dk-room-n", room.name || "?");
-      name.title =
-        (room.name || "?") +
-        " (" +
-        room.id +
-        ")\n" +
-        t.label +
-        (room.locked ? ", locked" : "") +
-        (room.slow ? ", slow mode" : "") +
-        (room.staff && room.staff.length
-          ? "\nStaff inside: " + room.staff.join(", ")
-          : "\nNo staff inside");
+      name.title = (room.name || "?") + "  (id " + room.id + ")";
       top.appendChild(name);
-      if (room.locked) top.appendChild(icon("fa-lock"));
-      if (room.slow) top.appendChild(icon("fa-gauge-simple"));
-      const count = el("span", "dk-room-c", String(room.n));
-      count.title =
-        room.n === 1 ? "1 person inside" : room.n + " people inside";
+      const count = el("span", "dk-room-c" + (full ? " full" : ""));
+      count.appendChild(icon("fa-user"));
+      count.appendChild(
+        document.createTextNode(
+          " " + room.n + (room.cap ? " / " + room.cap : ""),
+        ),
+      );
+      count.title = room.cap
+        ? room.n + " of " + room.cap + " seats taken"
+        : room.n === 1
+          ? "1 person inside"
+          : room.n + " people inside";
       top.appendChild(count);
       card.appendChild(top);
 
-      const bar = el("div", "dk-room-bar");
-      // The one flag that matters at a glance: people with no staff around.
+      // Every tag is a word, not a symbol you have to have been taught.
+      const tags = el("div", "dk-room-tags");
+      const tag = (text, cls, fa, title) => {
+        const s = el("span", "dk-rtag" + (cls ? " " + cls : ""));
+        if (fa) s.appendChild(icon(fa));
+        s.appendChild(document.createTextNode(text));
+        if (title) s.title = title;
+        tags.appendChild(s);
+      };
+      tag(t.short, "t-" + t.cls, t.icon, t.label);
+      if (full)
+        tag("full", "full", "fa-circle-exclamation", "Nobody else can get in");
+      if (room.locked) tag("locked", "warn", "fa-lock", "Nobody new can join");
+      if (room.slow)
+        tag("slow mode", "warn", "fa-gauge-simple", "Typing is rate limited");
       if (room.n > 0 && (!room.staff || !room.staff.length))
-        bar.appendChild(el("span", "dk-nostaff", "no staff"));
+        tag(
+          "no staff",
+          "none",
+          "fa-user-slash",
+          "Nobody from the team is in here",
+        );
+      else if (room.staff && room.staff.length)
+        tag(
+          room.staff.length === 1
+            ? room.staff[0]
+            : room.staff.length + " staff",
+          "ok",
+          "fa-user-shield",
+          "Staff inside: " + room.staff.join(", "),
+        );
+      card.appendChild(tags);
+
+      const bar = el("div", "dk-room-bar");
       const insp = btn("dk-minib", "Inspect", "fa-eye");
+      insp.title = "See inside without going in";
       insp.addEventListener("click", () => openInspector(room.id));
       bar.appendChild(insp);
       const join = btn("dk-minib", "Join", "fa-door-open");
       join.title = "Open this room in a new tab";
-      join.addEventListener("click", () =>
-        window.open(
-          "/room.html?roomId=" + encodeURIComponent(room.id),
-          "_blank",
-        ),
-      );
+      join.addEventListener("click", () => enterRoom(room));
       bar.appendChild(join);
       card.appendChild(bar);
       side.appendChild(card);
     }
     if (!presence.rooms.length)
       side.appendChild(el("div", "dk-rail-empty", "No rooms open right now."));
+  }
+
+  const roomUrl = (id, watch) =>
+    "/room.html?roomId=" +
+    encodeURIComponent(id) +
+    (watch ? "&spectate=1" : "");
+
+  // Walking into a full room is allowed - staff bypass the limit - but it
+  // makes the room 6 of 5 for everybody in it, and watching does the same job
+  // without taking a seat. So the full case asks first, and leads with watch.
+  function enterRoom(room) {
+    const id = room && (room.id || room.roomId);
+    if (!id) return;
+    const cap = room.cap || null;
+    const n = room.n != null ? room.n : null;
+    const full = cap && n != null && n >= cap;
+    if (!full) return window.open(roomUrl(id), "_blank");
+    if (!window.StaffUI || !window.StaffUI.menu) {
+      window.open(roomUrl(id, true), "_blank");
+      return;
+    }
+    StaffUI.menu({
+      title: "That room is full",
+      icon: '<i class="fas fa-door-closed"></i>',
+      subtitle:
+        (room.name || "The room") + " is at " + n + " of " + cap + " seats",
+      groups: [
+        {
+          title: "How do you want to go in",
+          items: [
+            {
+              icon: '<i class="fas fa-eye"></i>',
+              label: "Watch it",
+              desc:
+                "Read everything live without taking a seat. Nobody is pushed out and the room stays at " +
+                n +
+                " of " +
+                cap +
+                ".",
+              onClick: () => window.open(roomUrl(id, true), "_blank"),
+            },
+            {
+              icon: '<i class="fas fa-door-open"></i>',
+              label: "Join anyway",
+              desc:
+                "Staff are allowed past the limit, so the room becomes " +
+                (n + 1) +
+                " of " +
+                cap +
+                " while you are in it.",
+              danger: true,
+              onClick: () => window.open(roomUrl(id), "_blank"),
+            },
+          ],
+        },
+      ],
+    });
   }
 
   // ── Room inspector ────────────────────────────────────────────────────────
@@ -2017,6 +2686,14 @@
     bar.appendChild(
       el("span", "dk-threadbar-t", d.name || "Room " + (d.roomId || "")),
     );
+    if (d.cap)
+      bar.appendChild(
+        el(
+          "span",
+          "dk-chip ghost" + ((d.users || []).length >= d.cap ? " hot" : ""),
+          (d.users || []).length + " / " + d.cap,
+        ),
+      );
     if (d.locked) bar.appendChild(el("span", "dk-chip ghost", "LOCKED"));
     if (d.slow) bar.appendChild(el("span", "dk-chip ghost", "SLOW"));
     const refresh = btn("dk-minib", null, "fa-rotate", "Refresh");
@@ -2024,12 +2701,20 @@
       socket.emit("desk room info", { roomId: d.roomId }),
     );
     bar.appendChild(refresh);
+    const watch = btn("dk-minib", "Watch", "fa-binoculars");
+    watch.title = "Read it live without taking a seat";
+    watch.addEventListener("click", () =>
+      window.open(roomUrl(d.roomId, true), "_blank"),
+    );
+    bar.appendChild(watch);
     const join = btn("dk-minib", "Join", "fa-door-open");
     join.addEventListener("click", () =>
-      window.open(
-        "/room.html?roomId=" + encodeURIComponent(d.roomId),
-        "_blank",
-      ),
+      enterRoom({
+        id: d.roomId,
+        name: d.name,
+        cap: d.cap || null,
+        n: (d.users || []).length,
+      }),
     );
     bar.appendChild(join);
     main.appendChild(bar);
@@ -2212,7 +2897,7 @@
         ],
         [
           "#queues",
-          "Reports, appeals and applications as they arrive. Full mods and devs.",
+          "Reports, appeals and applications as they arrive, each one a card you can act on without leaving. Full mods and devs.",
         ],
         ["#l2", "Bans, blocks and escalations. Full mods and devs."],
         ["#devs", "Keys, promotions, abuse flags. Developers only."],
@@ -2237,10 +2922,27 @@
       ],
     },
     {
+      h: "Working the queue",
+      p: [
+        "Every report, appeal, application and suggestion lands in #queues as a card with the buttons on it. Warn, kick, block and discard a report; approve or decline an application; lift or dismiss an appeal. They are the same buttons as the dashboard, so your level still decides what goes through.",
+        "The moment anybody deals with something - here, in the dashboard, or from a room - the card says who did it and what they did, so two of you never go chasing the same report.",
+        "Cards clear themselves after a day. #queues is a tray, not an archive: the dashboard feed and the audit log are where things are kept.",
+      ],
+    },
+    {
+      h: "Writing a message",
+      p: [
+        "Links are clickable. **bold**, *italic*, ~~strike~~ and `code` work, ``` on its own line opens a code block, and lines starting with - become a list.",
+        "Shift+Enter starts a new line without sending.",
+        "Scrolled up reading something? New messages stop pulling you down and a bar appears saying how many came in. Click it to go back to the latest.",
+      ],
+    },
+    {
       h: "Acting without joining",
       p: [
         "Inspect on any room or ping card shows you who is inside. Warn, wipe and kick are right there. Ban and IP block appear if you are a full mod.",
         "Join and Watch open the room in a new tab. Staff can be in several rooms at once.",
+        "Joining a full room asks first: staff get in past the limit, but that makes it 6 of 5 for everybody in there. Watching reads it live without taking a seat, which is usually what you actually wanted.",
       ],
     },
     {
@@ -2757,7 +3459,11 @@
   let palette = { rows: [], idx: -1, kind: null };
 
   const paletteOpen = () =>
-    !!(els.palette && els.palette.style.display !== "none" && palette.rows.length);
+    !!(
+      els.palette &&
+      els.palette.style.display !== "none" &&
+      palette.rows.length
+    );
 
   function hidePalette() {
     palette = { rows: [], idx: -1, kind: null };
@@ -2924,308 +3630,418 @@
    composer in particular grows to its own scrollHeight, which is wrong by
    exactly the padding under content-box. */
 .dk-panel,.dk-panel *,.dk-pill,.dk-pill *{box-sizing:border-box;}
-.dk-pill{position:fixed;bottom:16px;right:16px;z-index:99988;background:#000;color:#fff;
+.dk-pill{position:fixed;bottom:16px;right:16px;z-index:99988;background: #000;color: #fff;
   border:1px solid #ff9800;border-radius:4px;padding:10px 16px;font-size:13px;font-weight:bold;
   font-family:inherit;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.5);display:inline-flex;
   align-items:center;gap:8px;transition:background .2s,color .2s;}
-.dk-pill:hover{background:#ff9800;color:#000;}
+.dk-pill:hover{background: #ff9800;color: #000;}
 .dk-pill.raised{bottom:64px;}
-.dk-pill-badge{background:#ff9800;color:#000;border-radius:9px;font-size:11px;line-height:1;
+.dk-pill-badge{background: #ff9800;color: #000;border-radius:9px;font-size:11px;line-height:1;
   padding:3px 7px;font-variant-numeric:tabular-nums;}
 /* Red means #help, and only #help: somebody in a room is waiting for staff.
    Ordinary traffic never turns this red, which is what makes it worth
    looking at. */
-.dk-pill-badge.loud{background:#ff5468;color:#fff;}
-.dk-pill.urgent{border-color:#ff5468;box-shadow:0 6px 20px rgba(0,0,0,.5),0 0 0 1px rgba(255,84,104,.5);
+.dk-pill-badge.loud{background: #ff5468;color: #fff;}
+.dk-pill.urgent{border-color: #ff5468;box-shadow:0 6px 20px rgba(0,0,0,.5),0 0 0 1px rgba(255,84,104,.5);
   animation:dkUrgent 2.4s ease-in-out infinite;}
-.dk-pill.urgent:hover{background:#ff5468;color:#fff;}
+.dk-pill.urgent:hover{background: #ff5468;color: #fff;}
 @keyframes dkUrgent{0%,100%{box-shadow:0 6px 20px rgba(0,0,0,.5),0 0 0 1px rgba(255,84,104,.5);}
   50%{box-shadow:0 6px 20px rgba(0,0,0,.5),0 0 0 4px rgba(255,84,104,.22);}}
 @keyframes dkNudge{0%,100%{transform:translateY(0)}25%{transform:translateY(-4px)}50%{transform:translateY(0)}75%{transform:translateY(-2px)}}
 .dk-pill.nudge{animation:dkNudge .5s ease;}
 .dk-panel{position:fixed;right:16px;bottom:76px;z-index:99989;display:flex;flex-direction:column;
   width:min(1060px,calc(100vw - 32px));height:min(680px,calc(100vh - 108px));
-  background:#202020;border:1px solid #616161;border-radius:8px;overflow:hidden;
-  box-shadow:0 18px 55px rgba(0,0,0,.65);color:#fff;font-family:inherit;font-size:14px;}
+  background: #202020;border:1px solid #616161;border-radius:8px;overflow:hidden;
+  box-shadow:0 18px 55px rgba(0,0,0,.65);color: #fff;font-family:inherit;font-size:14px;}
 .dk-panel.dragging{user-select:none;}
 .dk-head.dk-drag{cursor:grab;}
 .dk-panel.dragging .dk-head{cursor:grabbing;}
 @media (min-width:761px){
   .dk-panel{resize:both;min-width:560px;min-height:420px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);}
   .dk-panel.dk-fullpage{resize:none;min-width:0;min-height:0;}
+  /* A notch bigger on a desktop monitor, where it read a little far away.
+     Only the body: the header stays in real pixels so dragging and the resize
+     handle keep working against the same coordinates the panel is placed in. */
+  .dk-body{zoom:1.08;}
 }
 .dk-panel.dk-offline .dk-head{opacity:.55;}
-.dk-panel.dk-offline .dk-head .dk-title-sub::after{content:" - reconnecting";color:#ff5468;}
+.dk-panel.dk-offline .dk-head .dk-title-sub::after{content:" - reconnecting";color: #ff5468;}
 .dk-head{flex:none;display:flex;align-items:center;gap:8px;padding:9px 12px;
   border-bottom:1px solid #616161;background:linear-gradient(to bottom,#616161,#303030);}
 .dk-title{flex:none;display:flex;flex-direction:column;min-width:0;}
-.dk-title-main{font-weight:bold;color:#ff9800;font-size:14px;letter-spacing:.4px;}
-.dk-title-sub{font-size:11px;color:#ededed;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;}
-.dk-search{flex:1;min-width:0;background:#000;color:#fff;border:1px solid #616161;border-radius:5px;
+.dk-title-main{font-weight:bold;color: #ff9800;font-size:14px;letter-spacing:.4px;}
+.dk-title-sub{font-size:11px;color: #ededed;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;}
+.dk-search{flex:1;min-width:0;background: #000;color: #fff;border:1px solid #616161;border-radius:5px;
   padding:7px 10px;font-size:12.5px;font-family:inherit;outline:none;}
-.dk-search:focus{border-color:#ff9800;}
-.dk-hbtn{flex:none;background:none;border:none;color:#fff;font-size:15px;cursor:pointer;
+.dk-search:focus{border-color: #ff9800;}
+.dk-hbtn{flex:none;background:none;border:none;color: #fff;font-size:15px;cursor:pointer;
   padding:6px 8px;border-radius:4px;line-height:1;}
-.dk-hbtn:hover{background:#ff9800;color:#000;}
+.dk-hbtn:hover{background: #ff9800;color: #000;}
 .dk-burger,.dk-msearch{display:none;}
 .dk-body{flex:1;display:grid;grid-template-columns:200px minmax(0,1fr) 290px;min-height:0;position:relative;}
 .dk-scrim{display:none;position:absolute;inset:0;background:rgba(0,0,0,.6);z-index:4;}
-.dk-rail{background:#1b1b1b;border-right:1px solid #333;overflow-y:auto;padding:10px 8px;
+.dk-rail{background: #1b1b1b;border-right:1px solid #333;overflow-y:auto;padding:10px 8px;
   display:flex;flex-direction:column;gap:2px;}
 .dk-rail-h{display:flex;align-items:center;font-size:10.5px;font-weight:bold;letter-spacing:.6px;
-  text-transform:uppercase;color:#8d8d8d;padding:10px 8px 4px;}
+  text-transform:uppercase;color: #8d8d8d;padding:10px 8px 4px;}
 .dk-rail-h:first-child{padding-top:2px;}
-.dk-tadd{margin-left:auto;background:none;border:none;color:#8d8d8d;cursor:pointer;font-size:11px;padding:2px 4px;border-radius:3px;}
-.dk-tadd:hover{color:#000;background:#ff9800;}
+.dk-tadd{margin-left:auto;background:none;border:none;color: #8d8d8d;cursor:pointer;font-size:11px;padding:2px 4px;border-radius:3px;}
+.dk-tadd:hover{color: #000;background: #ff9800;}
 .dk-chan,.dk-thread{display:flex;align-items:center;gap:7px;width:100%;text-align:left;background:none;
-  border:none;color:#c3c3c3;font-family:inherit;font-size:13.5px;
+  border:none;color: #c3c3c3;font-family:inherit;font-size:13.5px;
   padding:7px 8px;border-radius:4px;cursor:pointer;}
-.dk-chan:hover,.dk-thread:hover{background:#242424;color:#fff;}
-.dk-chan.on,.dk-thread.on{background:#2e2e2e;color:#fff;font-weight:bold;}
-.dk-hash{color:#8d8d8d;font-weight:bold;}
-.dk-chan.on .dk-hash,.dk-thread.on .fa-message{color:#ff9800;}
-.dk-chan .fa-lock{font-size:9px;color:#8d8d8d;}
+.dk-chan:hover,.dk-thread:hover{background: #242424;color: #fff;}
+.dk-chan.on,.dk-thread.on{background: #2e2e2e;color: #fff;font-weight:bold;}
+.dk-hash{color: #8d8d8d;font-weight:bold;}
+.dk-chan.on .dk-hash,.dk-thread.on .fa-message{color: #ff9800;}
+.dk-chan .fa-lock{font-size:9px;color: #8d8d8d;}
 .dk-chan-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.dk-b{background:#ff9800;color:#000;border-radius:8px;font-size:10.5px;font-weight:bold;
+.dk-b{background: #ff9800;color: #000;border-radius:8px;font-size:10.5px;font-weight:bold;
   padding:2px 6px;font-variant-numeric:tabular-nums;}
-.dk-b.loud{background:#ff5468;color:#fff;}
-.dk-thread .fa-message{font-size:10px;color:#8d8d8d;}
+.dk-b.loud{background: #ff5468;color: #fff;}
+.dk-thread .fa-message{font-size:10px;color: #8d8d8d;}
 .dk-thread-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .dk-thread.arch{opacity:.55;}
-.dk-dot{width:8px;height:8px;border-radius:50%;background:#ff9800;flex:none;}
-.dk-arch-toggle{background:none;border:none;color:#8d8d8d;font-family:inherit;font-size:12px;
+.dk-dot{width:8px;height:8px;border-radius:50%;background: #ff9800;flex:none;}
+.dk-arch-toggle{background:none;border:none;color: #8d8d8d;font-family:inherit;font-size:12px;
   text-align:left;padding:7px 8px;cursor:pointer;}
-.dk-arch-toggle:hover{color:#fff;}
-.dk-rail-empty{color:#8d8d8d;font-size:12px;padding:6px 8px;}
-.dk-rail-foot{margin-top:auto;padding:12px 8px 4px;font-size:10.5px;color:#8d8d8d;line-height:1.5;
+.dk-arch-toggle:hover{color: #fff;}
+.dk-rail-empty{color: #8d8d8d;font-size:12px;padding:6px 8px;}
+.dk-rail-foot{margin-top:auto;padding:12px 8px 4px;font-size:10.5px;color: #8d8d8d;line-height:1.5;
   border-top:1px solid #2a2a2a;}
-.dk-main{display:flex;flex-direction:column;min-width:0;min-height:0;background:#202020;}
-.dk-chandesc{flex:none;padding:8px 14px;font-size:12px;color:#8d8d8d;border-bottom:1px solid #2a2a2a;}
+.dk-main{display:flex;flex-direction:column;min-width:0;min-height:0;background: #202020;}
+.dk-chandesc{flex:none;padding:8px 14px;font-size:12px;color: #8d8d8d;border-bottom:1px solid #2a2a2a;}
 .dk-threadbar{flex:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 14px;
   border-bottom:1px solid #2a2a2a;}
 .dk-threadbar-t{font-weight:bold;}
-.dk-threadbar-s{font-size:11.5px;color:#8d8d8d;}
+.dk-threadbar-s{font-size:11.5px;color: #8d8d8d;}
 .dk-msgs{flex:1;overflow-y:auto;overflow-x:hidden;padding:10px 14px;display:flex;flex-direction:column;gap:2px;}
 .dk-day{text-align:center;font-size:10.5px;font-weight:bold;letter-spacing:.6px;text-transform:uppercase;
-  color:#8d8d8d;padding:12px 0 6px;}
-.dk-empty{color:#8d8d8d;text-align:center;padding:30px 10px;font-size:13px;}
-.dk-older{align-self:center;background:#1b1b1b;border:1px solid #333;color:#c3c3c3;font-family:inherit;
+  color: #8d8d8d;padding:12px 0 6px;}
+.dk-empty{color: #8d8d8d;text-align:center;padding:30px 10px;font-size:13px;}
+.dk-older{align-self:center;background: #1b1b1b;border:1px solid #333;color: #c3c3c3;font-family:inherit;
   font-size:12px;padding:5px 12px;border-radius:12px;cursor:pointer;margin-bottom:8px;display:inline-flex;gap:6px;align-items:center;}
-.dk-older:hover{border-color:#ff9800;color:#fff;}
+.dk-older:hover{border-color: #ff9800;color: #fff;}
 .dk-msg{position:relative;padding:2px 8px 2px 46px;border-radius:5px;margin-top:10px;}
 .dk-msg.grouped{margin-top:0;}
-.dk-msg:hover{background:#242424;}
+.dk-msg:hover{background: #242424;}
 .dk-msg.mention{background:rgba(255,152,0,.09);}
 .dk-msg.mention:hover{background:rgba(255,152,0,.14);}
 @keyframes dkFlash{0%,55%{background:rgba(255,152,0,.22)}100%{background:transparent}}
 .dk-msg.flash,.dk-sys.flash,.dk-ping.flash{animation:dkFlash 1.8s ease;}
 .dk-av{position:absolute;left:4px;top:2px;width:32px;height:32px;border-radius:50%;display:flex;
-  align-items:center;justify-content:center;font-weight:bold;font-size:14px;color:#fff;background:#616161;
+  align-items:center;justify-content:center;font-weight:bold;font-size:14px;color: #fff;background: #616161;
   overflow:hidden;flex:none;}
 .dk-av.sm{position:static;width:26px;height:26px;font-size:12px;}
-.dk-av.dev{background:#a3323f;}
-.dk-av.l2{background:#2b5e9e;}
-.dk-av.l1{background:#6d4b9e;}
+.dk-av.dev{background: #a3323f;}
+.dk-av.l2{background: #2b5e9e;}
+.dk-av.l1{background: #6d4b9e;}
 .dk-av img{width:100%;height:100%;object-fit:cover;display:block;}
 .dk-quote{display:flex;align-items:baseline;gap:6px;width:100%;text-align:left;background:none;border:none;
-  font-family:inherit;color:#8d8d8d;font-size:11.5px;padding:0 0 3px 0;cursor:pointer;min-width:0;}
+  font-family:inherit;color: #8d8d8d;font-size:11.5px;padding:0 0 3px 0;cursor:pointer;min-width:0;}
 .dk-quote .fas{font-size:9px;flex:none;}
-.dk-quote-w{color:#c3c3c3;font-weight:bold;flex:none;}
+.dk-quote-w{color: #c3c3c3;font-weight:bold;flex:none;}
 .dk-quote-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
-.dk-quote:hover .dk-quote-t,.dk-quote:hover{color:#fff;}
+.dk-quote:hover .dk-quote-t,.dk-quote:hover{color: #fff;}
 .dk-mhead{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap;}
 .dk-mname{font-weight:bold;}
 .dk-chip{font-size:9px;font-weight:bold;letter-spacing:.5px;padding:1px 5px;border-radius:3px;border:1px solid;}
-.dk-chip.dev{color:#ff5468;border-color:#ff5468;}
-.dk-chip.l2{color:#5aa9ff;border-color:#5aa9ff;}
-.dk-chip.l1{color:#c08bff;border-color:#c08bff;}
-.dk-chip.ghost{color:#8d8d8d;border-color:#8d8d8d;}
-.dk-alias{font-size:11px;color:#8d8d8d;font-style:italic;}
-.dk-mtime{font-size:10.5px;color:#8d8d8d;margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.dk-chip.dev{color: #ff5468;border-color: #ff5468;}
+.dk-chip.l2{color: #5aa9ff;border-color: #5aa9ff;}
+.dk-chip.l1{color: #c08bff;border-color: #c08bff;}
+.dk-chip.ghost{color: #8d8d8d;border-color: #8d8d8d;}
+.dk-alias{font-size:11px;color: #8d8d8d;font-style:italic;}
+.dk-mtime{font-size:10.5px;color: #8d8d8d;margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap;}
 .dk-mbody{font-size:13.5px;line-height:1.5;word-break:break-word;white-space:pre-wrap;}
-.dk-edited{font-size:10px;color:#8d8d8d;margin-left:5px;}
-.dk-tomb{color:#8d8d8d;font-style:italic;font-size:12.5px;}
-.dk-hist{background:none;border:none;color:#5aa9ff;font-size:10.5px;cursor:pointer;font-family:inherit;
+.dk-edited{font-size:10px;color: #8d8d8d;margin-left:5px;}
+.dk-tomb{color: #8d8d8d;font-style:italic;font-size:12.5px;}
+.dk-hist{background:none;border:none;color: #5aa9ff;font-size:10.5px;cursor:pointer;font-family:inherit;
   padding:0;margin-left:7px;text-decoration:underline;}
 .dk-histbox{margin-top:5px;border-left:2px solid #333;padding-left:8px;display:flex;flex-direction:column;gap:3px;}
-.dk-histline{font-size:11.5px;color:#c3c3c3;}
-.dk-hist-t{color:#8d8d8d;margin-right:7px;font-size:10px;}
-.dk-mtools{position:absolute;top:-10px;right:8px;display:none;gap:2px;background:#1b1b1b;
+.dk-histline{font-size:11.5px;color: #c3c3c3;}
+.dk-hist-t{color: #8d8d8d;margin-right:7px;font-size:10px;}
+.dk-mtools{position:absolute;top:-10px;right:8px;display:none;gap:2px;background: #1b1b1b;
   border:1px solid #333;border-radius:4px;padding:2px;}
 .dk-msg:hover .dk-mtools{display:flex;}
-.dk-tool{background:none;border:none;color:#c3c3c3;cursor:pointer;font-size:11px;padding:4px 6px;border-radius:3px;}
-.dk-tool:hover{background:#333;color:#fff;}
-.dk-tool.armed{background:#ff5468;color:#fff;}
-.dk-editbox{width:100%;background:#000;color:#fff;border:1px solid #ff9800;border-radius:5px;
+.dk-tool{background:none;border:none;color: #c3c3c3;cursor:pointer;font-size:11px;padding:4px 6px;border-radius:3px;}
+.dk-tool:hover{background: #333;color: #fff;}
+.dk-tool.armed{background: #ff5468;color: #fff;}
+.dk-editbox{width:100%;background: #000;color: #fff;border:1px solid #ff9800;border-radius:5px;
   padding:7px 9px;font-family:inherit;font-size:13px;resize:vertical;min-height:40px;}
-.dk-sys{display:flex;align-items:baseline;gap:8px;font-size:12px;color:#8d8d8d;padding:5px 8px;margin-top:6px;}
+.dk-sys{display:flex;align-items:baseline;gap:8px;font-size:12px;color: #8d8d8d;padding:5px 8px;margin-top:6px;}
 .dk-sys .fas{font-size:11px;flex:none;}
 .dk-sys-x{min-width:0;word-break:break-word;}
-.dk-sys.card{background:#1b1b1b;border:1px solid #2a2a2a;border-radius:5px;color:#c3c3c3;
+.dk-sys.card{background: #1b1b1b;border:1px solid #2a2a2a;border-radius:5px;color: #c3c3c3;
   padding:8px 11px;margin-top:8px;font-size:12.5px;line-height:1.5;}
-.dk-sys.q-report .fas{color:#5aa9ff;}
-.dk-sys.q-appeal .fas{color:#ffb454;}
-.dk-sys.q-application .fas{color:#c08bff;}
-.dk-sys.q-suggestion .fas{color:#57d9a3;}
-.dk-sys.q-abuse .fas{color:#ff5468;}
-.dk-sys.q-invite .fas{color:#8d8d8d;}
-.dk-sys-t{margin-left:auto;font-size:10px;flex:none;color:#8d8d8d;}
-.dk-ping{border:1px solid rgba(255,180,84,.45);border-radius:5px;background:#1b1b1b;
+.dk-sys.q-report .fas{color: #5aa9ff;}
+.dk-sys.q-appeal .fas{color: #ffb454;}
+.dk-sys.q-application .fas{color: #c08bff;}
+.dk-sys.q-suggestion .fas{color: #57d9a3;}
+.dk-sys.q-abuse .fas{color: #ff5468;}
+.dk-sys.q-invite .fas{color: #8d8d8d;}
+.dk-sys-t{margin-left:auto;font-size:10px;flex:none;color: #8d8d8d;}
+.dk-ping{border:1px solid rgba(255,180,84,.45);border-radius:5px;background: #1b1b1b;
   padding:10px 12px;margin-top:10px;display:flex;flex-direction:column;gap:6px;}
 .dk-ping.s-waiting{border-color:rgba(255,84,104,.55);}
 .dk-ping.s-claimed{border-color:rgba(90,169,255,.45);}
-.dk-ping.s-resolved{border-color:#333;opacity:.75;}
+.dk-ping.s-resolved{border-color: #333;opacity:.75;}
 .dk-ping-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
 .dk-ping-badge{font-size:9px;font-weight:bold;letter-spacing:.6px;padding:2px 6px;border-radius:3px;
-  color:#ffb454;border:1px solid #ffb454;}
+  color: #ffb454;border:1px solid #ffb454;}
 @keyframes dkPulse{0%,100%{opacity:1}50%{opacity:.45}}
 .dk-ping.s-open .dk-ping-badge{animation:dkPulse 1.6s infinite;}
-.dk-ping.s-waiting .dk-ping-badge{color:#ff5468;border-color:#ff5468;animation:dkPulse .9s infinite;}
-.dk-ping.s-claimed .dk-ping-badge{color:#5aa9ff;border-color:#5aa9ff;animation:none;}
-.dk-ping.s-resolved .dk-ping-badge{color:#57d9a3;border-color:#57d9a3;animation:none;}
+.dk-ping.s-waiting .dk-ping-badge{color: #ff5468;border-color: #ff5468;animation:dkPulse .9s infinite;}
+.dk-ping.s-claimed .dk-ping-badge{color: #5aa9ff;border-color: #5aa9ff;animation:none;}
+.dk-ping.s-resolved .dk-ping-badge{color: #57d9a3;border-color: #57d9a3;animation:none;}
 .dk-ping-t{font-weight:bold;font-size:13.5px;}
-.dk-ping-m{display:flex;flex-direction:column;gap:2px;font-size:12px;color:#c3c3c3;}
-.dk-ping-staff{color:#8d8d8d;}
-.dk-ping-claim{color:#5aa9ff;font-weight:bold;}
-.dk-ping-done{color:#57d9a3;}
+.dk-ping-m{display:flex;flex-direction:column;gap:2px;font-size:12px;color: #c3c3c3;}
+.dk-ping-staff{color: #8d8d8d;}
+.dk-ping-claim{color: #5aa9ff;font-weight:bold;}
+.dk-ping-done{color: #57d9a3;}
 .dk-ping-acts{border-top:1px dashed #333;padding-top:6px;display:flex;flex-direction:column;gap:2px;}
-.dk-ping-act{font-size:11.5px;color:#8d8d8d;}
+.dk-ping-act{font-size:11.5px;color: #8d8d8d;}
 .dk-ping-b{display:flex;gap:6px;flex-wrap:wrap;}
-.dk-minib{display:inline-flex;align-items:center;gap:6px;background:#1b1b1b;border:1px solid #616161;
-  color:#fff;font-family:inherit;font-size:12px;font-weight:bold;padding:6px 10px;border-radius:4px;cursor:pointer;}
-.dk-minib:hover{border-color:#ff9800;}
-.dk-minib.primary{background:#ff9800;border-color:#ff9800;color:#000;}
-.dk-minib.primary:hover{background:#ffad33;}
-.dk-minib.danger{color:#ff5468;}
-.dk-minib.danger:hover{background:#ff5468;border-color:#ff5468;color:#fff;}
-.dk-minib.armed{background:#ff5468;border-color:#ff5468;color:#fff;}
-.dk-readonly{flex:none;padding:12px 14px;border-top:1px solid #333;background:#1b1b1b;
-  font-size:12px;color:#6f6f6f;text-align:center;}
-.dk-sys.q-stats .fas{color:#ff9800;}
-.dk-sys.q-stats{font-size:13px;color:#fff;}
-.dk-replybar{flex:none;display:flex;align-items:center;gap:8px;padding:7px 14px;background:#1b1b1b;
-  border-top:1px solid #333;font-size:12px;color:#c3c3c3;min-width:0;}
-.dk-replybar .fas{font-size:10px;color:#8d8d8d;flex:none;}
+.dk-minib{display:inline-flex;align-items:center;gap:6px;background: #1b1b1b;border:1px solid #616161;
+  color: #fff;font-family:inherit;font-size:12px;font-weight:bold;padding:6px 10px;border-radius:4px;cursor:pointer;}
+.dk-minib:hover{border-color: #ff9800;}
+.dk-minib.primary{background: #ff9800;border-color: #ff9800;color: #000;}
+.dk-minib.primary:hover{background: #ffad33;}
+.dk-minib.danger{color: #ff5468;}
+.dk-minib.danger:hover{background: #ff5468;border-color: #ff5468;color: #fff;}
+.dk-minib.armed{background: #ff5468;border-color: #ff5468;color: #fff;}
+.dk-readonly{flex:none;padding:12px 14px;border-top:1px solid #333;background: #1b1b1b;
+  font-size:12px;color: #6f6f6f;text-align:center;}
+.dk-sys.q-stats .fas{color: #ff9800;}
+.dk-sys.q-stats{font-size:13px;color: #fff;}
+
+/* ── Queue cards ──
+   A tray of things to do, so each one is a card with its own buttons rather
+   than a line in a wall of text. The left edge carries the kind's colour. */
+.dk-q{margin-top:10px;background: #1b1b1b;border:1px solid #2a2a2a;border-left:3px solid #616161;
+  border-radius:5px;padding:9px 12px;display:flex;flex-direction:column;gap:8px;}
+.dk-q.q-report{border-left-color: #5aa9ff;}
+.dk-q.q-appeal{border-left-color: #ffb454;}
+.dk-q.q-application{border-left-color: #c08bff;}
+.dk-q.q-suggestion{border-left-color: #57d9a3;}
+.dk-q.q-abuse{border-left-color: #ff5468;}
+.dk-q.is-done{opacity:.62;}
+.dk-q-h{display:flex;align-items:flex-start;gap:9px;min-width:0;}
+.dk-q-ico{flex:none;width:24px;height:24px;border-radius:5px;background: #252525;display:flex;
+  align-items:center;justify-content:center;font-size:11px;color: #8d8d8d;}
+.q-report .dk-q-ico{color: #5aa9ff;background:rgba(90,169,255,.12);}
+.q-appeal .dk-q-ico{color: #ffb454;background:rgba(255,180,84,.12);}
+.q-application .dk-q-ico{color: #c08bff;background:rgba(192,139,255,.12);}
+.q-suggestion .dk-q-ico{color: #57d9a3;background:rgba(87,217,163,.12);}
+.q-abuse .dk-q-ico{color: #ff5468;background:rgba(255,84,104,.12);}
+.dk-q-who{display:flex;flex-direction:column;min-width:0;flex:1;gap:1px;}
+.dk-q-kind{font-size:9.5px;font-weight:bold;letter-spacing:.7px;text-transform:uppercase;color: #8d8d8d;}
+.dk-q-hl{font-size:13.5px;font-weight:bold;color: #fff;word-break:break-word;}
+.dk-q-t{flex:none;font-size:10px;color: #8d8d8d;}
+.dk-q-b{display:flex;flex-direction:column;gap:7px;min-width:0;}
+.dk-q-chips{display:flex;flex-wrap:wrap;gap:5px;}
+.dk-q-chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;color: #c3c3c3;
+  background: #252525;border:1px solid #333;border-radius:3px;padding:2px 7px;max-width:100%;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dk-q-chip .fas{font-size:9px;color: #8d8d8d;}
+.dk-q-chip.cat{color: #fff;border-color: #4a4a4a;}
+.dk-q-chip.hot{color: #ff5468;border-color:rgba(255,84,104,.5);}
+.dk-q-chip.warn{color: #ffb454;border-color:rgba(255,180,84,.5);}
+.dk-q-chip.quiet{color: #8d8d8d;background:transparent;}
+.dk-q-f{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.dk-q-fl{font-size:9.5px;font-weight:bold;letter-spacing:.6px;text-transform:uppercase;color: #6f6f6f;}
+.dk-q-fv{font-size:12.5px;color: #ededed;line-height:1.5;word-break:break-word;
+  overflow-wrap:anywhere;white-space:pre-wrap;}
+.dk-q-f.quote .dk-q-fv{background: #000;border-left:2px solid #333;border-radius:0 3px 3px 0;
+  padding:6px 9px;color: #c3c3c3;max-height:120px;overflow:auto;}
+.dk-q-acts-list{display:flex;flex-direction:column;gap:4px;}
+.dk-q-note{font-size:11px;color: #6f6f6f;line-height:1.5;}
+.dk-q-acts{display:flex;flex-wrap:wrap;gap:6px;padding-top:2px;}
+.dk-q-acts .dk-minib{font-size:11.5px;padding:5px 9px;}
+.dk-q-done{display:flex;align-items:center;gap:6px;font-size:11.5px;color: #57d9a3;
+  border-top:1px dashed #333;padding-top:7px;}
+.dk-q-done .fas{font-size:10px;}
+
+/* ── The daily summary ── */
+.dk-st{margin-top:10px;background:linear-gradient(180deg,#1f1c17,#1b1b1b);border:1px solid #3a3126;
+  border-radius:6px;padding:11px 13px;display:flex;flex-direction:column;gap:10px;}
+.dk-st-h{display:flex;align-items:center;gap:8px;}
+.dk-st-h .fas{color: #ff9800;font-size:12px;}
+.dk-st-day{font-size:13.5px;font-weight:bold;color: #ff9800;letter-spacing:.2px;flex:1;min-width:0;}
+.dk-st-g{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:7px;}
+.dk-st-c{background: #141414;border:1px solid #2a2a2a;border-radius:5px;padding:8px 10px;min-width:0;}
+.dk-st-c.lead{border-color:rgba(255,152,0,.35);}
+.dk-st-n{display:flex;align-items:center;gap:6px;font-size:17px;font-weight:bold;color: #fff;
+  font-variant-numeric:tabular-nums;line-height:1.2;}
+.dk-st-n .fas{font-size:11px;color: #6f6f6f;}
+.dk-st-c.lead .dk-st-n{color: #ff9800;}
+.dk-st-c.lead .dk-st-n .fas{color: #ff9800;}
+.dk-st-c.warn .dk-st-n{color: #ffb454;}
+.dk-st-l{font-size:10.5px;color: #8d8d8d;margin-top:2px;line-height:1.3;}
+
+/* ── Discord's "you are reading, this is how much you missed" bar ── */
+.dk-jump{position:relative;height:0;overflow:visible;z-index:3;}
+.dk-jump-b{position:absolute;right:14px;bottom:8px;display:inline-flex;align-items:center;gap:8px;
+  background: #ff9800;color: #000;border:none;border-radius:14px;padding:6px 12px;font-family:inherit;
+  font-size:11.5px;font-weight:bold;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.5);}
+.dk-jump-b:hover{background: #ffad33;}
+.dk-jump-b .fas{font-size:10px;}
+.dk-replybar{flex:none;display:flex;align-items:center;gap:8px;padding:7px 14px;background: #1b1b1b;
+  border-top:1px solid #333;font-size:12px;color: #c3c3c3;min-width:0;}
+.dk-replybar .fas{font-size:10px;color: #8d8d8d;flex:none;}
 .dk-rb-w{font-weight:bold;flex:none;}
-.dk-rb-t{color:#8d8d8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;}
-.dk-rb-x{background:none;border:none;color:#8d8d8d;cursor:pointer;font-size:13px;padding:2px 6px;
+.dk-rb-t{color: #8d8d8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;}
+.dk-rb-x{background:none;border:none;color: #8d8d8d;cursor:pointer;font-size:13px;padding:2px 6px;
   border-radius:3px;flex:none;}
-.dk-rb-x:hover{color:#000;background:#ff9800;}
-.dk-palette{flex:none;max-height:220px;overflow-y:auto;background:#1b1b1b;border-top:1px solid #333;
+.dk-rb-x:hover{color: #000;background: #ff9800;}
+.dk-palette{flex:none;max-height:220px;overflow-y:auto;background: #1b1b1b;border-top:1px solid #333;
   padding:6px;display:flex;flex-direction:column;gap:2px;}
 .dk-cmd{display:flex;align-items:baseline;gap:10px;width:100%;text-align:left;background:none;border:none;
-  font-family:inherit;color:#fff;padding:6px 8px;border-radius:4px;cursor:pointer;min-width:0;}
-.dk-cmd:hover,.dk-cmd.on{background:#2a2a2a;}
-.dk-cmd-u{font-weight:bold;font-size:12.5px;color:#ff9800;flex:none;}
-.dk-cmd-w{font-size:11.5px;color:#8d8d8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+  font-family:inherit;color: #fff;padding:6px 8px;border-radius:4px;cursor:pointer;min-width:0;}
+.dk-cmd:hover,.dk-cmd.on{background: #2a2a2a;}
+.dk-cmd-u{font-weight:bold;font-size:12.5px;color: #ff9800;flex:none;}
+.dk-cmd-w{font-size:11.5px;color: #8d8d8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
 /* One row of the # or @ list. The highlighted row is the one Enter takes. */
 .dk-pick{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:none;border:none;
-  font-family:inherit;color:#fff;padding:5px 8px;border-radius:4px;cursor:pointer;min-width:0;}
-.dk-pick:hover,.dk-pick.on{background:#2a2a2a;}
+  font-family:inherit;color: #fff;padding:5px 8px;border-radius:0px;cursor:pointer;min-width:0;}
+.dk-pick:hover,.dk-pick.on{background: #2a2a2a;}
 .dk-pick.on{box-shadow:inset 2px 0 0 #ff9800;}
-.dk-pick-hash{color:#ff9800;font-weight:bold;font-size:14px;width:26px;text-align:center;flex:none;}
+.dk-pick-hash{color: #ff9800;font-weight:bold;font-size:14px;width:26px;text-align:center;flex:none;}
 .dk-pick-mid{display:flex;flex-direction:column;min-width:0;flex:1;gap:1px;}
 .dk-pick-n{font-size:13px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.dk-pick-s{font-size:11px;color:#8d8d8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.dk-pick > .fa-lock{color:#8d8d8d;font-size:11px;flex:none;}
+.dk-pick-s{font-size:11px;color: #8d8d8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dk-pick > .fa-lock{color: #8d8d8d;font-size:11px;flex:none;}
 .dk-pick-dot{width:7px;height:7px;border-radius:50%;flex:none;}
-.dk-pick-dot.on{background:#57d9a3;}
-.dk-pick-dot.off{background:#5a5a5a;}
+.dk-pick-dot.on{background: #57d9a3;}
+.dk-pick-dot.off{background: #5a5a5a;}
 /* A name written in a message. A channel opens; a mention is just marked, in
    your own colour when it is you. */
 .dk-chanlink{background:none;border:none;font-family:inherit;font-size:inherit;padding:0;
-  color:#5aa9ff;font-weight:bold;cursor:pointer;border-radius:3px;}
+  color: #5aa9ff;font-weight:bold;cursor:pointer;border-radius:3px;}
 .dk-chanlink:hover{background:rgba(90,169,255,.18);text-decoration:underline;}
-.dk-ment{color:#ffb454;font-weight:bold;background:rgba(255,152,0,.14);border-radius:3px;padding:0 3px;}
-.dk-ment.self{color:#000;background:#ff9800;}
-.dk-comp{flex:none;display:flex;align-items:flex-end;gap:8px;padding:10px 14px;border-top:1px solid #333;background:#1b1b1b;}
-.dk-input{flex:1;min-width:0;background:#000;color:#fff;border:1px solid #3a3a3a;border-radius:5px;
+.dk-ment{color: #ffb454;font-weight:bold;background:rgba(255,152,0,.14);border-radius:3px;padding:0 3px;}
+.dk-ment.self{color: #000;background: #ff9800;}
+/* ── Markdown ──
+   Only the half people actually type. Nothing here parses HTML: every leaf is
+   a text node, so a message is still exactly what somebody wrote. */
+.dk-link{color: #5aa9ff;text-decoration:underline;text-underline-offset:2px;word-break:break-all;}
+.dk-link:hover{color: #8cc4ff;}
+.dk-p{display:block;}
+.dk-p + .dk-p,.dk-mtext .dk-ul,.dk-mtext .dk-code-bl{margin-top:5px;}
+.dk-b{font-weight:bold;color: #fff;}
+.dk-i{font-style:italic;}
+.dk-s{text-decoration:line-through;color: #8d8d8d;}
+.dk-code-in{font-family:"Courier New",monospace;font-size:12px;background: #000;border:1px solid #333;
+  border-radius:3px;padding:0 4px;color: #ffb454;word-break:break-word;}
+.dk-code-bl{font-family:"Courier New",monospace;font-size:12px;background: #000;border:1px solid #333;
+  border-radius:5px;padding:8px 10px;margin:0;color: #ededed;white-space:pre-wrap;word-break:break-word;
+  max-height:260px;overflow:auto;}
+.dk-ul{margin:0;padding-left:18px;display:block;}
+.dk-ul li{margin:1px 0;}
+.dk-comp{flex:none;display:flex;align-items:flex-end;gap:8px;padding:10px 14px;border-top:1px solid #333;background: #1b1b1b;}
+.dk-input{flex:1;min-width:0;background: #000;color: #fff;border:1px solid #3a3a3a;border-radius:5px;
   padding:0 11px;font-family:inherit;font-size:13.5px;resize:none;outline:none;
   line-height:20px;height:38px;min-height:38px;max-height:120px;padding-top:9px;padding-bottom:9px;
   display:block;overflow-y:auto;}
-.dk-input::placeholder{color:#6f6f6f;}
-.dk-input:focus{border-color:#ff9800;}
-.dk-count{flex:none;font-size:10.5px;color:#ffb454;font-variant-numeric:tabular-nums;}
-.dk-send{flex:none;background:#ff9800;border:1px solid #ff9800;color:#000;border-radius:5px;
+.dk-input::placeholder{color: #6f6f6f;}
+.dk-input:focus{border-color: #ff9800;}
+.dk-count{flex:none;font-size:10.5px;color: #ffb454;font-variant-numeric:tabular-nums;}
+.dk-send{flex:none;background: #ff9800;border:1px solid #ff9800;color: #000;border-radius:5px;
   width:38px;height:38px;display:flex;align-items:center;justify-content:center;
   cursor:pointer;font-size:14px;padding:0;}
-.dk-send:hover{background:#ffad33;}
-.dk-side{background:#1b1b1b;border-left:1px solid #333;overflow-y:auto;padding:10px;}
-.dk-side-h{font-size:10.5px;font-weight:bold;letter-spacing:.6px;text-transform:uppercase;color:#8d8d8d;
+.dk-send:hover{background: #ffad33;}
+.dk-side{background: #1b1b1b;border-left:1px solid #333;overflow-y:auto;padding:10px;}
+.dk-side-h{font-size:10.5px;font-weight:bold;letter-spacing:.6px;text-transform:uppercase;color: #8d8d8d;
   padding:10px 4px 6px;}
 .dk-side-h:first-child{padding-top:2px;}
 .dk-staff{display:flex;gap:8px;align-items:center;padding:5px 4px;border-radius:4px;}
-.dk-staff:hover{background:#242424;}
+.dk-staff:hover{background: #242424;}
 .dk-staff-w{min-width:0;flex:1;}
 .dk-staff-n{display:flex;align-items:center;gap:5px;font-size:12.5px;font-weight:bold;min-width:0;}
 .dk-staff-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
 .dk-staff-n .dk-chip{flex:none;}
-.dk-staff-l{font-size:11px;color:#8d8d8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dk-staff-l{font-size:11px;color: #8d8d8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .dk-staff.off{opacity:.6;}
 /* One heading per rank instead of a chip on every single row. */
 .dk-group{display:flex;align-items:center;gap:6px;padding:9px 5px 3px;}
-.dk-group-n{font-size:10px;font-weight:bold;letter-spacing:.7px;text-transform:uppercase;color:#8d8d8d;}
-.dk-group.dev .dk-group-n{color:#ff5468;}
-.dk-group.l2 .dk-group-n{color:#5aa9ff;}
-.dk-group.l1 .dk-group-n{color:#c08bff;}
-.dk-group-c{font-size:10px;color:#6f6f6f;font-variant-numeric:tabular-nums;}
-.dk-group::after{content:"";flex:1;height:1px;background:#2a2a2a;}
+.dk-group-n{font-size:10px;font-weight:bold;letter-spacing:.7px;text-transform:uppercase;color: #8d8d8d;}
+.dk-group.dev .dk-group-n{color: #ff5468;}
+.dk-group.l2 .dk-group-n{color: #5aa9ff;}
+.dk-group.l1 .dk-group-n{color: #c08bff;}
+.dk-group-c{font-size:10px;color: #6f6f6f;font-variant-numeric:tabular-nums;}
+.dk-group::after{content:"";flex:1;height:1px;background: #2a2a2a;}
 /* Two rows: what the room is, then what to do about it. */
-.dk-room{padding:7px 8px;border-radius:5px;min-width:0;background:#202020;
+.dk-room{padding:7px 8px;border-radius:5px;min-width:0;background: #202020;
   border:1px solid #2a2a2a;margin-bottom:6px;}
-.dk-room:hover{border-color:#3a3a3a;}
+.dk-room:hover{border-color: #3a3a3a;}
 .dk-room-top{display:flex;align-items:center;gap:6px;min-width:0;}
-.dk-room-top .fas{font-size:9px;color:#8d8d8d;flex:none;}
+.dk-room-top .fas{font-size:9px;color: #8d8d8d;flex:none;}
 .dk-room-bar{display:flex;align-items:center;gap:6px;margin-top:7px;}
 .dk-room-bar .dk-minib{padding:4px 9px;font-size:11px;}
-.dk-rtype{flex:none;width:16px;display:flex;align-items:center;justify-content:center;}
-.dk-rtype .fas{font-size:10px;}
-.dk-rtype.pub .fas{color:#57d9a3;}
-.dk-rtype.semi .fas{color:#ffb454;}
-.dk-rtype.priv .fas{color:#ff5468;}
 .dk-room-n{font-size:12.5px;font-weight:bold;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.dk-room-c{color:#ff9800;font-weight:bold;font-size:12px;font-variant-numeric:tabular-nums;flex:none;}
-.dk-nostaff{flex:1;font-size:9px;font-weight:bold;letter-spacing:.4px;text-transform:uppercase;
-  color:#ffb454;}
-.dk-ib{flex:none;background:none;border:1px solid #333;color:#c3c3c3;border-radius:4px;
+/* The headcount says what it is counting and what the ceiling is, because
+   "4" on its own in a corner told nobody anything. */
+.dk-room-c{display:inline-flex;align-items:center;gap:4px;color: #c3c3c3;font-weight:bold;font-size:11.5px;
+  font-variant-numeric:tabular-nums;flex:none;background: #252525;border:1px solid #333;
+  border-radius:3px;padding:1px 6px;}
+.dk-room-c .fas{font-size:9px;color: #8d8d8d;}
+.dk-room-c.full{color: #ff5468;border-color:rgba(255,84,104,.45);}
+.dk-room-c.full .fas{color: #ff5468;}
+/* Room state in words. An icon on its own is a quiz. */
+.dk-room-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;}
+.dk-rtag{display:inline-flex;align-items:center;gap:4px;font-size:10px;color: #8d8d8d;
+  background: #252525;border-radius:3px;padding:1px 6px;max-width:100%;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;}
+.dk-rtag .fas{font-size:8.5px;}
+.dk-rtag.t-pub .fas{color: #57d9a3;}
+.dk-rtag.t-semi .fas{color: #ffb454;}
+.dk-rtag.t-priv .fas{color: #ff5468;}
+.dk-rtag.warn{color: #ffb454;}
+.dk-rtag.warn .fas{color: #ffb454;}
+.dk-rtag.full{color: #ff5468;}
+.dk-rtag.full .fas{color: #ff5468;}
+.dk-rtag.none{color: #ff5468;background:rgba(255,84,104,.12);}
+.dk-rtag.none .fas{color: #ff5468;}
+.dk-rtag.ok{color: #57d9a3;}
+.dk-rtag.ok .fas{color: #57d9a3;}
+.dk-ib{flex:none;background:none;border:1px solid #333;color: #c3c3c3;border-radius:4px;
   padding:4px 7px;font-size:11px;cursor:pointer;line-height:1;}
-.dk-ib:hover{border-color:#ff9800;color:#fff;}
-.dk-occ{border:1px solid #2a2a2a;border-radius:5px;background:#1b1b1b;padding:9px 11px;margin-bottom:7px;}
+.dk-ib:hover{border-color: #ff9800;color: #fff;}
+.dk-occ{border:1px solid #2a2a2a;border-radius:5px;background: #1b1b1b;padding:9px 11px;margin-bottom:7px;}
 .dk-occ-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
 .dk-occ-n{font-weight:bold;}
-.dk-occ-l{font-size:11.5px;color:#8d8d8d;}
+.dk-occ-l{font-size:11.5px;color: #8d8d8d;}
 .dk-occ-b{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;}
-.dk-hit{display:block;width:100%;text-align:left;background:#1b1b1b;border:1px solid #2a2a2a;
-  border-radius:5px;padding:8px 11px;margin-bottom:6px;color:#fff;font-family:inherit;cursor:pointer;}
-.dk-hit:hover{border-color:#ff9800;}
+.dk-hit{display:block;width:100%;text-align:left;background: #1b1b1b;border:1px solid #2a2a2a;
+  border-radius:5px;padding:8px 11px;margin-bottom:6px;color: #fff;font-family:inherit;cursor:pointer;}
+.dk-hit:hover{border-color: #ff9800;}
 .dk-hit-h{display:flex;align-items:baseline;gap:8px;}
-.dk-hit-w{font-weight:bold;color:#ff9800;font-size:12px;}
-.dk-hit-t{font-size:12.5px;color:#c3c3c3;margin-top:3px;word-break:break-word;}
+.dk-hit-w{font-weight:bold;color: #ff9800;font-size:12px;}
+.dk-hit-t{font-size:12.5px;color: #c3c3c3;margin-top:3px;word-break:break-word;}
 .dk-help{padding:16px 18px;display:block;}
-.dk-help-h{font-size:13px;color:#ff9800;margin:20px 0 8px;letter-spacing:.3px;}
+.dk-help-h{font-size:13px;color: #ff9800;margin:20px 0 8px;letter-spacing:.3px;}
 .dk-help-h:first-child{margin-top:0;}
-.dk-help-p{font-size:13px;color:#c3c3c3;line-height:1.65;margin:0 0 9px;max-width:62ch;}
+.dk-help-p{font-size:13px;color: #c3c3c3;line-height:1.65;margin:0 0 9px;max-width:62ch;}
 .dk-help-list{display:flex;flex-direction:column;gap:1px;margin:0 0 10px;}
-.dk-help-row{display:flex;gap:12px;align-items:baseline;padding:6px 9px;border-radius:4px;background:#1b1b1b;}
-.dk-help-k{flex:none;width:15rem;max-width:45%;font-weight:bold;font-size:12px;color:#fff;}
-.dk-help-k.mono{font-family:"Courier New",monospace;color:#ff9800;font-size:11.5px;}
-.dk-help-v{font-size:12px;color:#8d8d8d;line-height:1.5;min-width:0;}
-.dk-bot{position:relative;background:#1b1b1b;border:1px solid #2a2a2a;border-radius:6px;
+.dk-help-row{display:flex;gap:12px;align-items:baseline;padding:6px 9px;border-radius:4px;background: #1b1b1b;}
+.dk-help-k{flex:none;width:15rem;max-width:45%;font-weight:bold;font-size:12px;color: #fff;}
+.dk-help-k.mono{font-family:"Courier New",monospace;color: #ff9800;font-size:11.5px;}
+.dk-help-v{font-size:12px;color: #8d8d8d;line-height:1.5;min-width:0;}
+.dk-bot{position:relative;background: #1b1b1b;border:1px solid #2a2a2a;border-radius:6px;
   padding:10px 34px 10px 12px;margin:10px 0;display:flex;flex-direction:column;gap:6px;}
 .dk-bot-h{display:flex;align-items:center;gap:7px;}
-.dk-bot-h .fas{font-size:11px;color:#5aa9ff;}
-.dk-bot-n{font-size:12px;font-weight:bold;color:#5aa9ff;}
-.dk-bot-only{font-size:10px;color:#6f6f6f;}
-.dk-bot-t{font-size:13px;color:#c3c3c3;line-height:1.6;}
+.dk-bot-h .fas{font-size:11px;color: #5aa9ff;}
+.dk-bot-n{font-size:12px;font-weight:bold;color: #5aa9ff;}
+.dk-bot-only{font-size:10px;color: #6f6f6f;}
+.dk-bot-t{font-size:13px;color: #c3c3c3;line-height:1.6;}
 .dk-bot-b{display:flex;gap:6px;flex-wrap:wrap;}
-.dk-bot-cmd{background:#000;border:1px solid #3a3a3a;color:#ff9800;font-family:"Courier New",monospace;
+.dk-bot-cmd{background: #000;border:1px solid #3a3a3a;color: #ff9800;font-family:"Courier New",monospace;
   font-size:11.5px;padding:5px 9px;border-radius:4px;cursor:pointer;text-align:left;}
-.dk-bot-cmd:hover{border-color:#ff9800;}
-.dk-bot-x{position:absolute;top:6px;right:6px;background:none;border:none;color:#6f6f6f;
+.dk-bot-cmd:hover{border-color: #ff9800;}
+.dk-bot-x{position:absolute;top:6px;right:6px;background:none;border:none;color: #6f6f6f;
   cursor:pointer;font-size:12px;padding:3px 5px;border-radius:3px;}
-.dk-bot-x:hover{color:#fff;background:#2a2a2a;}
-.dk-toast{position:absolute;left:50%;bottom:70px;transform:translate(-50%,12px);background:#000;
-  border:1px solid #ff9800;color:#fff;font-size:12.5px;padding:8px 14px;border-radius:5px;
+.dk-bot-x:hover{color: #fff;background: #2a2a2a;}
+.dk-toast{position:absolute;left:50%;bottom:70px;transform:translate(-50%,12px);background: #000;
+  border:1px solid #ff9800;color: #fff;font-size:12.5px;padding:8px 14px;border-radius:5px;
   opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:6;max-width:80%;}
 .dk-toast.show{opacity:1;transform:translate(-50%,0);}
 .dk-panel.dk-fullpage{position:fixed;inset:0;right:0;bottom:0;width:100%;height:100%;max-height:none;
