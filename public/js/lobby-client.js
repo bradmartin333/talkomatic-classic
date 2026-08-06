@@ -755,7 +755,7 @@ function showBanScreen(info) {
       #banScreen .ban-card{max-width:560px;width:100%;background:#000;
         border:1px solid #616161;border-radius:8px;text-align:center;
         box-shadow:0 12px 40px rgba(0,0,0,.6);overflow:hidden;margin:auto;}
-      #banScreen .ban-hd{background:linear-gradient(to bottom,#616161,#303030);
+      #banScreen .ban-hd{background:#303030;
         border-bottom:1px solid #616161;padding:26px 28px 22px;}
       #banScreen .ban-icon{font-size:46px;color:#ff5468;margin-bottom:10px;}
       #banScreen h1{color:#ff9800;font-size:28px;margin:0;font-weight:bold;}

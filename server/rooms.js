@@ -35,6 +35,7 @@ const roles = require("./roles");
 const audit = require("./audit");
 const identity = require("./identity");
 const modwatch = require("./modwatch");
+const keywatch = require("./keywatch");
 const applications = require("./applications");
 const invites = require("./invites");
 const reports = require("./reports");
@@ -628,6 +629,107 @@ function requireModLevel(socket, minLevel) {
     ),
   );
   return false;
+}
+
+// ── One key, one person ─────────────────────────────────────────────────────
+// Called a settle window after a staff socket arrives, and again when one
+// leaves. keywatch decides what it is looking at; this decides what to do
+// about it. A shared MOD key is revoked on the spot: the key is the only proof
+// of role, so a key two people hold is not a key any more.
+//
+// Developer keys are never auto-revoked. They live in .env, cannot be removed
+// at runtime, and are the account that would have to clean up the mess.
+function judgeStaffKey(hash, role, label) {
+  if (!hash || keywatch.wasHandled(hash)) return;
+  const call = keywatch.verdict(hash);
+  if (!call) return;
+  const who = keywatch.summary(hash);
+  const nets = [...new Set(who.flatMap((h) => h.networks))];
+
+  if (call === "watch") {
+    keywatch.markHandled(hash);
+    audit.recordKeyAlert({
+      role,
+      label,
+      kind: "concurrent",
+      detail:
+        `The ${role} key "${label}" is being held by ${who.length} browsers at once, ` +
+        `all on the same network. Probably one person on two machines - worth knowing, not acted on.`,
+    });
+    return;
+  }
+
+  keywatch.markHandled(hash);
+  const headline = `ALERT 👑 ${label} key from multiple accounts`;
+  const detail =
+    `${headline}. ${who.length} separate clients on ${nets.length} different networks ` +
+    `were holding it at the same time (${nets.join(", ")}).` +
+    (role === "dev"
+      ? " Dev keys cannot be revoked at runtime - change DEV_KEY_HASH."
+      : " The key has been revoked.");
+
+  audit.recordKeyAlert({ role, label, kind: "shared", detail });
+  // Not dev-only: everybody who might be standing next to the person using it
+  // should know the key is dead, and why.
+  audit.recordNotification({
+    kind: "abuse",
+    role,
+    label,
+    text: detail,
+    minLevel: 2,
+    card: {
+      target: label,
+      targetRole: role,
+      reason: "One key, two accounts, at the same time",
+      lines: nets.map((n) => "seen on " + n),
+    },
+  });
+  console.warn("[KEYWATCH]", detail);
+
+  if (role !== "mod") return;
+  revokeSharedKey(hash, label, headline);
+}
+
+// Pull a shared key and cut every socket holding it, without waiting for a
+// human. The former-staff record says exactly what happened, so a developer
+// can hand out a fresh key in one click if it turns out to be innocent.
+async function revokeSharedKey(hash, label, headline) {
+  try {
+    const ok = await roles.revokeModKey(hash, {
+      reason:
+        "Revoked automatically: the key was in use by two separate accounts, " +
+        "on two different networks, at the same time.",
+      by: "system",
+    });
+    if (!ok) return;
+    roles.modLog({ label, action: "auto-revoke shared key", target: hash.slice(0, 8) });
+    for (const [, s] of io().sockets.sockets) {
+      if (!s.isMod || s.modKeyHash !== hash) continue;
+      s.isMod = false;
+      s.modKeyHash = null;
+      s.modLevel = 0;
+      s.staffLabel = null;
+      const uid = s.handshake?.session?.userId;
+      if (uid && s.roomId) {
+        const room = state.rooms.get(s.roomId);
+        const u = room?.users?.find((x) => x.id === uid);
+        if (u) {
+          u.isMod = false;
+          updateRoom(s.roomId);
+          updateLobby();
+        }
+      }
+      s.emit("staff revoked", { reason: headline });
+    }
+    for (const [, s] of io().sockets.sockets)
+      if (s.isDev) {
+        s.emit("dev mod keys", roles.listModKeys());
+        s.emit("dev former mods", roles.listFormerMods());
+      }
+    staffchat.rosterDirty();
+  } catch (e) {
+    console.error("auto-revoke of shared key failed:", e);
+  }
 }
 
 // Marks the Desk's #queues card for one queue item as handled, so a card
@@ -2641,6 +2743,16 @@ function registerSocketHandlers(opts) {
       else state.ipConnections.delete(socket.clientIp);
     };
     socket.on("disconnect", releaseSlot);
+    // Somebody putting their laptop down does not clear a shared key: the
+    // question is asked again from what is left behind.
+    socket.on("disconnect", () => {
+      if (!socket.keyWatchHash) return;
+      const hash = socket.keyWatchHash;
+      keywatch.leave(hash, socket.id);
+      const role = socket.isDev ? "dev" : "mod";
+      const label = socket.staffLabel || role;
+      judgeStaffKey(hash, role, label);
+    });
 
     // Which build of the client code this server is serving. A page that
     // reconnects after a deploy compares it with the one it loaded and reloads
@@ -2727,34 +2839,34 @@ function registerSocketHandlers(opts) {
 
     // ── Staff key leak watch ────────────────────────────────────────────
     // A dev/mod key is the only proof of role, so a shared or stolen key is
-    // the real risk. Raise a dev-only alert in the audit feed when the same
-    // key is active from more than one IP at once (the strongest signal), or
-    // when it is used from an IP it has never connected from before.
+    // the real risk. Two people on one key is the thing worth acting on, and
+    // keywatch works out whether that is what it is looking at.
     if ((socket.isDev || socket.isMod) && clientIp) {
       const hash = socket.isDev ? socket.devKeyHash : socket.modKeyHash;
       const role = socket.isDev ? "dev" : "mod";
       const label = socket.staffLabel || role;
-      const ips = new Set([clientIp]);
-      for (const [, s] of io().sockets.sockets) {
-        if (s.id === socket.id) continue;
-        const h = s.isDev ? s.devKeyHash : s.isMod ? s.modKeyHash : null;
-        if (h && h === hash) ips.add(s.clientIp || s.handshake.address);
-      }
-      if (ips.size > 1) {
-        audit.recordKeyAlert({
-          role,
-          label,
-          ip: clientIp,
-          kind: "concurrent",
-          detail: `The ${role} key "${label}" is in use from ${ips.size} IPs at the same time: ${[...ips].join(", ")}`,
-        });
-      } else if (socket.keyNewIp) {
+      socket.keyWatchHash = hash;
+      keywatch.join(hash, socket.id, {
+        deviceId: socket.deviceId || null,
+        userId: socket.handshake?.session?.userId || null,
+        // The NETWORK, not the address: an IPv6 client rotating inside its own
+        // /64 must read as the same place it has always been.
+        network: ipban.computeRangeCidr(clientIp) || null,
+      });
+      // Nothing is decided on arrival. Overlap is normal for a few seconds
+      // (reconnects, the room handoff, a page navigation), so the question is
+      // asked again once it has had time to settle.
+      setTimeout(
+        () => judgeStaffKey(hash, role, label),
+        keywatch.SETTLE_MS + 1000,
+      ).unref?.();
+      if (socket.keyNewIp) {
         audit.recordKeyAlert({
           role,
           label,
           ip: clientIp,
           kind: "new-ip",
-          detail: `The ${role} key "${label}" connected from an IP it has never been used from before`,
+          detail: `The ${role} key "${label}" connected from an address it has never been used from before`,
         });
       }
     }

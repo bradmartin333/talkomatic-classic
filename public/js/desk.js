@@ -4279,7 +4279,7 @@
 .dk-panel.dk-offline .dk-head{opacity:.55;}
 .dk-panel.dk-offline .dk-head .dk-title-sub::after{content:" - reconnecting";color: #ff5468;}
 .dk-head{flex:none;display:flex;align-items:center;gap:8px;padding:9px 12px;
-  border-bottom:1px solid #616161;background:linear-gradient(to bottom,#616161,#303030);}
+  border-bottom:1px solid #616161;background: #303030;}
 .dk-title{flex:none;display:flex;flex-direction:column;min-width:0;}
 .dk-title-main{font-weight:bold;color: #ff9800;font-size:14px;letter-spacing:.4px;}
 .dk-title-sub{font-size:11px;color: #ededed;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;}
@@ -4479,7 +4479,7 @@
 .dk-q-done .fas{font-size:10px;}
 
 /* ── The daily summary ── */
-.dk-st{margin-top:10px;background:linear-gradient(180deg,#1f1c17,#1b1b1b);border:1px solid #3a3126;
+.dk-st{margin-top:10px;background: #1b1b1b;border:1px solid #3a3126;
   border-radius:6px;padding:11px 13px;display:flex;flex-direction:column;gap:10px;}
 .dk-st-h{display:flex;align-items:center;gap:8px;}
 .dk-st-h .fas{color: #ff9800;font-size:12px;}
@@ -4683,7 +4683,7 @@
    headings. Each tone is one colour used in three places: the icon, its
    backing, and the strip down the left. */
 .dk-help{padding:16px 18px 24px;display:flex;flex-direction:column;gap:12px;}
-.dk-help-hero{display:flex;gap:12px;align-items:flex-start;background:linear-gradient(180deg,#241d12,#1b1b1b);
+.dk-help-hero{display:flex;gap:12px;align-items:flex-start;background: #1b1b1b;
   border:1px solid #3a3126;border-left:3px solid #ff9800;padding:13px 15px;}
 .dk-help-hero > .fas{color: #ff9800;font-size:17px;margin-top:2px;flex:none;width:1em;text-align:center;}
 .dk-help-hero-t{display:flex;flex-direction:column;gap:3px;min-width:0;}
