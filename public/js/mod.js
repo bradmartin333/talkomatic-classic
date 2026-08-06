@@ -3306,8 +3306,157 @@
     if (h > 0) return "ends in " + h + "h " + m + "m";
     return "ends in " + m + "m";
   }
-  function resolveAppeal(a, decision) {
-    socket.emit("staff resolve appeal", { id: a.id, decision });
+  function resolveAppeal(a, decision, note) {
+    socket.emit("staff resolve appeal", { id: a.id, decision, note: note || "" });
+  }
+
+  // ── The appeal conversation ──────────────────────────────────────────────
+  // An appeal is a chat now, because a ban is much easier to judge once you
+  // have asked what actually happened. Same thread the user sees on their ban
+  // screen, same thread the Desk shows.
+  const appealDrafts = new Map(); // id -> half-typed reply
+  const appealReplyTo = new Map(); // id -> message being answered
+
+  function buildAppealChat(a) {
+    const box = divc("ap-box ap-chat");
+    const lbl = divc("lbl");
+    lbl.appendChild(icon("fa-comments"));
+    lbl.appendChild(
+      document.createTextNode(
+        " Conversation" +
+          (a.messages && a.messages.length
+            ? " (" + a.messages.length + ")"
+            : ""),
+      ),
+    );
+    if (a.waiting) {
+      const w = span("ap-waiting", "waiting on you");
+      lbl.appendChild(w);
+    }
+    box.appendChild(lbl);
+
+    const log = divc("ap-log");
+    const msgs = a.messages && a.messages.length ? a.messages : [];
+    if (!msgs.length) {
+      log.appendChild(span("ap-empty", "Nothing said yet."));
+    }
+    msgs.forEach((m) => {
+      if (m.from === "system") {
+        log.appendChild(span("ap-sys", m.text));
+        return;
+      }
+      const row = divc("ap-m " + (m.from === "staff" ? "staff" : "user"));
+      const who = divc("ap-who");
+      who.appendChild(
+        span("ap-who-n", m.from === "staff" ? m.by || "Staff" : a.name || "Them"),
+      );
+      const t = span("ap-who-t", relTime(m.ts));
+      t.title = fmtTime(m.ts);
+      who.appendChild(t);
+      if (a.status === "open") {
+        const rb = document.createElement("button");
+        rb.className = "ap-reply-b";
+        rb.type = "button";
+        rb.textContent = "reply";
+        rb.addEventListener("click", () => {
+          appealReplyTo.set(a.id, {
+            id: m.id,
+            by: m.from === "staff" ? m.by || "Staff" : a.name || "Them",
+            text: String(m.text || "").slice(0, 90),
+          });
+          renderAppeals();
+        });
+        who.appendChild(rb);
+      }
+      row.appendChild(who);
+      const b = divc("ap-bub");
+      if (m.reply) {
+        const q = divc("ap-quote");
+        q.textContent =
+          (m.reply.from === "staff" ? m.reply.by || "Staff" : a.name || "Them") +
+          ": " +
+          m.reply.text;
+        b.appendChild(q);
+      }
+      const txt = document.createElement("div");
+      txt.textContent = m.text || "";
+      b.appendChild(txt);
+      row.appendChild(b);
+      log.appendChild(row);
+    });
+    box.appendChild(log);
+    // Land on the newest line, the way any chat does.
+    requestAnimationFrame(() => {
+      log.scrollTop = log.scrollHeight;
+    });
+
+    if (a.status !== "open" || !viewerIsFullMod()) return box;
+
+    if (a.locked) {
+      const note = divc("ap-locked");
+      note.appendChild(icon("fa-lock"));
+      note.appendChild(
+        document.createTextNode(
+          " Chat ended" +
+            (a.lockedBy ? " by " + a.lockedBy : "") +
+            ". They cannot write any more. You still can.",
+        ),
+      );
+      box.appendChild(note);
+    }
+
+    const rt = appealReplyTo.get(a.id);
+    if (rt) {
+      const bar = divc("ap-replybar");
+      bar.appendChild(icon("fa-reply"));
+      bar.appendChild(span("ap-replybar-t", "Replying to " + rt.by + ": " + rt.text));
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "ap-replybar-x";
+      x.textContent = "×";
+      x.addEventListener("click", () => {
+        appealReplyTo.delete(a.id);
+        renderAppeals();
+      });
+      bar.appendChild(x);
+      box.appendChild(bar);
+    }
+
+    const comp = divc("ap-comp");
+    const ta = document.createElement("textarea");
+    ta.className = "ap-input";
+    ta.maxLength = 1000;
+    ta.rows = 2;
+    ta.placeholder = "Ask them what happened...";
+    ta.value = appealDrafts.get(a.id) || "";
+    ta.addEventListener("input", () => appealDrafts.set(a.id, ta.value));
+    const send = () => {
+      const text = ta.value.trim();
+      if (!text) return;
+      socket.emit("staff appeal reply", {
+        id: a.id,
+        text,
+        replyTo: rt ? rt.id : undefined,
+      });
+      appealDrafts.delete(a.id);
+      appealReplyTo.delete(a.id);
+      ta.value = "";
+    };
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        send();
+      }
+    });
+    comp.appendChild(ta);
+    const sendBtn = document.createElement("button");
+    sendBtn.className = "btn sm primary";
+    sendBtn.appendChild(icon("fa-paper-plane"));
+    sendBtn.appendChild(document.createTextNode(" Send"));
+    sendBtn.addEventListener("click", send);
+    comp.appendChild(sendBtn);
+    box.appendChild(comp);
+    return box;
   }
 
   function renderAppeals() {
@@ -3409,16 +3558,7 @@
       contest.appendChild(cv);
       grid.appendChild(contest);
 
-      const msg = divc("ap-box");
-      const ml = divc("lbl");
-      ml.appendChild(icon("fa-comment-dots"));
-      ml.appendChild(document.createTextNode(" Their appeal"));
-      msg.appendChild(ml);
-      const mv = divc("val" + (a.message ? "" : " none"));
-      mv.textContent = a.message || "No message.";
-      msg.appendChild(mv);
-      grid.appendChild(msg);
-
+      grid.appendChild(buildAppealChat(a));
       card.appendChild(grid);
 
       // Footer: resolution note (if any) + identity + actions
@@ -3470,21 +3610,56 @@
           });
           actions.appendChild(lift);
         }
-        const dismiss = document.createElement("button");
-        dismiss.className = "btn sm danger";
-        dismiss.appendChild(icon("fa-xmark"));
-        dismiss.appendChild(document.createTextNode(" Dismiss"));
-        dismiss.addEventListener("click", async () => {
-          if (window.StaffUI) {
+        // Ending the chat is not a decision: it stops somebody flooding the
+        // thread while the appeal is still read and judged on its merits.
+        const lock = document.createElement("button");
+        lock.className = "btn sm";
+        lock.appendChild(icon(a.locked ? "fa-lock-open" : "fa-lock"));
+        lock.appendChild(
+          document.createTextNode(a.locked ? " Reopen chat" : " End chat"),
+        );
+        lock.title = a.locked
+          ? "Let them write again"
+          : "Stop them writing. The appeal stays open and you still decide it.";
+        lock.addEventListener("click", async () => {
+          if (!a.locked && window.StaffUI) {
             const ok = await StaffUI.confirm({
-              title: "Dismiss appeal",
-              danger: true,
-              message: "Dismiss this appeal and keep the ban in place?",
-              confirmText: "Dismiss",
+              title: "End this chat",
+              message:
+                "They will not be able to send any more messages. The appeal stays open and you still decide it.",
+              confirmText: "End chat",
             });
             if (!ok) return;
           }
-          resolveAppeal(a, "dismiss");
+          socket.emit("staff appeal lock", { id: a.id, locked: !a.locked });
+        });
+        actions.appendChild(lock);
+
+        const dismiss = document.createElement("button");
+        dismiss.className = "btn sm danger";
+        dismiss.appendChild(icon("fa-xmark"));
+        dismiss.appendChild(document.createTextNode(" Decline"));
+        dismiss.addEventListener("click", async () => {
+          if (!window.StaffUI) return resolveAppeal(a, "dismiss");
+          const r = await StaffUI.prompt({
+            title: "Decline this appeal",
+            icon: '<i class="fas fa-xmark"></i>',
+            message:
+              "The ban stays in place. Whatever you write here is the last thing they read on their ban screen.",
+            fields: [
+              {
+                name: "note",
+                label: "Message to them (optional)",
+                type: "textarea",
+                maxLength: 300,
+                placeholder: "e.g. The chat log backs up the report. Try again in a week.",
+              },
+            ],
+            danger: true,
+            confirmText: "Decline appeal",
+          });
+          if (r == null) return;
+          resolveAppeal(a, "dismiss", (r.note || "").trim());
         });
         actions.appendChild(dismiss);
         foot.appendChild(actions);

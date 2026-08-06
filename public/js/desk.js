@@ -213,7 +213,9 @@
       name: "@everyone",
       tokens: ["everyone", "all"],
       desc: "Everybody holding a staff key",
-      icon: "fa-bullhorn",
+      // Symmetric glyphs only in these chips: a bullhorn points right and its
+      // weight sits left, so it reads as badly centred however it is boxed.
+      icon: "fa-users",
     },
     {
       key: "l2",
@@ -237,7 +239,7 @@
       name: "@devs",
       tokens: ["devs", "developers"],
       desc: "Developers only",
-      icon: "fa-screwdriver-wrench",
+      icon: "fa-code",
     },
   ];
   const GROUP_BY_TOKEN = new Map();
@@ -642,14 +644,6 @@
     // The button itself carries the alarm too: a bare count can be missed on a
     // busy page, an outlined red button cannot.
     if (els.pill) els.pill.classList.toggle("urgent", t.help > 0);
-    // The lobby parks its Dev Panel button in the same corner, and it can be
-    // created after the pill (it waits for the sign-in round trip). Re-check
-    // on every badge pass so the two never end up stacked on each other.
-    if (els.pill)
-      els.pill.classList.toggle(
-        "raised",
-        !!document.getElementById("devPanelButton"),
-      );
     // The pop-out window has no pill, so the unread count lives in its title.
     if (pageMode)
       document.title =
@@ -822,6 +816,14 @@
       if (panelOpen && mode === "team") renderTeam();
     });
 
+    // The appeal being read, pushed whenever either side says anything.
+    socket.on("staff appeal", (d) => {
+      if (!d || !d.id) return;
+      if (!appeal || appeal.id !== d.id) return;
+      appeal = d;
+      if (panelOpen && mode === "appeal") renderAppeal();
+    });
+
     // Somebody wrote your name. The badge and the beep already happened on the
     // message itself; this is the line that says where to look.
     socket.on("desk mention", (d) => {
@@ -955,8 +957,6 @@
     const badge = el("span", "dk-pill-badge");
     badge.style.display = "none";
     pill.appendChild(badge);
-    // The lobby already parks a Dev Panel button in this corner; stack above it.
-    if (document.getElementById("devPanelButton")) pill.classList.add("raised");
     pill.addEventListener("click", toggle);
     document.body.appendChild(pill);
     els.pill = pill;
@@ -1408,6 +1408,7 @@
     if (mode === "inspector") return renderInspector();
     if (mode === "search") return renderSearch();
     if (mode === "team") return renderTeam();
+    if (mode === "appeal") return renderAppeal();
     if (mode === "help") return renderHelp();
     const main = els.main;
     main.textContent = "";
@@ -2030,19 +2031,18 @@
     }
 
     if (kind === "appeal" && c.itemId) {
+      // An appeal is a conversation, so the card opens it rather than asking
+      // for a verdict on one paragraph.
+      add("Open the chat", "fa-comments", "primary", () =>
+        openAppeal(c.itemId),
+      );
       if (isDev())
-        add("Lift the ban", "fa-unlock", "primary", () =>
+        add("Lift the ban", "fa-unlock", "", () =>
           socket.emit("staff resolve appeal", {
             id: c.itemId,
             decision: "lift",
           }),
         );
-      add("Dismiss", "fa-xmark", "", () =>
-        socket.emit("staff resolve appeal", {
-          id: c.itemId,
-          decision: "dismiss",
-        }),
-      );
       return bar;
     }
 
@@ -2916,6 +2916,232 @@
   // Everyone who holds a key, on or off, so you can see at a glance whether
   // there is anybody to hand something to.
   let roster = null;
+
+  // ── One appeal, as a conversation ─────────────────────────────────────────
+  // The same thread the dashboard shows and the banned user is typing into.
+  // Opened from the #queues card, because deciding a ban without being able to
+  // ask a question is how bad bans stay in place.
+  let appeal = null; // the open appeal, live-updated by the server
+  const appealDraft = new Map();
+  let appealReply = null;
+
+  function openAppeal(id) {
+    mode = "appeal";
+    appeal = appeal && appeal.id === id ? appeal : { id, loading: true };
+    appealReply = null;
+    if (els.panel) els.panel.classList.remove("rail-open", "side-open");
+    socket.emit("staff appeal open", { id });
+    renderAll();
+  }
+
+  function renderAppeal() {
+    const main = els.main;
+    if (!main) return;
+    main.textContent = "";
+    if (els.headSub) els.headSub.textContent = "appeal";
+    const a = appeal || {};
+
+    const bar = el("div", "dk-threadbar");
+    const back = btn("dk-minib", "Back", "fa-arrow-left");
+    back.addEventListener("click", () => {
+      socket.emit("staff appeal open", { id: null });
+      appeal = null;
+      backToChat();
+    });
+    bar.appendChild(back);
+    bar.appendChild(
+      el("span", "dk-threadbar-t", (a.name || "A banned user") + "'s appeal"),
+    );
+    if (a.status === "resolved")
+      bar.appendChild(
+        el(
+          "span",
+          "dk-chip ghost",
+          a.resolution === "lifted" ? "BAN LIFTED" : "DECLINED",
+        ),
+      );
+    else if (a.stillBlocked)
+      bar.appendChild(el("span", "dk-chip ghost", "STILL BLOCKED"));
+    main.appendChild(bar);
+
+    const body = el("div", "dk-msgs");
+    if (a.loading) {
+      body.appendChild(el("div", "dk-empty", "Looking..."));
+      main.appendChild(body);
+      return;
+    }
+
+    // What they are contesting, so a decision is not made blind.
+    const head = el("div", "dk-ap-ban");
+    head.appendChild(icon("fa-ban"));
+    const hb = el("div", "dk-ap-ban-b");
+    hb.appendChild(
+      el(
+        "span",
+        "dk-ap-ban-t",
+        (a.banPermanent ? "Permanent ban" : "Temporary ban") +
+          (a.banBy ? " by " + a.banBy : ""),
+      ),
+    );
+    hb.appendChild(
+      el("span", "dk-ap-ban-r", a.banReason || "No ban reason on file."),
+    );
+    head.appendChild(hb);
+    body.appendChild(head);
+
+    for (const m of a.messages || []) {
+      if (m.from === "system") {
+        body.appendChild(el("div", "dk-ap-sys", m.text));
+        continue;
+      }
+      const row = el("div", "dk-ap-m " + (m.from === "staff" ? "staff" : "user"));
+      const who = el("div", "dk-ap-who");
+      who.appendChild(
+        el(
+          "span",
+          "dk-ap-name",
+          m.from === "staff" ? m.by || "Staff" : a.name || "Them",
+        ),
+      );
+      const t = el("span", "dk-ap-t", relTime(m.ts));
+      t.title = new Date(m.ts).toLocaleString();
+      who.appendChild(t);
+      if (a.status === "open") {
+        const rb = btn("dk-ap-rb", "reply", null);
+        rb.addEventListener("click", () => {
+          appealReply = {
+            id: m.id,
+            by: m.from === "staff" ? m.by || "Staff" : a.name || "Them",
+            text: String(m.text || "").slice(0, 90),
+          };
+          renderAppeal();
+        });
+        who.appendChild(rb);
+      }
+      row.appendChild(who);
+      const b = el("div", "dk-ap-bub");
+      if (m.reply)
+        b.appendChild(
+          el(
+            "div",
+            "dk-ap-quote",
+            (m.reply.from === "staff" ? m.reply.by || "Staff" : a.name || "Them") +
+              ": " +
+              m.reply.text,
+          ),
+        );
+      b.appendChild(textEl(m.text, "dk-ap-txt"));
+      row.appendChild(b);
+      body.appendChild(row);
+    }
+    main.appendChild(body);
+    body.scrollTop = body.scrollHeight;
+
+    if (a.status !== "open") {
+      main.appendChild(
+        el(
+          "div",
+          "dk-readonly",
+          a.resolution === "lifted"
+            ? "Ban lifted" + (a.reviewedBy ? " by " + a.reviewedBy : "") + "."
+            : "Appeal declined" +
+              (a.reviewedBy ? " by " + a.reviewedBy : "") +
+              ". The ban stays in place.",
+        ),
+      );
+      return;
+    }
+
+    if (appealReply) {
+      const rb = el("div", "dk-replybar");
+      rb.appendChild(icon("fa-reply"));
+      rb.appendChild(el("span", "dk-rb-w", "Replying to " + appealReply.by));
+      rb.appendChild(el("span", "dk-rb-t", appealReply.text));
+      const x = btn("dk-rb-x", null, "fa-xmark", "Cancel the reply");
+      x.addEventListener("click", () => {
+        appealReply = null;
+        renderAppeal();
+      });
+      main.appendChild(rb);
+    }
+
+    const comp = el("div", "dk-comp");
+    const ta = el("textarea", "dk-input");
+    ta.rows = 1;
+    ta.maxLength = 1000;
+    ta.placeholder = a.locked
+      ? "Chat ended for them - you can still write"
+      : "Ask them what happened...";
+    ta.value = appealDraft.get(a.id) || "";
+    ta.addEventListener("input", () => appealDraft.set(a.id, ta.value));
+    const send = () => {
+      const text = ta.value.trim();
+      if (!text) return;
+      socket.emit("staff appeal reply", {
+        id: a.id,
+        text,
+        replyTo: appealReply ? appealReply.id : undefined,
+      });
+      appealDraft.delete(a.id);
+      appealReply = null;
+      ta.value = "";
+    };
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        send();
+      }
+    });
+    comp.appendChild(ta);
+    const sendBtn = btn("dk-send", null, "fa-paper-plane", "Send");
+    sendBtn.addEventListener("click", send);
+    comp.appendChild(sendBtn);
+    main.appendChild(comp);
+
+    // The decision, and the way to stop somebody flooding the thread while it
+    // is still being made.
+    const acts = el("div", "dk-ap-acts");
+    const lock = btn(
+      "dk-minib",
+      a.locked ? "Reopen chat" : "End chat",
+      a.locked ? "fa-lock-open" : "fa-lock",
+    );
+    lock.title = a.locked
+      ? "Let them write again"
+      : "Stop them writing. The appeal stays open and you still decide it.";
+    lock.addEventListener("click", () =>
+      socket.emit("staff appeal lock", { id: a.id, locked: !a.locked }),
+    );
+    acts.appendChild(lock);
+    if (isDev() && a.stillBlocked) {
+      const lift = btn("dk-minib primary", "Lift the ban", "fa-unlock");
+      armTwice(lift, "Lift it for good?", () =>
+        socket.emit("staff resolve appeal", { id: a.id, decision: "lift" }),
+      );
+      acts.appendChild(lift);
+    }
+    const decline = btn("dk-minib danger", "Decline", "fa-xmark");
+    decline.addEventListener("click", () =>
+      ask(
+        {
+          title: "Decline this appeal",
+          message:
+            "The ban stays in place. What you write is the last thing they read on their ban screen.",
+          label: "Message to them (optional)",
+          max: 300,
+          icon: '<i class="fas fa-xmark"></i>',
+        },
+        (note) =>
+          socket.emit("staff resolve appeal", {
+            id: a.id,
+            decision: "dismiss",
+            note: String(note || "").trim(),
+          }),
+      ),
+    );
+    acts.appendChild(decline);
+    main.appendChild(acts);
+  }
 
   function openTeam() {
     mode = "team";
@@ -3801,12 +4027,13 @@
 .dk-panel *::-webkit-scrollbar-thumb{background: #3d3d3d;border-radius:4px;border:1px solid #000;}
 .dk-panel *::-webkit-scrollbar-thumb:hover{background: #ff9800;}
 .dk-panel *::-webkit-scrollbar-corner{background: #000;}
-.dk-pill{position:fixed;bottom:16px;right:16px;z-index:99988;background: #000;color: #fff;
+/* Bottom LEFT: the right-hand corner is where the site keeps everything else
+   worth clicking, and the pill was sitting on top of it. */
+.dk-pill{position:fixed;bottom:16px;left:16px;z-index:99988;background: #000;color: #fff;
   border:1px solid #ff9800;border-radius:4px;padding:10px 16px;font-size:13px;font-weight:bold;
   font-family:inherit;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.5);display:inline-flex;
   align-items:center;gap:8px;transition:background .2s,color .2s;}
 .dk-pill:hover{background: #ff9800;color: #000;}
-.dk-pill.raised{bottom:64px;}
 .dk-pill-badge{background: #ff9800;color: #000;border-radius:9px;font-size:11px;line-height:1;
   padding:3px 7px;font-variant-numeric:tabular-nums;}
 /* Red means #help, and only #help: somebody in a room is waiting for staff.
@@ -3835,11 +4062,11 @@
      handle keep working against the same coordinates the panel is placed in. */
   /* .dk-panel qualifies these two so they outrank the base .dk-body rule
      further down the sheet, which would otherwise win on source order. */
-  .dk-panel .dk-body{zoom:1.08;grid-template-columns:214px minmax(0,1fr) 290px;}
-  /* The channel list gets a little more again - it is the thing you aim at
-     most and it was the smallest text on the panel. The column widens to
-     match, so nothing starts wrapping that did not before. */
-  .dk-panel .dk-rail{zoom:1.06;}
+  .dk-panel .dk-body{zoom:1.08;grid-template-columns:206px minmax(0,1fr) 290px;}
+  /* The channel list sits a touch below the rest: it is a list of short names
+     you aim at, not something you read, and at the body's full zoom it ate the
+     panel. This lands it just above where it started. */
+  .dk-panel .dk-rail{zoom:0.98;}
 }
 .dk-panel.dk-offline .dk-head{opacity:.55;}
 .dk-panel.dk-offline .dk-head .dk-title-sub::after{content:" - reconnecting";color: #ff5468;}
@@ -3945,8 +4172,11 @@
 .dk-tool.armed{background: #ff5468;color: #fff;}
 .dk-editbox{width:100%;background: #000;color: #fff;border:1px solid #ff9800;border-radius:5px;
   padding:7px 9px;font-family:inherit;font-size:13px;resize:vertical;min-height:40px;}
-.dk-sys{display:flex;align-items:baseline;gap:8px;font-size:12px;color: #8d8d8d;padding:5px 8px;margin-top:6px;}
-.dk-sys .fas{font-size:11px;flex:none;}
+/* flex-start, not baseline: on a line that wraps, a baseline-aligned icon
+   stays glued to the first line's baseline and ends up floating in the middle
+   of the block. Nudged down a hair so it still sits on the first line. */
+.dk-sys{display:flex;align-items:flex-start;gap:8px;font-size:12px;color: #8d8d8d;padding:5px 8px;margin-top:6px;}
+.dk-sys .fas{font-size:11px;flex:none;width:1em;text-align:center;margin-top:2px;}
 .dk-sys-x{min-width:0;word-break:break-word;}
 .dk-sys.card{background: #1b1b1b;border:1px solid #2a2a2a;border-radius:5px;color: #c3c3c3;
   padding:8px 11px;margin-top:8px;font-size:12.5px;line-height:1.5;}
@@ -4057,6 +4287,34 @@
 .dk-st-c.warn .dk-st-n{color: #ffb454;}
 .dk-st-l{font-size:10.5px;color: #8d8d8d;margin-top:2px;line-height:1.3;}
 
+/* ── One appeal, as a conversation ──
+   Theirs on the left, staff on the right. Same thread the banned user is
+   typing into on their ban screen. */
+.dk-ap-ban{display:flex;gap:9px;align-items:flex-start;background: #1b1b1b;border:1px solid #2a2a2a;
+  border-left:3px solid #ff5468;padding:9px 12px;margin-bottom:10px;}
+.dk-ap-ban > .fas{color: #ff5468;font-size:12px;margin-top:2px;flex:none;}
+.dk-ap-ban-b{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.dk-ap-ban-t{font-size:12.5px;font-weight:bold;}
+.dk-ap-ban-r{font-size:12px;color: #8d8d8d;line-height:1.5;word-break:break-word;}
+.dk-ap-m{display:flex;flex-direction:column;gap:3px;max-width:82%;margin-top:8px;}
+.dk-ap-m.staff{align-self:flex-end;align-items:flex-end;}
+.dk-ap-who{display:flex;align-items:center;gap:7px;font-size:11px;color: #8d8d8d;}
+.dk-ap-name{font-weight:bold;color: #c3c3c3;}
+.dk-ap-m.staff .dk-ap-name{color: #ff9800;}
+.dk-ap-rb{background:none;border:none;color: #6f6f6f;font-family:inherit;font-size:11px;
+  cursor:pointer;padding:0;text-decoration:underline;}
+.dk-ap-rb:hover{color: #ff9800;}
+.dk-ap-bub{background: #1b1b1b;border:1px solid #2a2a2a;padding:7px 10px;font-size:13px;
+  line-height:1.55;word-break:break-word;}
+.dk-ap-m.staff .dk-ap-bub{border-right:3px solid #ff9800;}
+.dk-ap-m.user .dk-ap-bub{border-left:3px solid #616161;}
+.dk-ap-quote{font-size:11px;color: #8d8d8d;border-left:2px solid #444;padding-left:7px;
+  margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dk-ap-sys{align-self:center;text-align:center;font-size:11.5px;color: #8d8d8d;background: #1b1b1b;
+  border:1px solid #2a2a2a;padding:5px 10px;margin-top:8px;max-width:100%;}
+.dk-ap-acts{flex:none;display:flex;gap:6px;flex-wrap:wrap;padding:9px 14px;border-top:1px solid #333;
+  background: #1b1b1b;}
+
 /* ── Discord's "you are reading, this is how much you missed" bar ── */
 .dk-jump{position:relative;height:0;overflow:visible;z-index:3;}
 .dk-jump-b{position:absolute;right:14px;bottom:8px;display:inline-flex;align-items:center;gap:8px;
@@ -4096,6 +4354,10 @@
    reaches several people. */
 .dk-pick-grp{flex:none;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;
   justify-content:center;background:rgba(192,139,255,.16);color: #c08bff;font-size:11px;}
+/* An icon alone in a round chip gets a square box of its own. Font Awesome
+   glyphs are all different widths, so without this each one centres slightly
+   differently and the whole column looks nudged about. */
+.dk-pick-grp > i,.dk-q-ico > i{width:1em;text-align:center;line-height:1;}
 .dk-pick.grp .dk-pick-n{color: #c08bff;}
 /* A name written in a message. A channel opens; a mention is just marked, in
    your own colour when it is you. */
@@ -4251,7 +4513,6 @@ button.dk-chan:focus-visible,button.dk-thread:focus-visible,.dk-minib:focus-visi
 }
 @media (max-width:760px){
   .dk-panel{right:0;bottom:0;width:100vw;height:100vh;height:100dvh;max-height:none;border-radius:0;border:none;}
-  .dk-pill.raised{bottom:64px;}
   .dk-body{grid-template-columns:minmax(0,1fr);}
   .dk-search,.dk-popbtn{display:none;}
   .dk-burger,.dk-msearch{display:inline-flex;}

@@ -805,6 +805,42 @@ function showBanScreen(info) {
         border-left:3px solid #57d9a3;border-radius:0;padding:14px;color:#d7f3e7;font-size:14px;
         line-height:1.55;text-align:left;display:flex;gap:10px;align-items:flex-start;}
       #banScreen .ban-appeal-done i{color:#57d9a3;margin-top:2px;}
+      /* ── The appeal conversation ──
+         Once an appeal is filed this becomes a chat with staff, because most
+         bans cannot be judged without asking what actually happened. */
+      #banScreen .ac-log{background:#0d0d0d;border:1px solid #333;padding:12px;
+        max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;
+        scrollbar-width:thin;scrollbar-color:#3d3d3d transparent;}
+      #banScreen .ac-log::-webkit-scrollbar{width:7px;}
+      #banScreen .ac-log::-webkit-scrollbar-thumb{background:#3d3d3d;border-radius:4px;}
+      #banScreen .ac-m{display:flex;flex-direction:column;gap:3px;max-width:88%;}
+      #banScreen .ac-m.user{align-self:flex-end;align-items:flex-end;}
+      #banScreen .ac-m.staff{align-self:flex-start;}
+      #banScreen .ac-who{font-size:11px;color:#8d8d8d;font-weight:bold;}
+      #banScreen .ac-m.staff .ac-who{color:#ff9800;}
+      #banScreen .ac-b{background:#1e1e1e;border:1px solid #333;padding:8px 11px;
+        font-size:13.5px;line-height:1.5;color:#ededed;white-space:pre-wrap;
+        word-break:break-word;text-align:left;}
+      #banScreen .ac-m.user .ac-b{background:#26211a;border-color:#4a3d28;}
+      #banScreen .ac-m.staff .ac-b{border-left:3px solid #ff9800;}
+      #banScreen .ac-q{font-size:11.5px;color:#8d8d8d;border-left:2px solid #444;
+        padding-left:7px;margin-bottom:5px;display:block;overflow:hidden;
+        text-overflow:ellipsis;white-space:nowrap;max-width:100%;}
+      #banScreen .ac-t{font-size:10.5px;color:#6f6f6f;}
+      #banScreen .ac-sys{align-self:center;max-width:100%;text-align:center;font-size:12.5px;
+        color:#9a9a9a;background:#161616;border:1px solid #333;padding:7px 12px;line-height:1.5;}
+      #banScreen .ac-reply{display:flex;align-items:center;gap:8px;background:#161616;
+        border:1px solid #333;border-left:3px solid #ff9800;padding:7px 10px;margin-top:10px;
+        font-size:12.5px;color:#c3c3c3;text-align:left;}
+      #banScreen .ac-reply span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+        white-space:nowrap;}
+      #banScreen .ac-reply button{background:none;border:none;color:#8d8d8d;cursor:pointer;
+        font-size:14px;padding:0 4px;font-family:inherit;}
+      #banScreen .ac-rbtn{background:none;border:none;color:#6f6f6f;cursor:pointer;
+        font-size:11px;font-family:inherit;padding:0;text-decoration:underline;}
+      #banScreen .ac-rbtn:hover{color:#ff9800;}
+      #banScreen .ac-closed{background:#161616;border:1px solid #333;padding:11px 13px;
+        margin-top:10px;font-size:13px;color:#9a9a9a;line-height:1.5;text-align:left;}
       #banScreen .ban-foot{margin-top:18px;padding-top:18px;border-top:1px solid #333;}
       #banScreen .ban-discord{display:inline-flex;align-items:center;gap:9px;background:#5865f2;
         color:#fff;text-decoration:none;font-size:14px;font-weight:bold;padding:11px 20px;
@@ -904,25 +940,276 @@ function showBanScreen(info) {
 
   // ── On-site appeal: the IP block only refuses sockets, so this HTTP POST
   // still reaches the server. Keyed server-side by the banned IP. ──
-  const showAppealDone = (text) => {
+  const deviceIdOf = () =>
+    (window.TalkomaticIdentity && window.TalkomaticIdentity.deviceId) ||
+    undefined;
+
+  // Everything below draws the conversation with staff. It is polled rather
+  // than pushed: while blocked, this browser's socket is refused at the door,
+  // so HTTP is the only channel there is.
+  let appealState = null;
+  let appealReplyTo = null;
+  let appealPollTimer = null;
+
+  const fmtClock = (ts) => {
+    try {
+      return new Date(ts).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch (_) {
+      return "";
+    }
+  };
+
+  function renderAppealChat() {
     const wrap = document.getElementById("banAppealWrap");
-    if (!wrap) return;
+    if (!wrap || !appealState || !appealState.has) return;
+    const d = appealState;
     wrap.textContent = "";
+
     const h = document.createElement("div");
     h.className = "ban-appeal-h";
     const hi = document.createElement("i");
     hi.className = "fas fa-scale-balanced";
     h.appendChild(hi);
-    h.appendChild(document.createTextNode(" Appeal this ban"));
-    const done = document.createElement("div");
-    done.className = "ban-appeal-done";
-    const ic = document.createElement("i");
-    ic.className = "fas fa-circle-check";
-    done.appendChild(ic);
-    done.appendChild(document.createTextNode(text));
+    h.appendChild(document.createTextNode(" Your appeal"));
     wrap.appendChild(h);
-    wrap.appendChild(done);
+
+    const p = document.createElement("p");
+    p.className = "ban-appeal-p";
+    p.textContent =
+      d.status === "resolved"
+        ? d.resolution === "lifted"
+          ? "This appeal was accepted."
+          : "This appeal was declined."
+        : d.locked
+          ? "Staff ended this chat. Your appeal is still being reviewed."
+          : "A staff member will read this and may ask you questions. Answer here.";
+    wrap.appendChild(p);
+
+    const log = document.createElement("div");
+    log.className = "ac-log";
+    for (const m of d.messages || []) {
+      if (m.from === "system") {
+        const s = document.createElement("div");
+        s.className = "ac-sys";
+        s.textContent = m.text;
+        log.appendChild(s);
+        continue;
+      }
+      const row = document.createElement("div");
+      row.className = "ac-m " + (m.from === "user" ? "user" : "staff");
+      const who = document.createElement("div");
+      who.className = "ac-who";
+      who.textContent = m.from === "user" ? "You" : m.by || "Staff";
+      row.appendChild(who);
+      const b = document.createElement("div");
+      b.className = "ac-b";
+      if (m.reply) {
+        const q = document.createElement("span");
+        q.className = "ac-q";
+        q.textContent =
+          (m.reply.from === "user" ? "You" : m.reply.by || "Staff") +
+          ": " +
+          m.reply.text;
+        b.appendChild(q);
+      }
+      b.appendChild(document.createTextNode(m.text || ""));
+      row.appendChild(b);
+      const foot = document.createElement("div");
+      foot.className = "ac-t";
+      foot.textContent = fmtClock(m.ts);
+      // Answering a specific question is the difference between a chat and
+      // two people talking past each other.
+      if (d.canWrite && m.from === "staff") {
+        foot.appendChild(document.createTextNode("  "));
+        const rb = document.createElement("button");
+        rb.className = "ac-rbtn";
+        rb.type = "button";
+        rb.textContent = "reply";
+        rb.addEventListener("click", () => {
+          appealReplyTo = { id: m.id, by: m.by || "Staff", text: m.text || "" };
+          renderAppealChat();
+          const ta = document.getElementById("banAppealText");
+          if (ta) ta.focus();
+        });
+        foot.appendChild(rb);
+      }
+      row.appendChild(foot);
+      log.appendChild(row);
+    }
+    wrap.appendChild(log);
+    log.scrollTop = log.scrollHeight;
+
+    if (!d.canWrite) {
+      const closed = document.createElement("div");
+      closed.className = "ac-closed";
+      closed.textContent =
+        d.status === "resolved"
+          ? "This appeal is closed. If your ban is still in place after a decision, the Discord link below is the last stop."
+          : "You cannot send any more messages here. Staff will still read what you have written.";
+      wrap.appendChild(closed);
+      return;
+    }
+
+    if (appealReplyTo) {
+      const r = document.createElement("div");
+      r.className = "ac-reply";
+      const s = document.createElement("span");
+      s.textContent =
+        "Replying to " + appealReplyTo.by + ": " + appealReplyTo.text;
+      r.appendChild(s);
+      const x = document.createElement("button");
+      x.type = "button";
+      x.textContent = "×";
+      x.title = "Cancel the reply";
+      x.addEventListener("click", () => {
+        appealReplyTo = null;
+        renderAppealChat();
+      });
+      r.appendChild(x);
+      wrap.appendChild(r);
+    }
+
+    const ta = document.createElement("textarea");
+    ta.id = "banAppealText";
+    ta.maxLength = 1000;
+    ta.placeholder = "Write a reply...";
+    ta.style.marginTop = "10px";
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendAppealMessage();
+      }
+    });
+    wrap.appendChild(ta);
+
+    const row = document.createElement("div");
+    row.className = "ban-appeal-row";
+    const btn = document.createElement("button");
+    btn.id = "banAppealSend";
+    const bi = document.createElement("i");
+    bi.className = "fas fa-paper-plane";
+    btn.appendChild(bi);
+    btn.appendChild(document.createTextNode(" Send"));
+    btn.addEventListener("click", sendAppealMessage);
+    row.appendChild(btn);
+    const msg = document.createElement("span");
+    msg.className = "ban-appeal-msg";
+    msg.id = "banAppealMsg";
+    row.appendChild(msg);
+    if (d.left <= 5) {
+      const left = document.createElement("span");
+      left.className = "ban-appeal-msg";
+      left.style.color = "#8d8d8d";
+      left.textContent = d.left + " message" + (d.left === 1 ? "" : "s") + " left";
+      row.appendChild(left);
+    }
+    wrap.appendChild(row);
+  }
+
+  const APPEAL_ERRORS = {
+    locked: "Staff ended this chat. You cannot send any more messages.",
+    closed: "This appeal has already been decided.",
+    too_short: "Please write a little more.",
+    too_many: "You have sent the maximum number of messages on this appeal.",
+    slow_down: "One moment - wait a few seconds between messages.",
+    no_appeal: "Your appeal could not be found. Try refreshing the page.",
   };
+
+  function sendAppealMessage() {
+    const ta = document.getElementById("banAppealText");
+    const msgEl = document.getElementById("banAppealMsg");
+    const btn = document.getElementById("banAppealSend");
+    if (!ta || !btn) return;
+    const text = (ta.value || "").trim();
+    if (msgEl) {
+      msgEl.className = "ban-appeal-msg";
+      msgEl.textContent = "";
+    }
+    if (text.length < 2) {
+      if (msgEl) {
+        msgEl.classList.add("err");
+        msgEl.textContent = "Please write a little more.";
+      }
+      return;
+    }
+    btn.disabled = true;
+    fetch("/api/v1/appeal/message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        message: text,
+        deviceId: deviceIdOf(),
+        replyTo: appealReplyTo ? appealReplyTo.id : undefined,
+      }),
+    })
+      .then((r) => r.json().catch(() => ({ ok: false })))
+      .then((d) => {
+        if (d && d.ok && d.has) {
+          appealState = d;
+          appealReplyTo = null;
+          renderAppealChat();
+          return;
+        }
+        btn.disabled = false;
+        if (msgEl) {
+          msgEl.classList.add("err");
+          msgEl.textContent =
+            APPEAL_ERRORS[d && d.code] || "Could not send that. Try again.";
+        }
+        if (d && (d.code === "locked" || d.code === "closed")) pollAppeal();
+      })
+      .catch(() => {
+        btn.disabled = false;
+        if (msgEl) {
+          msgEl.classList.add("err");
+          msgEl.textContent = "Could not send that. Try again.";
+        }
+      });
+  }
+
+  function pollAppeal() {
+    if (document.hidden) return;
+    const q = deviceIdOf() ? "?deviceId=" + encodeURIComponent(deviceIdOf()) : "";
+    fetch("/api/v1/appeal" + q, {
+      credentials: "same-origin",
+      cache: "no-store",
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d || !d.ok || !d.has) return;
+        // Only redraw when something actually changed, so a reply being typed
+        // is never wiped by a poll landing mid-sentence.
+        const sig =
+          d.messages.length + "|" + d.status + "|" + (d.locked ? 1 : 0);
+        const old = appealState
+          ? appealState.messages.length +
+            "|" +
+            appealState.status +
+            "|" +
+            (appealState.locked ? 1 : 0)
+          : "";
+        appealState = d;
+        if (sig !== old) {
+          const ta = document.getElementById("banAppealText");
+          const draft = ta ? ta.value : "";
+          renderAppealChat();
+          const ta2 = document.getElementById("banAppealText");
+          if (ta2 && draft) ta2.value = draft;
+        }
+      })
+      .catch(() => {});
+  }
+
+  function startAppealChat(payload) {
+    appealState = payload;
+    appealReplyTo = null;
+    renderAppealChat();
+    if (!appealPollTimer) appealPollTimer = setInterval(pollAppeal, 10000);
+  }
   const sendBtn = document.getElementById("banAppealSend");
   if (sendBtn)
     sendBtn.addEventListener("click", () => {
@@ -940,25 +1227,16 @@ function showBanScreen(info) {
       sendBtn.disabled = true;
       const prev = sendBtn.innerHTML;
       sendBtn.textContent = "Sending...";
-      const deviceId =
-        (window.TalkomaticIdentity && window.TalkomaticIdentity.deviceId) ||
-        undefined;
       fetch("/api/v1/appeal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ message: text, deviceId }),
+        body: JSON.stringify({ message: text, deviceId: deviceIdOf() }),
       })
         .then((r) => r.json().catch(() => ({ ok: false })))
         .then((d) => {
-          if (d && d.ok)
-            return showAppealDone(
-              "Appeal submitted. A staff member will review it. You do not need to send it again.",
-            );
-          if (d && d.code === "already")
-            return showAppealDone(
-              "You already have an appeal under review. Please wait for staff to respond.",
-            );
+          // Filed, or one was already open: either way this becomes the chat.
+          if (d && (d.ok || d.code === "already")) return pollIntoChat(true);
           sendBtn.disabled = false;
           sendBtn.innerHTML = prev;
           msgEl.classList.add("err");
@@ -976,6 +1254,31 @@ function showBanScreen(info) {
           msgEl.textContent = "Could not send your appeal. Please try again.";
         });
     });
+
+  // Fetch the thread and switch the panel over to the conversation. On the
+  // first load there may not be one yet, and that is not an error - the form
+  // simply stays as it is.
+  function pollIntoChat(justSent) {
+    const q = deviceIdOf() ? "?deviceId=" + encodeURIComponent(deviceIdOf()) : "";
+    return fetch("/api/v1/appeal" + q, {
+      credentials: "same-origin",
+      cache: "no-store",
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && d.ok && d.has) return startAppealChat(d);
+        if (justSent)
+          showAppealDone("Appeal submitted. A staff member will review it.");
+      })
+      .catch(() => {
+        if (justSent)
+          showAppealDone("Appeal submitted. A staff member will review it.");
+      });
+  }
+
+  // An appeal filed earlier (or in another tab) opens straight into the chat,
+  // so a moderator's question is not sitting unread behind a "submitted" note.
+  pollIntoChat(false);
 
   if (!permanent && info.expiry) {
     const tick = () => {

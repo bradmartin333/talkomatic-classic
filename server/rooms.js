@@ -808,6 +808,23 @@ function buildAppealsList(forDev) {
       banPermanent: !!ban.permanent,
       banExpiry: ban.expiry || 0,
       banAt: ban.ts || null,
+      // The conversation. An appeal is judged on what was said in it, so the
+      // board carries the whole thread rather than just the opening note.
+      locked: !!a.locked,
+      lockedBy: a.lockedBy || null,
+      messages: (a.messages || []).map((m) => ({
+        id: m.id,
+        ts: m.ts,
+        from: m.from,
+        by: m.by || null,
+        text: m.text || "",
+        reply: m.reply || null,
+      })),
+      // What staff need at a glance: is the ball in our court?
+      waiting:
+        a.status === "open" &&
+        (a.messages || []).length > 0 &&
+        a.messages[a.messages.length - 1].from === "user",
     };
   });
 }
@@ -896,6 +913,35 @@ function announceAppeal(id) {
     },
   });
   broadcastAppealsList();
+  broadcastAppeal(id);
+}
+
+// The appellant wrote again. This does NOT raise another queue card - one
+// appeal is one thing to deal with, and a conversation that files a card per
+// line would bury everything else. The boards update live and anybody with the
+// chat open sees it arrive.
+function announceAppealMessage(id) {
+  broadcastAppealsList();
+  broadcastAppeal(id);
+  const a = appeals.get(id);
+  if (!a || !io()) return;
+  const text = `${a.name || "A banned user"} replied to their appeal.`;
+  for (const [, s] of io().sockets.sockets)
+    if (s.isDev || (s.isMod && (s.modLevel || 2) >= 2))
+      s.emit("staff notice", { text });
+}
+
+// One appeal, pushed to every staff socket that has it open (the Desk's
+// appeal view, or a dashboard card).
+function broadcastAppeal(id) {
+  if (!io()) return;
+  const a = appeals.get(id);
+  if (!a) return;
+  for (const [, s] of io().sockets.sockets) {
+    if (!s.connected || s.deskAppealId !== id) continue;
+    if (!(s.isDev || (s.isMod && (s.modLevel || 2) >= 2))) continue;
+    s.emit("staff appeal", buildAppealsList(!!s.isDev).find((x) => x.id === id));
+  }
 }
 
 // The latest mod-application status for a device, for the lobby "Check status"
@@ -6378,6 +6424,97 @@ function registerSocketHandlers(opts) {
       }),
     );
 
+    // Follow one appeal's conversation. The Desk opens a chat this way; the
+    // dashboard uses it so an open card updates as the user types back.
+    socket.on(
+      "staff appeal open",
+      safe(async (data) => {
+        if (!requireModLevel(socket, 2)) return;
+        const id = Number(data?.id) || null;
+        socket.deskAppealId = id;
+        if (!id) return;
+        const row = buildAppealsList(!!socket.isDev).find((x) => x.id === id);
+        if (row) socket.emit("staff appeal", row);
+      }),
+    );
+
+    // Answer the person appealing. This is the whole point of the change: a
+    // ban is much easier to judge once you have asked what happened.
+    socket.on(
+      "staff appeal reply",
+      safe(async (data) => {
+        if (!requireModLevel(socket, 2)) return;
+        const id = Number(data?.id);
+        const a = appeals.get(id);
+        if (!a)
+          return socket.emit(
+            "error",
+            createErrorResponse(ERROR_CODES.BAD_REQUEST, "No such appeal."),
+          );
+        if (a.status !== "open")
+          return socket.emit(
+            "error",
+            createErrorResponse(
+              ERROR_CODES.BAD_REQUEST,
+              "That appeal is already decided.",
+            ),
+          );
+        const text = sanitizeMessage(
+          typeof data?.text === "string" ? data.text : "",
+        ).slice(0, 1000);
+        const r = appeals.staffReply(
+          a,
+          text,
+          socket.staffLabel || (socket.isDev ? "dev" : "mod"),
+          Number(data?.replyTo) || null,
+        );
+        if (!r.ok)
+          return socket.emit(
+            "error",
+            createErrorResponse(ERROR_CODES.BAD_REQUEST, "Write something first."),
+          );
+        logStaff(
+          socket,
+          "reply to appeal",
+          { name: a.name || "?", id: a.userId || a.deviceId || "-" },
+          "-",
+          text.slice(0, 120),
+        );
+        broadcastAppealsList();
+        broadcastAppeal(id);
+      }),
+    );
+
+    // End the chat without deciding. For the case the whole feature invites:
+    // somebody who answers every question with another twenty messages.
+    socket.on(
+      "staff appeal lock",
+      safe(async (data) => {
+        if (!requireModLevel(socket, 2)) return;
+        const id = Number(data?.id);
+        const a = appeals.get(id);
+        if (!a)
+          return socket.emit(
+            "error",
+            createErrorResponse(ERROR_CODES.BAD_REQUEST, "No such appeal."),
+          );
+        const locked = data?.locked !== false;
+        appeals.setLocked(
+          id,
+          locked,
+          socket.staffLabel || (socket.isDev ? "dev" : "mod"),
+        );
+        logStaff(
+          socket,
+          locked ? "end appeal chat" : "reopen appeal chat",
+          { name: a.name || "?", id: a.userId || a.deviceId || "-" },
+          "-",
+        );
+        broadcastAppealsList();
+        broadcastAppeal(id);
+      }),
+    );
+
     // Resolve an appeal. "lift" unblocks the IP (dev-only, like every other IP
     // unblock) and marks the appeal accepted; "dismiss" just closes it (full
     // mods + devs). Either way the board refreshes live for every open dash.
@@ -6419,15 +6556,22 @@ function registerSocketHandlers(opts) {
           appeals.resolveOpenForIp(a.ip, "lifted", reviewer);
           logStaff(socket, "lift ban (appeal)", a.name || a.ip, "-");
         } else {
-          appeals.resolve(id, "dismissed", reviewer);
+          // Whatever the moderator types goes to the user as the last line of
+          // the conversation, so a decision is never just a closed door.
+          const note = sanitizeMessage(
+            typeof data?.note === "string" ? data.note : "",
+          ).slice(0, 300);
+          appeals.resolve(id, "dismissed", reviewer, note || null);
           logStaff(
             socket,
             "dismiss appeal",
             { name: a.name || "?", id: a.userId || a.deviceId || "-" },
             "-",
+            note || undefined,
           );
         }
         broadcastAppealsList();
+        broadcastAppeal(id);
         stampQueueItem(
           socket,
           "appeal",
@@ -7928,4 +8072,5 @@ module.exports = {
   joinRoom,
   roomCapacity,
   announceAppeal,
+  announceAppealMessage,
 };

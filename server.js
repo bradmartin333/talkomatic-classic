@@ -252,7 +252,11 @@ app.use(
         // never eat the rate budget: if it 429s, the banned user can't detect an
         // unban, and a 429 body used to be misread client-side as "unbanned",
         // spawning a reload loop. Exempt this cheap read.
-        url.endsWith("/ban-status")
+        url.endsWith("/ban-status") ||
+        // Same reasoning for the appeal conversation: polling it is the banned
+        // user's only way to see a moderator's reply, and a 429 would silently
+        // freeze the chat. Reads only - posting a message stays limited.
+        (req.method === "GET" && url.endsWith("/appeal"))
       );
     },
     message: {
@@ -856,9 +860,85 @@ app.post(`${API}/appeal`, (req, res) => {
     } catch (e) {
       console.error("announceAppeal failed:", e);
     }
-    res.json({ ok: true });
+    res.json({ ok: true, id: result.id });
   } catch (e) {
     console.error("appeal route error:", e);
+    res.status(500).json({ ok: false, code: "server_error" });
+  }
+});
+
+// The appellant's own view of their appeal: the conversation, whether they can
+// still write, and how it was decided. Polled by the ban screen, which has no
+// socket to push to it. Never exposes anything about the moderator beyond the
+// label they already sign their messages with.
+function appealForBrowser(req) {
+  const ip = getClientIP(req);
+  const rawDevice =
+    typeof req.query?.deviceId === "string"
+      ? req.query.deviceId
+      : typeof req.body?.deviceId === "string"
+        ? req.body.deviceId
+        : req.session?.did || "";
+  const deviceId = /^[a-f0-9-]{8,64}$/i.test(rawDevice)
+    ? rawDevice.toLowerCase()
+    : null;
+  return { ip, deviceId, appeal: appeals.forUser(ip, deviceId) };
+}
+
+function appealPayload(a) {
+  if (!a) return { ok: true, has: false };
+  return {
+    ok: true,
+    has: true,
+    id: a.id,
+    at: a.at,
+    status: a.status,
+    resolution: a.resolution || null,
+    locked: !!a.locked,
+    canWrite: a.status === "open" && !a.locked,
+    left: Math.max(
+      0,
+      appeals.USER_MSG_CAP -
+        (a.messages || []).filter((m) => m.from === "user").length,
+    ),
+    messages: (a.messages || []).map((m) => ({
+      id: m.id,
+      ts: m.ts,
+      from: m.from,
+      by: m.from === "staff" ? m.by || "staff" : null,
+      text: m.text || "",
+      reply: m.reply || null,
+    })),
+  };
+}
+
+app.get(`${API}/appeal`, (req, res) => {
+  try {
+    res.json(appealPayload(appealForBrowser(req).appeal));
+  } catch (e) {
+    console.error("appeal read error:", e);
+    res.status(500).json({ ok: false, code: "server_error" });
+  }
+});
+
+app.post(`${API}/appeal/message`, (req, res) => {
+  try {
+    const { appeal } = appealForBrowser(req);
+    if (!appeal) return res.json({ ok: false, code: "no_appeal" });
+    const text = sanitizeMessage(
+      typeof req.body?.message === "string" ? req.body.message : "",
+    ).slice(0, 1000);
+    const replyTo = Number(req.body?.replyTo) || null;
+    const r = appeals.userReply(appeal, text, replyTo);
+    if (!r.ok) return res.json(r);
+    try {
+      rooms.announceAppealMessage(appeal.id);
+    } catch (e) {
+      console.error("announceAppealMessage failed:", e);
+    }
+    res.json(appealPayload(appeal));
+  } catch (e) {
+    console.error("appeal message error:", e);
     res.status(500).json({ ok: false, code: "server_error" });
   }
 });
