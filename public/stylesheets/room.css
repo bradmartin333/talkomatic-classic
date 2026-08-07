@@ -17,6 +17,9 @@
   --tk-chat-text: #ffa500;
   --tk-chat-bg: #000000;
   --tk-input-bg: #ffffff;
+  --tk-font-main: "Inter", talkoSS, Arial, sans-serif;
+  --tk-font-heading: "Inter", talkoSS, Arial, sans-serif;
+  --tk-font-chat: "Inter", talkoText, Arial, sans-serif;
 }
 
 /* =============================================================================
@@ -270,7 +273,7 @@ html {
   padding: 5px;
   border: none;
   font-family: talkoText, Arial, sans-serif;
-  font-size: 18px;
+  font-size: 24px;
   resize: none;
   box-sizing: border-box;
   background-color: var(--tk-card);

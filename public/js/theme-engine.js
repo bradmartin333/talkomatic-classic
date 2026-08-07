@@ -31,7 +31,7 @@
     { id: "cream-text", label: "Strip text", group: "Panels", def: "#000000", hint: "Text on the strips" },
     { id: "chat-text", label: "Typing text", group: "Chat", def: "#ffa500", hint: "Text in the chat boxes", pages: ["room"] },
     { id: "chat-bg", label: "Typing background", group: "Chat", def: "#000000", hint: "Chat box background", pages: ["room"] },
-    { id: "chat-size", label: "Chat text size", group: "Chat", kind: "range", def: 18, min: 12, max: 28, unit: "px", hint: "How big chat text is in rooms", pages: ["room"] },
+    { id: "chat-size", label: "Chat text size", group: "Chat", kind: "range", def: 24, min: 12, max: 28, unit: "px", hint: "How big chat text is in rooms", pages: ["room"] },
     { id: "radius", label: "Corner roundness", group: "Shape", kind: "range", def: 5, min: 0, max: 24, unit: "px", hint: "How rounded buttons and cards are" },
     { id: "border-width", label: "Border thickness", group: "More shape", kind: "range", def: 1, min: 1, max: 4, unit: "px", hint: "Outline weight on tiles and cards", adv: true },
     { id: "blur", label: "Glass blur", group: "More shape", kind: "range", def: 14, min: 4, max: 30, unit: "px", hint: "Blur strength of the Glass effect", adv: true },
