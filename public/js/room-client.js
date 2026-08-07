@@ -2565,17 +2565,6 @@ function createUserRow(user, container) {
       info.appendChild(staffBtn);
     }
   }
-  // Report flag is available to everyone (staff included) on other users' rows,
-  // so anyone can flag a problem user, a bad room, or even a misbehaving mod.
-  if (user.id !== currentUserId) {
-    const reportBtn = document.createElement("button");
-    reportBtn.className = "report-button";
-    reportBtn.innerHTML = '<i class="fas fa-flag"></i>';
-    reportBtn.title = "Report to staff";
-    reportBtn.addEventListener("click", () => openReportPrompt(user));
-    info.appendChild(reportBtn);
-  }
-
   // Chat input wrapper + contenteditable
   const wrapper = document.createElement("div");
   wrapper.className = "chat-input-wrapper";
@@ -3703,61 +3692,6 @@ function makeStaffConcealedMarker(user) {
   icon.className = user.isVanished ? "fas fa-ghost" : "fas fa-eye-slash";
   span.appendChild(icon);
   return span;
-}
-
-// Report a user to staff. Available to normal users (staff act via the gear).
-async function openReportPrompt(user) {
-  const name = user.username || "user";
-  const cats = [
-    { value: "spam", label: "Spam or flooding" },
-    { value: "harassment", label: "Harassment or bullying" },
-    { value: "hate", label: "Hate speech or slurs" },
-    { value: "nsfw", label: "NSFW or inappropriate content" },
-    { value: "impersonation", label: "Impersonation" },
-    { value: "threats", label: "Threats or violence" },
-    { value: "modabuse", label: "Moderator abuse" },
-    { value: "other", label: "Other" },
-  ];
-  if (!window.StaffUI) {
-    const reason = window.prompt(
-      "Report " + name + " to staff. What is wrong?",
-    );
-    if (reason != null)
-      socket.emit("user report", {
-        targetUserId: user.id,
-        category: "other",
-        reason: reason,
-      });
-    return;
-  }
-  const r = await StaffUI.prompt({
-    title: "Report " + name,
-    icon: '<i class="fas fa-flag"></i>',
-    subtitle: "Sent privately to the moderators",
-    fields: [
-      {
-        name: "category",
-        label: "What is wrong?",
-        type: "select",
-        value: "spam",
-        options: cats,
-      },
-      {
-        name: "reason",
-        label: "Details (optional)",
-        type: "textarea",
-        maxLength: 300,
-        placeholder: "Anything that helps staff understand.",
-      },
-    ],
-    confirmText: "Send report",
-  });
-  if (r)
-    socket.emit("user report", {
-      targetUserId: user.id,
-      category: r.category,
-      reason: r.reason,
-    });
 }
 
 async function openUserNoteDialog(user, { viewOnly = true } = {}) {
@@ -4959,8 +4893,6 @@ window.addEventListener("hashchange", () => {
     .invite-trophy{height:15px;width:auto;margin-right:5px;flex:0 0 auto;vertical-align:middle;}
     .staff-action-button{background:none;border:none;cursor:pointer;font-size:13px;margin-left:4px;opacity:.75;}
     .staff-action-button:hover{opacity:1;}
-    .report-button{background:none;border:none;cursor:pointer;font-size:12px;margin-left:4px;opacity:.5;color:inherit;}
-    .report-button:hover{opacity:1;}
     .staff-nav-btn{display:flex;align-items:center;gap:6px;margin-right:8px;padding:10px 12px;border:1px solid #ff9800;border-radius:4px;background:#000;color:#ff9800;cursor:pointer;font-size:12px;font-weight:bold;font-family:inherit;transition:all .2s ease;}
     .staff-nav-btn:hover{background:#ff9800;color:#000;}
     #roomStaffFlags{display:flex;gap:6px;align-items:center;margin-left:8px;}
