@@ -12,7 +12,7 @@ const WordFilter = require("../public/js/word-filter.js");
 const CONFIG = {
   LIMITS: {
     MAX_USERNAME_LENGTH: 15,
-    MAX_AFK_TIME: 180000,
+    MAX_AFK_TIME: 600000,
     MAX_LOCATION_LENGTH: 20,
     MAX_ROOM_NAME_LENGTH: 25,
     MAX_MESSAGE_LENGTH: 5000,
@@ -83,7 +83,7 @@ const CONFIG = {
     // Slow mode: broadcast cadence for rooms a staffer has throttled. Keystrokes
     // are still captured; the room just sees updates less frequently.
     SLOW_MODE_BATCH_INTERVAL: 1000,
-    AFK_WARNING_TIME: 150000,
+    AFK_WARNING_TIME: 300000,
     BOT_BLOCK_DURATION: 300000,
     BOT_TOKEN_EXPIRY: 2592000000,
     BOT_TOKEN_CLEANUP_INTERVAL: 86400000,
@@ -203,7 +203,6 @@ const state = {
   maintenance: false, // blocks new room creation and joins for non-staff
   lobbyTicker: "", // editable banner shown at the top of the lobby
   applicationsOpen: true, // when false, new mod applications are not accepted
-  puzzleEnabled: true, // when false, the in-room puzzle app is hidden + blocked for non-staff
 
   // Caches
   normalizeCache: new Map(),

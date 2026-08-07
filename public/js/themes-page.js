@@ -70,7 +70,7 @@
       css: (existing && existing.css) || "",
     };
     localStorage.setItem(KEY, JSON.stringify(next));
-    toast('"' + name + '" applied! Open the lobby to see it everywhere.');
+    toast('"' + name + '" applied!');
     if (window.ThemeEngine) window.ThemeEngine.revert();
   }
 

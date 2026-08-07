@@ -108,9 +108,6 @@
     "border-radius:5px;padding:7px;font-size:11px;font-family:monospace;box-sizing:border-box;resize:none}" +
     ".tked-io-row{display:flex;gap:8px;margin-top:6px}" +
     ".tked-io-row .tked-btn{flex:none;padding:7px 14px}" +
-    ".tked-scope{background:#0d0d0d;border-top:1px solid #333;padding:8px 14px;font-size:10.5px;" +
-    "color:#8f8f8f;flex-shrink:0;line-height:1.45}" +
-    ".tked-scope b{color:#ff9800}" +
     "@media (max-width:640px){" +
     ".tked-drawer{top:auto;left:0;right:0;bottom:0;width:100%;max-height:58vh;border-left:none;" +
     "border-top:2px solid #ff9800;border-radius:14px 14px 0 0}" +
@@ -171,9 +168,7 @@
     // Header with hold-to-peek
     var head = el("div", "tked-head");
     var headT = el("div", "tked-head-t");
-    headT.appendChild(
-      el("div", "tked-title", "Theme Editor - " + (PAGE === "room" ? "Rooms" : "Lobby")),
-    );
+    headT.appendChild(el("div", "tked-title", "Theme Editor"));
     headT.appendChild(
       el("div", "tked-subtitle", "Changes preview live. Hold the eye to see the page."),
     );
@@ -275,10 +270,10 @@
     var advWrap = el("div");
     advWrap.style.display = "none";
     buildGroups(advWrap, groupIcons, function (t) { return !!t.adv; });
-    var secCss = section(advWrap, "fa-code", "Custom CSS (both pages)");
+    var secCss = section(advWrap, "fa-code", "Custom CSS");
     var cssHint = el("div", "tked-hint");
     cssHint.textContent =
-      "For power users: raw CSS applied on the lobby AND rooms, on this device only. Not included when you publish a theme.";
+      "For power users: raw CSS applied on this device only. Not included when you publish a theme.";
     secCss.appendChild(cssHint);
     cssBox = document.createElement("textarea");
     cssBox.className = "tked-css";
@@ -296,18 +291,6 @@
     });
     body.appendChild(advToggle);
     body.appendChild(advWrap);
-
-    // Copy look across pages
-    var copyBtn = el(
-      "button",
-      "tked-adv-toggle",
-      PAGE === "room" ? "Use this look in the lobby too" : "Use this look in rooms too",
-    );
-    copyBtn.addEventListener("click", function () {
-      working[PAGE === "room" ? "lobby" : "room"] = clone(profile());
-      toast("Copied. Press Save theme to keep it.");
-    });
-    body.appendChild(copyBtn);
 
     // Share JSON area
     ioArea = el("div", "tked-io");
@@ -361,10 +344,6 @@
       if (ioArea.classList.contains("show"))
         ioArea._ta.value = JSON.stringify(working);
     });
-    var publish = el("button", "tked-btn");
-    publish.innerHTML = '<i class="fas fa-upload"></i> Publish';
-    publish.title = "Share this theme in the public Themes library";
-    publish.addEventListener("click", publishTheme);
     var reset = el("button", "tked-btn danger");
     reset.innerHTML = '<i class="fas fa-rotate-left"></i> Reset';
     reset.addEventListener("click", function () {
@@ -374,22 +353,14 @@
       toast("This page is back to classic");
     });
     actions.appendChild(shareJson);
-    actions.appendChild(publish);
     actions.appendChild(reset);
     foot.appendChild(save);
     foot.appendChild(actions);
-
-    var scope = el("div", "tked-scope");
-    scope.innerHTML =
-      PAGE === "room"
-        ? "This styles <b>rooms</b> only. To style the lobby, use <b>Customize</b> in the lobby menu."
-        : "This styles the <b>lobby</b> only. To style rooms: open a room, press <b>Apps</b> (top right), then <b>Theme Editor</b>.";
 
     drawer.appendChild(head);
     drawer.appendChild(body);
     drawer.appendChild(ioArea);
     drawer.appendChild(foot);
-    drawer.appendChild(scope);
     document.body.appendChild(drawer);
 
     document.addEventListener("keydown", function (e) {
@@ -480,7 +451,7 @@
     });
     if (effectSel) effectSel.value = profile().effect || "";
     Object.keys(fontSels).forEach(function (slot) {
-      fontSels[slot].value = (profile().fonts || {})[slot] || "";
+      fontSels[slot].value = (profile().fonts || {})[slot] || "Inter";
     });
     if (cssBox) cssBox.value = working.css || "";
   }
