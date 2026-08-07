@@ -29,15 +29,15 @@ Talkomatic was created in 1973 on the PLATO system at the University of Illinois
 - **Live typing**: characters appear for everyone the moment you press them
 - **One room**: sign in with a name and you're straight into it — no room list, no room creation
 - **Discord avatars**: optionally show your Discord profile picture next to your name
-- **Built-in apps**: collaborative jigsaw puzzle, a shared piano, and a collaborative whiteboard
+- **Built-in apps**: a shared piano and a collaborative whiteboard
 - **Themes**: swappable full-page themes, plus community themes
 - **Bot API**: token-based access for bots, with REST and Socket.IO ([docs](docs/api.md))
 
 ## Differences from upstream
 
-Everyone who reaches this app is already someone you've let in (at the network/auth layer), so none of upstream's trust-and-safety tooling has a job to do here. Removed: staff roles and the mod dashboard, ban appeals, the audit log, IP bans, warnings, the shared-key leak watch, moderator applications, the invite system, user reports, the suggestion board, and NSFW image scanning (which pulled in `@tensorflow/tfjs`). The lobby/room-list UI is gone too — everyone lands in the same persistent room, created automatically on first boot and exempt from the usual empty-room cleanup, so it never expires.
+Everyone who reaches this app is already someone you've let in (at the network/auth layer), so none of upstream's trust-and-safety tooling has a job to do here. Removed: staff roles and the mod dashboard, ban appeals, the audit log, IP bans, warnings, the shared-key leak watch, moderator applications, the invite system, user reports, the suggestion board, and NSFW image scanning (which pulled in `@tensorflow/tfjs`). The lobby/room-list UI is gone too — everyone lands in the same persistent room, created automatically on first boot and exempt from the usual empty-room cleanup, so it never expires. WatchParty, the collaborative puzzle, and the mini games panel have also been removed.
 
-The mini-games, whiteboard, piano, puzzle, and themes are untouched.
+The whiteboard, piano, and themes are untouched.
 
 ## Tech
 

@@ -141,9 +141,9 @@ function applyWordFilter(text) {
   return filterTextPreservingEmotes(text);
 }
 
-// Anything else on the page that renders somebody else's words (the mini games
-// panel, for one) goes through here, so one toggle covers the whole site
-// instead of each panel deciding on its own.
+// Anything else on the page that renders somebody else's words goes through
+// here, so one toggle covers the whole site instead of each panel deciding on
+// its own.
 const filterWatchers = new Set();
 window.TalkomaticFilter = {
   enabled: () => wordFilterEnabled,
@@ -1374,15 +1374,6 @@ function hydrateVisibleEmoteImages(dropdown) {
 // ── 7. APP DIRECTORY ────────────────────────────────────────────────────────
 
 const APPS_DATA = {
-  watchparty: {
-    name: "WatchParty",
-    description: "Watch YouTube videos together",
-    icon: "https://watchparty.talkomatic.co/images/logo.png",
-    iconClass: "watchparty",
-    status: "available",
-    url: "https://watchparty.talkomatic.co/",
-    openInNewTab: true,
-  },
   infiniteboard: {
     name: "Talkoboard",
     description: "Draw together in real-time",
@@ -1403,16 +1394,6 @@ const APPS_DATA = {
     openInNewTab: false,
     action: "piano",
   },
-  puzzle: {
-    name: "Puzzle",
-    description: "Solve a jigsaw together from any picture",
-    icon: "🧩",
-    iconClass: "placeholder",
-    status: "available",
-    url: null,
-    openInNewTab: false,
-    action: "puzzle",
-  },
   themeEditor: {
     name: "Theme Editor",
     description: "Recolor Talkomatic your way, no CSS needed",
@@ -1423,19 +1404,8 @@ const APPS_DATA = {
     openInNewTab: false,
     action: "themeEditor",
   },
-  minigames: {
-    name: "Mini Games",
-    description: "Tic Tac Toe, Connect Four, Word Race, Draw & Guess",
-    icon: "\uD83C\uDFAE",
-    iconClass: "placeholder",
-    status: "available",
-    url: null,
-    openInNewTab: false,
-    action: "games",
-  },
 };
 let appDirectoryDropdown = null;
-let puzzleAppEnabled = true; // flipped by the "puzzle state" event from a dev toggle
 
 function createAppDirectoryDropdown() {
   if (appDirectoryDropdown) appDirectoryDropdown.remove();
@@ -1448,7 +1418,6 @@ function createAppDirectoryDropdown() {
   const grid = document.createElement("div");
   grid.className = "app-grid";
   Object.entries(APPS_DATA).forEach(([id, app]) => {
-    if (id === "puzzle" && !puzzleAppEnabled) return; // dev turned the puzzle off
     const item = document.createElement("div");
     item.className = `app-item ${app.status === "coming-soon" ? "disabled" : ""}`;
     const icon = document.createElement("div");
@@ -1483,12 +1452,8 @@ function createAppDirectoryDropdown() {
           openTalkoboard();
         } else if (app.action === "piano") {
           openPiano();
-        } else if (app.action === "puzzle") {
-          if (window.TalkomaticPuzzle) window.TalkomaticPuzzle.open();
         } else if (app.action === "themeEditor") {
           if (window.ThemeEditor) window.ThemeEditor.open();
-        } else if (app.action === "games") {
-          if (window.TalkomaticGames) window.TalkomaticGames.open();
         } else if (app.openInNewTab) {
           window.open(app.url, "_blank", "noopener,noreferrer");
         } else {
@@ -2342,17 +2307,6 @@ function renderDevContext() {
     }
   });
 }
-
-// A dev toggled the puzzle app on/off in the dashboard. Hide/show the tile and
-// close the puzzle if it just went away under a non-staff user.
-socket.on("puzzle state", (d) => {
-  puzzleAppEnabled = !d || d.enabled !== false;
-  if (!puzzleAppEnabled && window.TalkomaticPuzzle) window.TalkomaticPuzzle.close();
-  if (appDirectoryDropdown) {
-    appDirectoryDropdown.remove();
-    appDirectoryDropdown = null; // rebuilt from APPS_DATA on next open
-  }
-});
 
 socket.on("dev context", (ctx) => {
   devContext.clear();

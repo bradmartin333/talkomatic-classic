@@ -31,13 +31,6 @@ const {
   createIPBasedUser,
   validateObject,
 } = require("./security");
-const puzzle = require("./puzzle");
-const gamesFloor = require("./games");
-const gamesSocket = require("./games/socket");
-
-// Room text stashed while someone is sat at a mini game, put back when they
-// stand up so joining a game never eats what they were typing.
-const gamePrevText = new Map();
 
 // Effective capacity for a room: a per-room override (set by a dev inside the
 // room) wins over the global default, so raising one room to 50 never changes
@@ -127,7 +120,6 @@ function getBoardState(roomId) {
 
 function cleanupBoardState(roomId) {
   boardState.delete(roomId);
-  puzzle.destroyForRoom(roomId);
 }
 
 function finalizeBoardUserStroke(roomId, userId) {
@@ -425,7 +417,6 @@ async function pressureCleanup() {
     }
 
     state.rooms.delete(roomId);
-    gamesFloor.roomClosed(roomId);
     state.roomSoloSince.delete(roomId);
     state.roomLastChatActivity.delete(roomId);
     cleanupBoardState(roomId);
@@ -1085,7 +1076,6 @@ function startRoomDeletionTimer(roomId) {
     const room = state.rooms.get(roomId);
     if (room && room.users.length === 0) {
       state.rooms.delete(roomId);
-      gamesFloor.roomClosed(roomId);
       state.roomDeletionTimers.delete(roomId);
       state.roomSoloSince.delete(roomId);
       state.roomLastChatActivity.delete(roomId);
@@ -1139,8 +1129,6 @@ function setupAFKTimers(socket, userId) {
   if (socket.isDev || socket.isMod) return; // staff bypass AFK
   if (socket.boardOpen) return; // drawing on the board counts as active
   if (socket.pianoOpen) return; // playing the piano counts as active
-  // Sitting in a mini game is not idling, even if they never type in the room
-  if (gamesFloor.isPlaying(socket.roomId, userId)) return;
 
   state.afkWarningTimers.set(
     userId,
@@ -1383,10 +1371,6 @@ async function leaveRoom(socket, userId) {
       updateRoom(roomId);
       sendDevRoomContext(roomId);
       updateRoomSoloTracking(roomId);
-
-      // Drops their queue slots and forfeits any live match. Runs after the
-      // successor check above, so the lobby->room handoff does not trip it.
-      gamesFloor.userLeftRoom(roomId, userId);
 
       if (room.users.length === 0) startRoomDeletionTimer(roomId);
     }
@@ -1702,84 +1686,6 @@ let getBuildId = null;
 
 function registerSocketHandlers(opts) {
   if (opts && typeof opts.buildId === "function") getBuildId = opts.buildId;
-  // The game floor resolves players through the room roster, so a spectator or
-  // a stale socket can never hold a seat.
-  gamesFloor.init({
-    socketsInRoom(roomId) {
-      const out = [];
-      if (!io() || !roomId) return out;
-      for (const [, s] of io().sockets.sockets)
-        if (s.connected && s.roomId === roomId) out.push(s);
-      return out;
-    },
-    userIdOf: (s) => s.handshake?.session?.userId || null,
-    userInfo(roomId, userId) {
-      const room = state.rooms.get(roomId);
-      if (!room) return null;
-      const u = room.users.find((x) => x.id === userId);
-      if (!u) return null;
-      // Concealed staff read as ordinary players in games. A badge would out a
-      // hidden mod or a vanished dev to the whole room, which is the one thing
-      // hiding is for.
-      const concealed = !!(u.isHidden || u.isVanished);
-      let role = null;
-      if (!concealed && u.isDev) role = "dev";
-      else if (!concealed && u.isMod) role = (u.modLevel || 2) >= 2 ? "mod" : "jr";
-      return {
-        userId,
-        username: u.username,
-        role,
-        avatar: u.avatar || null,
-      };
-    },
-    // Sitting down at a game parks a status line in their room textbox so the
-    // room can see where they went, and stops the AFK sweep evicting them
-    // mid-match. Standing up puts their own text back.
-    setPlaying(roomId, userId, playing, label) {
-      const socket = findSocketsByUserId(userId)[0];
-      if (!socket || socket.roomId !== roomId) return;
-      if (playing) {
-        if (!gamePrevText.has(userId))
-          gamePrevText.set(userId, state.userMessageBuffers.get(userId) || "");
-        const text = `[ playing ${label || "mini games"} ]`;
-        state.userMessageBuffers.set(userId, text);
-        emitRoomChatUpdate(socket, {
-          userId,
-          username: socket.handshake?.session?.username,
-          diff: { type: "full-replace", text },
-        });
-        socket.emit("chat update", {
-          userId,
-          username: socket.handshake?.session?.username,
-          diff: { type: "full-replace", text },
-        });
-        clearAFKTimers(userId);
-      } else {
-        const prev = gamePrevText.get(userId) || "";
-        gamePrevText.delete(userId);
-        state.userMessageBuffers.set(userId, prev);
-        emitRoomChatUpdate(socket, {
-          userId,
-          username: socket.handshake?.session?.username,
-          diff: { type: "full-replace", text: prev },
-        });
-        socket.emit("chat update", {
-          userId,
-          username: socket.handshake?.session?.username,
-          diff: { type: "full-replace", text: prev },
-        });
-        setupAFKTimers(socket, userId);
-      }
-    },
-    filterText(text) {
-      if (!CONFIG.FEATURES.ENABLE_WORD_FILTER) return text;
-      try {
-        return wordFilter.filterText(text);
-      } catch (_) {
-        return text;
-      }
-    },
-  });
 
   io().on("connection", (socket) => {
     const clientIp = socket.clientIp || socket.handshake.address;
@@ -1808,11 +1714,6 @@ function registerSocketHandlers(opts) {
     if (getBuildId) socket.emit("server build", { id: getBuildId() });
 
     socket.deviceType = deviceTypeFromUA(socket.handshake.headers["user-agent"]);
-
-    // Tell this browser whether the puzzle app is on, so the room can hide the
-    // tile when a dev has turned it off.
-    socket.emit("puzzle state", { enabled: !!state.puzzleEnabled });
-
 
     // Wraps handlers so one error cannot crash the process; disconnects
     // sockets that error repeatedly
@@ -2033,9 +1934,6 @@ function registerSocketHandlers(opts) {
       }),
     );
 
-    // ── Mini games: queue, tables, moves ────────────────────────────────
-    gamesSocket.register(socket, safe);
-
 
     // ── Talkoboard: stroke lifecycle + state sync ───────────────────────
 
@@ -2107,45 +2005,6 @@ function registerSocketHandlers(opts) {
           username: user ? user.username : null,
           present: !!user,
         });
-      }),
-    );
-
-    // ── Collaborative puzzle: one shared board per room ─────────────────
-    socket.on(
-      "puzzle open",
-      safe(async () => {
-        const userId = socket.handshake.session?.userId;
-        if (!socket.roomId || !userId) return;
-        if (socket.spectating) return; // spectators don't drive the puzzle
-        const isStaff = !!(socket.isDev || socket.isMod);
-        if (!state.puzzleEnabled && !isStaff) return; // dev turned the puzzle off
-        clearAFKTimers(userId);
-        puzzle.open(socket, socket.roomId, userId, socket.handshake.session?.username, isStaff);
-      }),
-    );
-    socket.on(
-      "puzzle close",
-      safe(async () => {
-        const userId = socket.handshake.session?.userId;
-        if (userId) puzzle.close(socket, userId);
-      }),
-    );
-    socket.on(
-      "puzzle msg",
-      safe(async (buf) => {
-        const userId = socket.handshake.session?.userId;
-        if (!socket.roomId || !userId || socket.spectating) return;
-        const isStaff = !!(socket.isDev || socket.isMod);
-        puzzle.message(socket, userId, socket.handshake.session?.username, buf, isStaff);
-      }),
-    );
-    socket.on(
-      "puzzle end",
-      safe(async () => {
-        const userId = socket.handshake.session?.userId;
-        if (!socket.roomId || !userId || socket.spectating) return;
-        const isStaff = !!(socket.isDev || socket.isMod);
-        puzzle.endForRoom(socket.roomId, userId, isStaff);
       }),
     );
 
@@ -3147,7 +3006,6 @@ function registerSocketHandlers(opts) {
         const location = socket.handshake.session?.location || "Unknown";
         if (userId) {
           clearAFKTimers(userId);
-          puzzle.close(socket, userId);
           await leaveRoom(socket, userId);
           state.userMessageBuffers.delete(userId);
           state.devUsers.delete(userId);

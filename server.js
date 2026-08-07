@@ -43,7 +43,6 @@ const {
   validateObject,
 } = require("./server/security");
 const rooms = require("./server/rooms");
-const puzzle = require("./server/puzzle");
 const communityThemes = require("./server/themes");
 
 // ── Global Error Handlers ───────────────────────────────────────────────────
@@ -184,7 +183,7 @@ const helmetMiddleware = helmet({
       ],
       mediaSrc: ["'self'", "data:"],
       frameAncestors: ["'self'", "*"],
-      frameSrc: ["'self'"], // same-origin only (the in-room puzzle iframe)
+      frameSrc: ["'self'"], // same-origin only
       objectSrc: ["'none'"],
     },
   },
@@ -235,13 +234,6 @@ app.use((req, res, next) => {
   // TalkoBrowser is a self-contained page that needs inline JS,
   // external icon images, and iframes - exempt it from the strict CSP
   if (req.path === "/browser.html") return next();
-  // The puzzle page is self-contained too (Tailwind/FontAwesome/TF.js from CDNs,
-  // its own canvas + inline module) and runs sandboxed in a room iframe.
-  if (req.path === "/puzzle.html") return next();
-  // Same for the standalone games under /games: they are whole pages with their
-  // own inline scripts, framed by the mini games panel. They cannot carry our
-  // per-request nonce, so the strict policy would just break them.
-  if (req.path.startsWith("/games/")) return next();
   return helmetMiddleware(req, res, next);
 });
 
@@ -330,7 +322,6 @@ const io = socketIo(server, {
 
 // Store io reference in shared state
 state.io = io;
-puzzle.init(() => io);
 
 io.use(sharedsession(sessionMiddleware, { autoSave: true }));
 
@@ -403,9 +394,6 @@ io.use((socket, next) => {
               // per-message), so the blunt generic limiter must not drop them -
               // that is what made notes cut out during active play.
               "piano notes",
-              // Same story for Draw & Guess strokes: batched, and capped by
-              // its own per-second limit in server/games/socket.js.
-              "games draw",
               "get rooms",
               "get room state",
             ].includes(evt)
@@ -548,7 +536,6 @@ const PAGES = [
   "documentation",
   "index",
   "mod",
-  "puzzle",
   "room",
   "sponsors",
   "themes",
@@ -586,29 +573,6 @@ for (const page of PAGES) {
 // page collects a name itself (localStorage, or a prompt on first visit) so
 // index.html's sign-in form is no longer the front door.
 app.get("/", (req, res) => res.redirect("/room.html"));
-
-// ── Guess the Flag images ───────────────────────────────────────────────────
-// Served from here rather than letting the browser talk to flagcdn directly:
-// their url carries the country code, which would put the answer in the
-// network tab. The token is opaque and per round, so the page never learns
-// which country it is looking at until the round is revealed.
-const gamesFloor = require("./server/games");
-app.get("/flag/:token.png", async (req, res) => {
-  const pending = gamesFloor.flagImage(req.params.token);
-  if (!pending) return res.status(404).end();
-  try {
-    const buf = await pending;
-    res.set({
-      "Content-Type": "image/png",
-      // The token is unique per round, so the bytes behind it never change.
-      "Cache-Control": "public, max-age=3600, immutable",
-      "Cross-Origin-Resource-Policy": "same-origin",
-    });
-    res.end(buf);
-  } catch (_) {
-    res.status(502).end();
-  }
-});
 
 // ── API Routes ──────────────────────────────────────────────────────────────
 
@@ -697,64 +661,6 @@ app.get(`${API}/me`, (req, res) => {
       isBot: !!req.isBot,
     });
   else res.json({ isSignedIn: false, isBot: !!req.isBot });
-});
-
-// ── Collaborative puzzle: one shared board per room ─────────────────────────
-// The image is uploaded as a raw JPEG body (no multipart). The uploader must be
-// a member of the room.
-app.post(
-  `${API}/puzzle/:roomId/image`,
-  express.raw({ type: () => true, limit: "6mb" }),
-  async (req, res) => {
-    try {
-      const roomId = req.params.roomId;
-      const userId = req.session?.userId;
-      const room = state.rooms.get(roomId);
-      const member = room && room.users?.find((u) => u.id === userId);
-      if (!userId || !member)
-        return sendErrorResponse(res, ERROR_CODES.FORBIDDEN, "You are not in this room.", 403);
-
-      if (!state.puzzleEnabled)
-        return sendErrorResponse(res, ERROR_CODES.FORBIDDEN, "Puzzles are currently turned off.", 403);
-
-      const iw = parseInt(req.query.w, 10) | 0;
-      const ih = parseInt(req.query.h, 10) | 0;
-      let target = parseInt(req.query.n, 10) | 0;
-      if (!iw || !ih) return sendErrorResponse(res, ERROR_CODES.BAD_REQUEST, "need w & h", 400);
-      if (!puzzle.VALID_COUNTS.includes(target)) target = 100;
-
-      const image = req.body;
-      if (!Buffer.isBuffer(image) || image.length < 64)
-        return sendErrorResponse(res, ERROR_CODES.BAD_REQUEST, "no image", 400);
-
-      const started = puzzle.start(
-        roomId, userId, req.session?.username, image, { iw, ih }, target, false,
-      );
-      if (!started.ok)
-        return sendErrorResponse(
-          res,
-          ERROR_CODES.FORBIDDEN,
-          "Someone just started a puzzle - join that one, or ask them to end it first.",
-          403,
-        );
-      io.to(roomId).emit("puzzle active", { by: req.session?.username || "Someone" });
-      res.json({ ok: true });
-    } catch (e) {
-      console.error("puzzle upload error:", e);
-      sendErrorResponse(res, ERROR_CODES.SERVER_ERROR, "upload failed", 500);
-    }
-  },
-);
-
-app.get(`${API}/puzzle/:roomId/image`, (req, res) => {
-  const img = puzzle.imageFor(req.params.roomId);
-  if (!img) return sendErrorResponse(res, ERROR_CODES.NOT_FOUND, "no puzzle", 404);
-  res.writeHead(200, {
-    "content-type": "image/jpeg",
-    "cache-control": "public, max-age=31536000",
-    "content-length": img.length,
-  });
-  res.end(img);
 });
 
 // Emoji list, cached in memory for an hour
