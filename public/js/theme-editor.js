@@ -270,10 +270,10 @@
     var advWrap = el("div");
     advWrap.style.display = "none";
     buildGroups(advWrap, groupIcons, function (t) { return !!t.adv; });
-    var secCss = section(advWrap, "fa-code", "Custom CSS (both pages)");
+    var secCss = section(advWrap, "fa-code", "Custom CSS");
     var cssHint = el("div", "tked-hint");
     cssHint.textContent =
-      "For power users: raw CSS applied on both pages, on this device only. Not included when you publish a theme.";
+      "For power users: raw CSS applied on this device only. Not included when you publish a theme.";
     secCss.appendChild(cssHint);
     cssBox = document.createElement("textarea");
     cssBox.className = "tked-css";
@@ -344,10 +344,6 @@
       if (ioArea.classList.contains("show"))
         ioArea._ta.value = JSON.stringify(working);
     });
-    var publish = el("button", "tked-btn");
-    publish.innerHTML = '<i class="fas fa-upload"></i> Publish';
-    publish.title = "Share this theme in the public Themes library";
-    publish.addEventListener("click", publishTheme);
     var reset = el("button", "tked-btn danger");
     reset.innerHTML = '<i class="fas fa-rotate-left"></i> Reset';
     reset.addEventListener("click", function () {
@@ -357,7 +353,6 @@
       toast("This page is back to classic");
     });
     actions.appendChild(shareJson);
-    actions.appendChild(publish);
     actions.appendChild(reset);
     foot.appendChild(save);
     foot.appendChild(actions);
@@ -456,7 +451,7 @@
     });
     if (effectSel) effectSel.value = profile().effect || "";
     Object.keys(fontSels).forEach(function (slot) {
-      fontSels[slot].value = (profile().fonts || {})[slot] || "";
+      fontSels[slot].value = (profile().fonts || {})[slot] || "Inter";
     });
     if (cssBox) cssBox.value = working.css || "";
   }
