@@ -169,7 +169,7 @@ Each device gets a short, stable invite code and a personal link
 ## 9. Per-room max size
 
 A developer inside a room can set that room's capacity (2 to 50) without
-touching any other room. The global default stays 5.
+touching any other room. The global default stays 10.
 
 - `server/rooms.js`: a `roomCapacity(room)` helper returns the per-room
   `room.maxSize` override when set, otherwise the global default. It is used by
