@@ -34,7 +34,7 @@ const {
 
 // Effective capacity for a room: a per-room override (set by a dev inside the
 // room) wins over the global default, so raising one room to 50 never changes
-// the 5-person limit in other rooms.
+// the 10-person limit in other rooms.
 function roomCapacity(room) {
   const n = room && Number(room.maxSize);
   return Number.isFinite(n) && n >= 2
@@ -383,10 +383,12 @@ async function pressureCleanup() {
     if (room.users && room.users.length === 1) {
       const soloSince = state.roomSoloSince.get(roomId);
       if (soloSince && now - soloSince >= ttl) {
-        // Staff are exempt: a dev or mod can hold a room open indefinitely,
-        // the same way they bypass AFK and capacity. Never solo-close on them.
+        // Staff and bots are exempt: a dev, mod, or bot can hold a room open
+        // indefinitely, the same way staff bypass AFK and capacity. Never
+        // solo-close on them.
         const soloSocket = findSocketByUserId(room.users[0].id, roomId);
-        if (soloSocket && (soloSocket.isDev || soloSocket.isMod)) continue;
+        if (soloSocket && (soloSocket.isDev || soloSocket.isMod || soloSocket.isBot))
+          continue;
         toDelete.push(roomId);
       }
     } else if (!room.users || room.users.length === 0) {
@@ -1126,7 +1128,7 @@ function clearAFKTimers(userId) {
 function setupAFKTimers(socket, userId) {
   clearAFKTimers(userId);
   if (!socket || !socket.roomId) return;
-  if (socket.isDev || socket.isMod) return; // staff bypass AFK
+  if (socket.isDev || socket.isMod || socket.isBot) return; // staff and bots bypass AFK
   if (socket.boardOpen) return; // drawing on the board counts as active
   if (socket.pianoOpen) return; // playing the piano counts as active
 
@@ -1518,7 +1520,7 @@ function joinRoom(socket, roomId, userId) {
     // room.users (the lobby socket full-joins before navigating to room.html);
     // the dedup filter just below removes it, but that runs AFTER this check.
     // Counting the phantom self would fill the last slot and bounce an
-    // otherwise-valid join at exactly capacity-1 (e.g. 4/5 -> "room full").
+    // otherwise-valid join at exactly capacity-1 (e.g. 9/10 -> "room full").
     const joinableUserCount = (room.users || []).filter(
       (u) => u.id !== userId && !(u.isDev && u.isVanished),
     ).length;
