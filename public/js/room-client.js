@@ -2511,19 +2511,7 @@ function createUserRow(user, container) {
     }
   });
 
-  // Vote button
-  const voteBtn = document.createElement("button");
-  voteBtn.className = "vote-button";
-  voteBtn.innerHTML = "\uD83D\uDC4E 0";
-  voteBtn.style.display = "none";
-  if (user.id !== currentUserId) {
-    voteBtn.addEventListener("click", () =>
-      socket.emit("vote", { targetUserId: user.id }),
-    );
-  }
-
   info.appendChild(muteBtn);
-  info.appendChild(voteBtn);
 
   // Staff actions button (dev + mod, not on yourself). Shown while spectating
   // too, so staff can moderate a room they're only watching. Opens the per-user
