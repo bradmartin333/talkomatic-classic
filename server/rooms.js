@@ -383,10 +383,12 @@ async function pressureCleanup() {
     if (room.users && room.users.length === 1) {
       const soloSince = state.roomSoloSince.get(roomId);
       if (soloSince && now - soloSince >= ttl) {
-        // Staff are exempt: a dev or mod can hold a room open indefinitely,
-        // the same way they bypass AFK and capacity. Never solo-close on them.
+        // Staff and bots are exempt: a dev, mod, or bot can hold a room open
+        // indefinitely, the same way staff bypass AFK and capacity. Never
+        // solo-close on them.
         const soloSocket = findSocketByUserId(room.users[0].id, roomId);
-        if (soloSocket && (soloSocket.isDev || soloSocket.isMod)) continue;
+        if (soloSocket && (soloSocket.isDev || soloSocket.isMod || soloSocket.isBot))
+          continue;
         toDelete.push(roomId);
       }
     } else if (!room.users || room.users.length === 0) {
@@ -1126,7 +1128,7 @@ function clearAFKTimers(userId) {
 function setupAFKTimers(socket, userId) {
   clearAFKTimers(userId);
   if (!socket || !socket.roomId) return;
-  if (socket.isDev || socket.isMod) return; // staff bypass AFK
+  if (socket.isDev || socket.isMod || socket.isBot) return; // staff and bots bypass AFK
   if (socket.boardOpen) return; // drawing on the board counts as active
   if (socket.pianoOpen) return; // playing the piano counts as active
 
