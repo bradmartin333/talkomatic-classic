@@ -1795,7 +1795,7 @@ function createRoomElement(room) {
   if (room.spotlight) roomElement.classList.add("spotlight-room");
 
   const joinableCount = getJoinableCount(room);
-  const capacity = room.capacity || 5;
+  const capacity = room.capacity || 10;
   const isFull = !!room.isFull || joinableCount >= capacity;
 
   const enterButton = document.createElement("button");

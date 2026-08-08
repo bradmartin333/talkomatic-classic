@@ -258,7 +258,7 @@ socket.on("initial rooms", (rooms) => {
   // rooms is an array of public and semi-private rooms
   rooms.forEach((room) => {
     console.log(
-      `${room.name} (${room.id}) — ${room.userCount}/5 users — ${room.type}`,
+      `${room.name} (${room.id}) — ${room.userCount}/10 users — ${room.type}`,
     );
   });
 });
@@ -339,7 +339,7 @@ socket.on("room not found", () => {
 });
 
 socket.on("room full", () => {
-  console.log("Room is full (5/5)");
+  console.log("Room is full (10/10)");
 });
 
 socket.on("access code required", () => {
@@ -594,7 +594,7 @@ socket.on("kicked", () => {
 | `room created`         | `roomId: string`                                                                                    | Your room was created successfully     |
 | `room joined`          | `{ roomId, userId, username, location, roomName, roomType, users, layout, votes, currentMessages }` | You successfully joined a room         |
 | `room not found`       | error object                                                                                        | Room does not exist                    |
-| `room full`            | error object                                                                                        | Room is at capacity (5 users)          |
+| `room full`            | error object                                                                                        | Room is at capacity (10 users)         |
 | `access code required` | _(none)_                                                                                            | Semi-private room needs an access code |
 | `user joined`          | `{ id, username, location, roomName, roomType }`                                                    | New user entered your room             |
 | `user left`            | `userId: string`                                                                                    | User left your room                    |
@@ -625,7 +625,7 @@ socket.on("kicked", () => {
 
 | Limit                             | Value         |
 | --------------------------------- | ------------- |
-| Max room capacity                 | 5 users       |
+| Max room capacity                 | 10 users      |
 | Max rooms per IP                  | 2             |
 | Max rooms per user                | 1             |
 | Room creation cooldown (per user) | 10 seconds    |
