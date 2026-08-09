@@ -271,32 +271,70 @@ modalInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") modalConfirmBtn.click();
 });
 
-// ── 4. SOUND ────────────────────────────────────────────────────────────────
+// ── 4. TAB NOTIFICATIONS ────────────────────────────────────────────────────
+// No OS-level toasts here (that needs a permission dialog) — just a small red
+// dot drawn onto the tab favicon while you're away, cleared the moment you
+// come back. notificationsEnabled is the user's opt-in for all of it.
 
-const joinSound = document.getElementById("joinSound");
-const leaveSound = document.getElementById("leaveSound");
-const muteToggleButton = document.getElementById("muteToggle");
-const muteIcon = document.getElementById("muteIcon");
-let soundEnabled = true;
+const notifyToggleButton = document.getElementById("notifyToggle");
+const notifyIcon = document.getElementById("notifyIcon");
+let notificationsEnabled = true;
 
-function playJoinSound() {
-  if (soundEnabled) joinSound.play().catch(() => { });
+const faviconLink = document.querySelector('link[rel="icon"]');
+const originalFaviconHref = faviconLink ? faviconLink.href : null;
+let tabDotShown = false;
+
+function showTabDot() {
+  if (tabDotShown || !faviconLink || !originalFaviconHref) return;
+  tabDotShown = true;
+
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      tabDotShown = false;
+      return;
+    }
+    ctx.drawImage(img, 0, 0);
+    const r = img.width * 0.28;
+    ctx.beginPath();
+    ctx.arc(img.width - r, r, r, 0, Math.PI * 2);
+    ctx.fillStyle = "#ff3b30";
+    ctx.fill();
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = img.width * 0.06;
+    ctx.stroke();
+    faviconLink.href = canvas.toDataURL("image/png");
+  };
+  img.onerror = () => {
+    tabDotShown = false;
+  };
+  img.src = originalFaviconHref;
 }
-function playLeaveSound() {
-  if (soundEnabled) leaveSound.play().catch(() => { });
+function clearTabDot() {
+  if (!tabDotShown || !faviconLink) return;
+  faviconLink.href = originalFaviconHref;
+  tabDotShown = false;
 }
-function toggleMute() {
-  soundEnabled = !soundEnabled;
-  localStorage.setItem("soundEnabled", JSON.stringify(soundEnabled));
-  updateMuteIcon();
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) clearTabDot();
+});
+
+function toggleNotifications() {
+  notificationsEnabled = !notificationsEnabled;
+  localStorage.setItem("notificationsEnabled", JSON.stringify(notificationsEnabled));
+  updateNotifyIcon();
 }
 
 // Somebody typed your name in this room. One nudge per person per minute is
 // enforced server side, so this can just show it.
 socket.on("room mention", (data) => {
   const by = (data && data.by) || "Someone";
-  playJoinSound();
   if (window.toastr) toastr.info(by + " mentioned you");
+  if (notificationsEnabled) showTabDot();
   // Blink it into the tab title for anyone looking at another window.
   if (document.hidden) {
     const original = document.title;
@@ -308,11 +346,12 @@ socket.on("room mention", (data) => {
     document.addEventListener("visibilitychange", restore);
   }
 });
-function updateMuteIcon() {
-  muteIcon.src = soundEnabled
-    ? "images/icons/sound-on.svg"
-    : "images/icons/sound-off.svg";
-  muteIcon.alt = soundEnabled ? "Sound On" : "Sound Off";
+function updateNotifyIcon() {
+  notifyIcon.className = notificationsEnabled ? "fas fa-bell" : "fas fa-bell-slash";
+  notifyToggleButton.setAttribute(
+    "aria-label",
+    notificationsEnabled ? "Notifications On" : "Notifications Off",
+  );
 }
 
 // ── 5. CONTENTEDITABLE UTILITIES ────────────────────────────────────────────
@@ -1733,6 +1772,7 @@ function updateMuteVotesUI(data) {
         ? `${votesFor} vote${votesFor === 1 ? "" : "s"} to mute`
         : "Not muted";
     label.classList.toggle("muted", isMuted);
+    row.classList.toggle("bot-muted", isMuted);
 
     const btn = row.querySelector(".vote-mute-button");
     if (btn) btn.classList.toggle("voted", currentMuteVotes[currentUserId] === uid);
@@ -1744,6 +1784,11 @@ function updateMuteVotesUI(data) {
       if (ci) ci.textContent = "";
     }
   });
+
+  // The "bot-muted" class alone won't stick: adjustLayout() sets inline
+  // width/height on every row on its own schedule, which would otherwise
+  // overwrite a fresh collapse/expand until the next unrelated resize.
+  adjustLayout();
 }
 
 // ── 10. CHAT PROCESSING ─────────────────────────────────────────────────────
@@ -1835,6 +1880,7 @@ function displayChatMessage(data) {
       }
     }
   } else {
+    if (notificationsEnabled && document.hidden) showTabDot();
     renderOtherUserMessage(chatDiv, newText);
   }
 }
@@ -2890,39 +2936,65 @@ function adjustLayout() {
     if (scroll) cw -= 16; // leave room for the scrollbar
     const cellW = Math.floor((cw - (cols - 1) * GAP) / cols);
     rows.forEach((row) => {
-      row.style.flex = "0 0 auto";
-      row.style.width = `${cellW}px`;
-      row.style.height = `${cellH}px`;
-      row.style.minHeight = "0";
+      const collapsed = row.classList.contains("bot-muted");
       const ui = row.querySelector(".user-info");
       const iw = row.querySelector(".chat-input-wrapper");
-      if (ui && iw) iw.style.height = `${cellH - ui.offsetHeight - 2}px`;
+      row.style.flex = "0 0 auto";
+      row.style.width = `${cellW}px`;
+      // Crowd mode keeps the grid's column/row balancing untouched (it's
+      // already many small tiles) - a collapsed bot just shrinks to its own
+      // header height in place rather than reflowing the whole grid.
+      row.style.height = collapsed && ui ? `${ui.offsetHeight}px` : `${cellH}px`;
+      row.style.minHeight = "0";
+      if (ui && iw) iw.style.height = collapsed ? "0px" : `${cellH - ui.offsetHeight - 2}px`;
     });
   } else if (layout === "horizontal") {
     container.style.flexDirection = "column";
     const containerTop = container.getBoundingClientRect().top;
     const avail = getAvailableViewportHeight() - containerTop;
     const gap = (rows.length - 1) * 10;
-    const h = Math.floor((avail - gap) / rows.length);
+    const collapsedRows = [...rows].filter((row) => row.classList.contains("bot-muted"));
+    const activeRows = [...rows].filter((row) => !row.classList.contains("bot-muted"));
+    // If every row is a muted bot there's nothing to reclaim space for -
+    // fall back to the original even split rather than shrinking everything.
+    const hasActive = activeRows.length > 0 && activeRows.length < rows.length;
+    const collapsedTotal = collapsedRows.reduce(
+      (sum, row) => sum + (row.querySelector(".user-info")?.offsetHeight || 0),
+      0,
+    );
+    const activeH = hasActive
+      ? Math.floor((avail - gap - collapsedTotal) / activeRows.length)
+      : Math.floor((avail - gap) / rows.length);
     rows.forEach((row) => {
-      row.style.height = `${h}px`;
-      row.style.minHeight = "100px";
-      row.style.width = "100%";
+      const collapsed = hasActive && row.classList.contains("bot-muted");
       const ui = row.querySelector(".user-info");
       const iw = row.querySelector(".chat-input-wrapper");
-      iw.style.height = `${h - ui.offsetHeight - 2}px`;
+      const h = collapsed && ui ? ui.offsetHeight : activeH;
+      row.style.height = `${h}px`;
+      row.style.minHeight = collapsed ? "0" : "100px";
+      row.style.width = "100%";
+      iw.style.height = collapsed ? "0px" : `${h - ui.offsetHeight - 2}px`;
     });
   } else {
     container.style.flexDirection = "row";
     const avail = container.offsetWidth;
     const gap = (rows.length - 1) * 10;
-    const w = Math.floor((avail - gap) / rows.length);
+    const COLLAPSED_WIDTH = 90;
+    const collapsedRows = [...rows].filter((row) => row.classList.contains("bot-muted"));
+    const activeRows = [...rows].filter((row) => !row.classList.contains("bot-muted"));
+    const hasActive = activeRows.length > 0 && activeRows.length < rows.length;
+    const collapsedTotal = collapsedRows.length * COLLAPSED_WIDTH;
+    const activeW = hasActive
+      ? Math.floor((avail - gap - collapsedTotal) / activeRows.length)
+      : Math.floor((avail - gap) / rows.length);
     rows.forEach((row) => {
+      const collapsed = hasActive && row.classList.contains("bot-muted");
+      const w = collapsed ? COLLAPSED_WIDTH : activeW;
       row.style.width = `${w}px`;
       row.style.height = "100%";
       const ui = row.querySelector(".user-info");
       const iw = row.querySelector(".chat-input-wrapper");
-      iw.style.height = `calc(100% - ${ui.offsetHeight}px - 2px)`;
+      iw.style.height = collapsed ? "0px" : `calc(100% - ${ui.offsetHeight}px - 2px)`;
     });
   }
 
@@ -3150,7 +3222,7 @@ socket.on("user joined", (data) => {
       createUserRow(data, c);
       adjustLayout();
       updateRoomInfo(data);
-      playJoinSound();
+      if (notificationsEnabled && document.hidden) showTabDot();
 
       // A new join can cross the voting threshold
       updateVotesUI(currentVotes);
@@ -3172,7 +3244,7 @@ socket.on("user left", (userId) => {
     if (row) {
       row.remove();
       adjustLayout();
-      playLeaveSound();
+      if (notificationsEnabled && document.hidden) showTabDot();
 
       // Dropping below the voting minimum must clean up vote UI immediately
       adjustVoteButtonVisibility();
@@ -3552,13 +3624,13 @@ window.addEventListener("load", () => {
   adjustLayout();
   initializeAppDirectory();
 
-  // Sound
-  const savedMute = localStorage.getItem("soundEnabled");
-  if (savedMute !== null) {
-    soundEnabled = JSON.parse(savedMute);
-    updateMuteIcon();
+  // Tab notifications
+  const savedNotify = localStorage.getItem("notificationsEnabled");
+  if (savedNotify !== null) {
+    notificationsEnabled = JSON.parse(savedNotify);
+    updateNotifyIcon();
   }
-  muteToggleButton.addEventListener("click", toggleMute);
+  notifyToggleButton.addEventListener("click", toggleNotifications);
 
   // Layout toggle (desktop, client-side view preference). Shown only at <=5
   // users; refreshLayoutToggle() handles when it appears/disappears.
