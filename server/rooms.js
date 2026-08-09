@@ -596,6 +596,7 @@ function formatUserForSocket(user, recipientSocket) {
     location: user.location,
     deviceType: user.deviceType || "unknown",
   };
+  if (user.isBot) formatted.isBot = true;
   // Discord avatar: validated snowflake id + CDN hash only; clients rebuild
   // the cdn.discordapp.com URL themselves.
   if (user.avatar) formatted.avatar = user.avatar;
@@ -1032,6 +1033,7 @@ async function saveRooms(force = false) {
             return clean;
           }),
           bannedUserIds: Array.from(room.bannedUserIds || []),
+          mutedBotIds: Array.from(room.mutedBotIds || []),
         },
       ];
     });
@@ -1092,6 +1094,17 @@ async function loadRooms() {
               ? item[1].bannedUserIds
               : typeof item[1].bannedUserIds === "object"
                 ? Object.values(item[1].bannedUserIds)
+                : [],
+          );
+          // mutedBotIds is a Set at runtime but JSON.stringify(Set) writes
+          // "{}" (no enumerable own properties), so a naive round-trip would
+          // silently swap it for a plain object - and .has()/.add()/.delete()
+          // then throw the next time anyone leaves or votes in this room.
+          item[1].mutedBotIds = new Set(
+            Array.isArray(item[1].mutedBotIds)
+              ? item[1].mutedBotIds
+              : typeof item[1].mutedBotIds === "object"
+                ? Object.values(item[1].mutedBotIds)
                 : [],
           );
         }
@@ -1625,6 +1638,7 @@ function joinRoom(socket, roomId, userId) {
       id: userId,
       username,
       location,
+      isBot: !!socket.isBot,
       isDev: !!socket.isDev,
       isMod: !!socket.isMod,
       modLevel: socket.isMod ? socket.modLevel || 2 : undefined,
