@@ -285,13 +285,19 @@ const originalFaviconHref = faviconLink ? faviconLink.href : null;
 let tabDotShown = false;
 
 function showTabDot() {
-  if (tabDotShown || !faviconLink) return;
+  if (tabDotShown || !faviconLink || !originalFaviconHref) return;
+  tabDotShown = true;
+
   const img = new Image();
   img.onload = () => {
     const canvas = document.createElement("canvas");
     canvas.width = img.width;
     canvas.height = img.height;
     const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      tabDotShown = false;
+      return;
+    }
     ctx.drawImage(img, 0, 0);
     const r = img.width * 0.28;
     ctx.beginPath();
@@ -303,8 +309,10 @@ function showTabDot() {
     ctx.stroke();
     faviconLink.href = canvas.toDataURL("image/png");
   };
+  img.onerror = () => {
+    tabDotShown = false;
+  };
   img.src = originalFaviconHref;
-  tabDotShown = true;
 }
 function clearTabDot() {
   if (!tabDotShown || !faviconLink) return;
