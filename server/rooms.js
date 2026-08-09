@@ -813,7 +813,10 @@ function recomputeBotMuteState(room, targetUserId) {
   const votesFor = Object.values(room.muteVotes || {}).filter(
     (v) => v === targetUserId,
   ).length;
-  const isMuted = votesFor > Math.floor(room.users.length / 2);
+  const eligibleVoters = room.users.filter(
+    (u) => u.id !== targetUserId,
+  ).length;
+  const isMuted = votesFor > Math.floor(eligibleVoters / 2);
   const wasMuted = room.mutedBotIds.has(targetUserId);
   if (isMuted === wasMuted) return;
 
