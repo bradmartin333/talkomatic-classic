@@ -2537,7 +2537,7 @@ function createUserRow(user, container) {
     if (user.id !== currentUserId) {
       const voteMuteBtn = document.createElement("button");
       voteMuteBtn.className = "vote-mute-button";
-      voteMuteBtn.innerHTML = "\uD83D\uDE4A";
+      voteMuteBtn.innerHTML = "\uD83D\uDD25";
       voteMuteBtn.title = "Vote to mute this bot";
       voteMuteBtn.addEventListener("click", () => {
         socket.emit("vote mute", { targetUserId: user.id });

@@ -269,16 +269,19 @@ html {
   transition: background-color 0.2s ease;
 }
 
-.vote-mute-button.voted {
-  background: #ff0000;
-}
-
 .vote-mute-button:hover {
   background: #222222;
 }
 
 .vote-mute-button:active {
   background: #ff9999;
+}
+
+/* Comes after :hover so equal-specificity cascade favors red: touch taps
+   leave mobile browsers in a "stuck" :hover state until the next tap
+   elsewhere, which was masking this with the gray hover color. */
+.vote-mute-button.voted {
+  background: #ff0000;
 }
 
 /* Chat input box for typing messages */
