@@ -1733,6 +1733,7 @@ function updateMuteVotesUI(data) {
         ? `${votesFor} vote${votesFor === 1 ? "" : "s"} to mute`
         : "Not muted";
     label.classList.toggle("muted", isMuted);
+    row.classList.toggle("bot-muted", isMuted);
 
     const btn = row.querySelector(".vote-mute-button");
     if (btn) btn.classList.toggle("voted", currentMuteVotes[currentUserId] === uid);
@@ -1744,6 +1745,11 @@ function updateMuteVotesUI(data) {
       if (ci) ci.textContent = "";
     }
   });
+
+  // The "bot-muted" class alone won't stick: adjustLayout() sets inline
+  // width/height on every row on its own schedule, which would otherwise
+  // overwrite a fresh collapse/expand until the next unrelated resize.
+  adjustLayout();
 }
 
 // ── 10. CHAT PROCESSING ─────────────────────────────────────────────────────
@@ -2890,39 +2896,65 @@ function adjustLayout() {
     if (scroll) cw -= 16; // leave room for the scrollbar
     const cellW = Math.floor((cw - (cols - 1) * GAP) / cols);
     rows.forEach((row) => {
-      row.style.flex = "0 0 auto";
-      row.style.width = `${cellW}px`;
-      row.style.height = `${cellH}px`;
-      row.style.minHeight = "0";
+      const collapsed = row.classList.contains("bot-muted");
       const ui = row.querySelector(".user-info");
       const iw = row.querySelector(".chat-input-wrapper");
-      if (ui && iw) iw.style.height = `${cellH - ui.offsetHeight - 2}px`;
+      row.style.flex = "0 0 auto";
+      row.style.width = `${cellW}px`;
+      // Crowd mode keeps the grid's column/row balancing untouched (it's
+      // already many small tiles) - a collapsed bot just shrinks to its own
+      // header height in place rather than reflowing the whole grid.
+      row.style.height = collapsed && ui ? `${ui.offsetHeight}px` : `${cellH}px`;
+      row.style.minHeight = "0";
+      if (ui && iw) iw.style.height = collapsed ? "0px" : `${cellH - ui.offsetHeight - 2}px`;
     });
   } else if (layout === "horizontal") {
     container.style.flexDirection = "column";
     const containerTop = container.getBoundingClientRect().top;
     const avail = getAvailableViewportHeight() - containerTop;
     const gap = (rows.length - 1) * 10;
-    const h = Math.floor((avail - gap) / rows.length);
+    const collapsedRows = [...rows].filter((row) => row.classList.contains("bot-muted"));
+    const activeRows = [...rows].filter((row) => !row.classList.contains("bot-muted"));
+    // If every row is a muted bot there's nothing to reclaim space for -
+    // fall back to the original even split rather than shrinking everything.
+    const hasActive = activeRows.length > 0 && activeRows.length < rows.length;
+    const collapsedTotal = collapsedRows.reduce(
+      (sum, row) => sum + (row.querySelector(".user-info")?.offsetHeight || 0),
+      0,
+    );
+    const activeH = hasActive
+      ? Math.floor((avail - gap - collapsedTotal) / activeRows.length)
+      : Math.floor((avail - gap) / rows.length);
     rows.forEach((row) => {
-      row.style.height = `${h}px`;
-      row.style.minHeight = "100px";
-      row.style.width = "100%";
+      const collapsed = hasActive && row.classList.contains("bot-muted");
       const ui = row.querySelector(".user-info");
       const iw = row.querySelector(".chat-input-wrapper");
-      iw.style.height = `${h - ui.offsetHeight - 2}px`;
+      const h = collapsed && ui ? ui.offsetHeight : activeH;
+      row.style.height = `${h}px`;
+      row.style.minHeight = collapsed ? "0" : "100px";
+      row.style.width = "100%";
+      iw.style.height = collapsed ? "0px" : `${h - ui.offsetHeight - 2}px`;
     });
   } else {
     container.style.flexDirection = "row";
     const avail = container.offsetWidth;
     const gap = (rows.length - 1) * 10;
-    const w = Math.floor((avail - gap) / rows.length);
+    const COLLAPSED_WIDTH = 90;
+    const collapsedRows = [...rows].filter((row) => row.classList.contains("bot-muted"));
+    const activeRows = [...rows].filter((row) => !row.classList.contains("bot-muted"));
+    const hasActive = activeRows.length > 0 && activeRows.length < rows.length;
+    const collapsedTotal = collapsedRows.length * COLLAPSED_WIDTH;
+    const activeW = hasActive
+      ? Math.floor((avail - gap - collapsedTotal) / activeRows.length)
+      : Math.floor((avail - gap) / rows.length);
     rows.forEach((row) => {
+      const collapsed = hasActive && row.classList.contains("bot-muted");
+      const w = collapsed ? COLLAPSED_WIDTH : activeW;
       row.style.width = `${w}px`;
       row.style.height = "100%";
       const ui = row.querySelector(".user-info");
       const iw = row.querySelector(".chat-input-wrapper");
-      iw.style.height = `calc(100% - ${ui.offsetHeight}px - 2px)`;
+      iw.style.height = collapsed ? "0px" : `calc(100% - ${ui.offsetHeight}px - 2px)`;
     });
   }
 
