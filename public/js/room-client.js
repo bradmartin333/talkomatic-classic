@@ -78,6 +78,10 @@ const MIN_USERS_FOR_VOTING = 3;
 // Last vote state from the server, re-rendered after local DOM changes
 let currentVotes = {};
 
+// Last bot-mute vote state from the server, re-rendered after local DOM changes
+let currentMuteVotes = {};
+let mutedBotIds = new Set();
+
 const ERROR_CODES = {
   VALIDATION_ERROR: "Validation Error",
   SERVER_ERROR: "Server Error",
@@ -1724,6 +1728,42 @@ function adjustMuteButtonVisibility() {
   });
 }
 
+// Renders the "vote to mute a bot" status label + button state on bot rows.
+// Mirrors updateVotesUI: the server is the sole authority on the tally and
+// on whether the mute is currently enforced.
+function updateMuteVotesUI(data) {
+  currentMuteVotes = data?.muteVotes || {};
+  mutedBotIds = new Set(data?.mutedBotIds || []);
+
+  document.querySelectorAll(".chat-row").forEach((row) => {
+    const uid = row.dataset.userId;
+    const label = row.querySelector(".mute-status-label");
+    if (!label) return; // not a bot row
+
+    const votesFor = Object.values(currentMuteVotes).filter(
+      (v) => v === uid,
+    ).length;
+    const isMuted = mutedBotIds.has(uid);
+
+    label.textContent = isMuted
+      ? "Muted"
+      : votesFor > 0
+        ? `${votesFor} vote${votesFor === 1 ? "" : "s"} to mute`
+        : "Not muted";
+    label.classList.toggle("muted", isMuted);
+
+    const btn = row.querySelector(".vote-mute-button");
+    if (btn) btn.classList.toggle("voted", currentMuteVotes[currentUserId] === uid);
+
+    // Defense-in-depth: the server also pushes an empty "chat update" for a
+    // freshly-muted bot, but blank it locally too in case that hasn't landed yet.
+    if (isMuted) {
+      const ci = row.querySelector(".chat-input");
+      if (ci) ci.textContent = "";
+    }
+  });
+}
+
 // ── 10. CHAT PROCESSING ─────────────────────────────────────────────────────
 
 // Renders another user's message: filter, emotes, then link detection
@@ -2485,33 +2525,26 @@ function createUserRow(user, container) {
   nameEl.textContent = user.username;
   info.appendChild(nameEl);
 
-  // Mute button
-  const muteBtn = document.createElement("button");
-  muteBtn.className = "mute-button";
-  muteBtn.innerHTML = "\uD83D\uDD0A";
-  muteBtn.style.display = "none";
-  muteBtn.addEventListener("click", () => {
-    if (mutedUsers.has(user.id)) {
-      mutedUsers.delete(user.id);
-      muteBtn.innerHTML = "\uD83D\uDD0A";
-      muteBtn.classList.remove("muted");
-      const ci = row.querySelector(".chat-input");
-      if (ci) ci.style.opacity = "1";
-      const queued = storedMessagesForMutedUsers.get(user.id);
-      if (queued?.length) {
-        queued.forEach(displayChatMessage);
-        storedMessagesForMutedUsers.delete(user.id);
-      }
-    } else {
-      mutedUsers.add(user.id);
-      muteBtn.innerHTML = "\uD83D\uDD07";
-      muteBtn.classList.add("muted");
-      const ci = row.querySelector(".chat-input");
-      if (ci) ci.style.opacity = "0.3";
-    }
-  });
+  // Vote-to-mute a bot: status label to the left of the vote button, both
+  // shown only on bot rows (bots are any socket authenticated via a bot
+  // token - see server/security.js - not a single hardcoded participant).
+  if (user.isBot) {
+    const muteStatusLabel = document.createElement("span");
+    muteStatusLabel.className = "mute-status-label";
+    muteStatusLabel.textContent = "Not muted";
+    info.appendChild(muteStatusLabel);
 
-  info.appendChild(muteBtn);
+    if (user.id !== currentUserId) {
+      const voteMuteBtn = document.createElement("button");
+      voteMuteBtn.className = "vote-mute-button";
+      voteMuteBtn.innerHTML = "\uD83D\uDE4A";
+      voteMuteBtn.title = "Vote to mute this bot";
+      voteMuteBtn.addEventListener("click", () => {
+        socket.emit("vote mute", { targetUserId: user.id });
+      });
+      info.appendChild(voteMuteBtn);
+    }
+  }
 
   // Staff actions button (dev + mod, not on yourself). Shown while spectating
   // too, so staff can moderate a room they're only watching. Opens the per-user
@@ -3014,6 +3047,8 @@ socket.on("chat update", displayChatMessage);
 
 socket.on("update votes", updateVotesUI);
 
+socket.on("update mute votes", updateMuteVotesUI);
+
 socket.on("kicked", (data) => {
   showInfoModal(
     (data && data.message) ||
@@ -3066,6 +3101,7 @@ socket.on("room joined", (data) => {
   updateRoomInfo(data);
   updateRoomUI(data);
   if (data.votes) updateVotesUI(data.votes);
+  if (data.muteVotes || data.mutedBotIds) updateMuteVotesUI(data);
   if (data.currentMessages) updateCurrentMessages(data.currentMessages);
 
   // Appearance controls (hide/vanish/color) now live inside the Staff panel,
@@ -3253,6 +3289,10 @@ socket.on("room update", (roomData) => {
   // Re-render vote UI after the row set may have changed
   adjustVoteButtonVisibility();
   updateVotesUI(roomData.votes || currentVotes);
+  updateMuteVotesUI({
+    muteVotes: roomData.muteVotes || currentMuteVotes,
+    mutedBotIds: roomData.mutedBotIds || Array.from(mutedBotIds),
+  });
   adjustLayout();
 
   renderDevContext();

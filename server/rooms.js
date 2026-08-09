@@ -651,6 +651,8 @@ function spectatePayload(socket, room) {
     spotlight: !!room.spotlight,
     users: filterUsersForSocket(room.users || [], socket),
     votes: filterVotesForSocket(room, socket),
+    muteVotes: filterMuteVotesForSocket(room, socket),
+    mutedBotIds: Array.from(room.mutedBotIds || []),
     currentMessages: filterCurrentMessagesForSocket(room, socket),
     createdAt: createdAt,
     uptime: Date.now() - createdAt,
@@ -665,6 +667,24 @@ function filterVotesForSocket(room, recipientSocket) {
   const filtered = {};
 
   for (const [voterId, targetId] of Object.entries(votes)) {
+    const voter = byId.get(voterId);
+    const target = byId.get(targetId);
+    if (!voter || !target) continue;
+    if (!canRecipientSeeDevUser(recipientSocket, voter)) continue;
+    if (!canRecipientSeeDevUser(recipientSocket, target)) continue;
+    filtered[voterId] = targetId;
+  }
+  return filtered;
+}
+
+// Bot-mute votes involving invisible (vanished) voters are hidden from non-devs
+function filterMuteVotesForSocket(room, recipientSocket) {
+  const muteVotes = room?.muteVotes || {};
+  const roomUsers = room?.users || [];
+  const byId = new Map(roomUsers.map((u) => [u.id, u]));
+  const filtered = {};
+
+  for (const [voterId, targetId] of Object.entries(muteVotes)) {
     const voter = byId.get(voterId);
     const target = byId.get(targetId);
     if (!voter || !target) continue;
@@ -723,6 +743,8 @@ function formatRoomStateForSocket(room, recipientSocket) {
     uptime: Date.now() - createdAt,
     users,
     votes: filterVotesForSocket(room, recipientSocket),
+    muteVotes: filterMuteVotesForSocket(room, recipientSocket),
+    mutedBotIds: Array.from(room.mutedBotIds || []),
     currentMessages: filterCurrentMessagesForSocket(room, recipientSocket),
     isFull: joinableCount >= roomCapacity(room),
     userCount: joinableCount,
@@ -765,6 +787,54 @@ function emitRoomVoteUpdates(roomId) {
   for (const [, recipient] of io().sockets.sockets) {
     if (!recipient.connected || recipient.roomId !== roomId) continue;
     recipient.emit("update votes", filterVotesForSocket(room, recipient));
+  }
+}
+
+function emitRoomMuteVoteUpdates(roomId) {
+  if (!io()) return;
+  const room = state.rooms.get(roomId);
+  if (!room) return;
+  for (const [, recipient] of io().sockets.sockets) {
+    if (!recipient.connected || recipient.roomId !== roomId) continue;
+    recipient.emit("update mute votes", {
+      muteVotes: filterMuteVotesForSocket(room, recipient),
+      mutedBotIds: Array.from(room.mutedBotIds || []),
+    });
+  }
+}
+
+// Recomputes whether a bot should be muted from the current vote tally and
+// applies any state transition: blanking its live panel for everyone and
+// signaling its own socket (so a cooperative bot script can pause itself),
+// symmetrically in both directions since a mute vote is reversible.
+function recomputeBotMuteState(room, targetUserId) {
+  if (!room.mutedBotIds) room.mutedBotIds = new Set();
+  const votesFor = Object.values(room.muteVotes || {}).filter(
+    (v) => v === targetUserId,
+  ).length;
+  const isMuted = votesFor > Math.floor(room.users.length / 2);
+  const wasMuted = room.mutedBotIds.has(targetUserId);
+  if (isMuted === wasMuted) return;
+
+  const targetSocket = findSocketByUserId(targetUserId, room.id);
+  if (isMuted) {
+    room.mutedBotIds.add(targetUserId);
+    const target = room.users.find((u) => u.id === targetUserId);
+    state.userMessageBuffers.set(targetUserId, "");
+    if (io()) {
+      for (const [, recipient] of io().sockets.sockets) {
+        if (!recipient.connected || recipient.roomId !== room.id) continue;
+        recipient.emit("chat update", {
+          userId: targetUserId,
+          username: target?.username,
+          diff: { type: "full-replace", text: "" },
+        });
+      }
+    }
+    targetSocket?.emit("bot muted", { muted: true });
+  } else {
+    room.mutedBotIds.delete(targetUserId);
+    targetSocket?.emit("bot muted", { muted: false });
   }
 }
 
@@ -1061,6 +1131,8 @@ function ensureMainRoom() {
     users: [],
     accessCode: null,
     votes: {},
+    muteVotes: {},
+    mutedBotIds: new Set(),
     bannedUserIds: new Set(),
     lastActiveTime: now,
     createdAt: now,
@@ -1368,6 +1440,19 @@ async function leaveRoom(socket, userId) {
         emitRoomVoteUpdates(roomId);
       }
 
+      if (room.muteVotes) {
+        const affectedTargets = new Set();
+        if (room.muteVotes[userId]) affectedTargets.add(room.muteVotes[userId]);
+        delete room.muteVotes[userId];
+        for (const vid in room.muteVotes) {
+          if (room.muteVotes[vid] === userId) delete room.muteVotes[vid];
+        }
+        room.mutedBotIds?.delete(userId);
+        for (const targetId of affectedTargets)
+          recomputeBotMuteState(room, targetId);
+        emitRoomMuteVoteUpdates(roomId);
+      }
+
       socket.leave(roomId);
       emitRoomUserLeft(roomId, userId, leftUser);
       updateRoom(roomId);
@@ -1511,6 +1596,8 @@ function joinRoom(socket, roomId, userId) {
 
     if (!room.users) room.users = [];
     if (!room.votes) room.votes = {};
+    if (!room.muteVotes) room.muteVotes = {};
+    if (!room.mutedBotIds) room.mutedBotIds = new Set();
 
     // Staff bypass room capacity (can always enter a full room to handle a
     // report); normal users check the visible count.
@@ -1642,6 +1729,8 @@ function emitJoinSuccess(socket, room, userId, username, location) {
     users: filterUsersForSocket(room.users || [], socket),
     layout: room.layout,
     votes: filterVotesForSocket(room, socket),
+    muteVotes: filterMuteVotesForSocket(room, socket),
+    mutedBotIds: Array.from(room.mutedBotIds || []),
     currentMessages: filterCurrentMessagesForSocket(room, socket),
     createdAt: createdAt,
     uptime: Date.now() - createdAt
@@ -2684,6 +2773,8 @@ function registerSocketHandlers(opts) {
           users: [],
           accessCode: data.type === "semi-private" ? data.accessCode : null,
           votes: {},
+          muteVotes: {},
+          mutedBotIds: new Set(),
           bannedUserIds: new Set(),
           lastActiveTime: now,
           createdAt: now,
@@ -2844,6 +2935,33 @@ function registerSocketHandlers(opts) {
       }),
     );
 
+    // ── Vote Mute (bots only) ──────────────────────────────────────────
+    socket.on(
+      "vote mute",
+      safe(async (data) => {
+        if (!data?.targetUserId) return;
+        const userId = socket.handshake.session?.userId;
+        const roomId = socket.roomId;
+        if (!roomId || !userId) return;
+        const room = state.rooms.get(roomId);
+        if (
+          !room ||
+          !room.users.find((u) => u.id === userId) ||
+          userId === data.targetUserId
+        )
+          return;
+        if (!room.users.find((u) => u.id === data.targetUserId)) return;
+        const targetSocket = findSocketByUserId(data.targetUserId, roomId);
+        if (!targetSocket?.isBot) return; // only bots are vote-mutable
+        if (!room.muteVotes) room.muteVotes = {};
+        if (room.muteVotes[userId] === data.targetUserId)
+          delete room.muteVotes[userId];
+        else room.muteVotes[userId] = data.targetUserId;
+        recomputeBotMuteState(room, data.targetUserId);
+        emitRoomMuteVoteUpdates(roomId);
+      }),
+    );
+
     socket.on(
       "leave room",
       safe(async () => {
@@ -2872,6 +2990,8 @@ function registerSocketHandlers(opts) {
         if (socket.spectating) return;
         if (socket.frozen) return;
         const userId = socket.handshake.session.userId;
+        // A vote-muted bot is silenced server-side until the vote is withdrawn.
+        if (state.rooms.get(socket.roomId)?.mutedBotIds?.has(userId)) return;
         if (!data?.diff || typeof data.diff !== "object")
           return socket.emit(
             "error",
@@ -2938,6 +3058,7 @@ function registerSocketHandlers(opts) {
         if (!socket.roomId || !socket.handshake.session?.userId) return;
         if (socket.spectating || socket.frozen) return;
         const userId = socket.handshake.session.userId;
+        if (state.rooms.get(socket.roomId)?.mutedBotIds?.has(userId)) return;
         const username = socket.handshake.session.username || "Anonymous";
         if (data?.isTyping === false) {
           handleTyping(socket, userId, username, false);
@@ -3340,6 +3461,12 @@ function purgeAllGhostUsers() {
         for (const vid in room.votes)
           if (room.votes[vid] === u.id) delete room.votes[vid];
       }
+      if (room.muteVotes) {
+        delete room.muteVotes[u.id];
+        for (const vid in room.muteVotes)
+          if (room.muteVotes[vid] === u.id) delete room.muteVotes[vid];
+      }
+      room.mutedBotIds?.delete(u.id);
       console.log(`Startup purge: ghost "${u.username}" from "${room.name}"`);
       return false;
     });
