@@ -1866,9 +1866,7 @@ function displayChatMessage(data) {
       }
     }
   } else {
-    if (notificationsEnabled && document.hidden && currentText.length === 0 && newText.length > 0) {
-      showTabDot();
-    }
+    if (notificationsEnabled && document.hidden) showTabDot();
     renderOtherUserMessage(chatDiv, newText);
   }
 }
