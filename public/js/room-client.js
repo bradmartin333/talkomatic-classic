@@ -271,32 +271,62 @@ modalInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") modalConfirmBtn.click();
 });
 
-// ── 4. SOUND ────────────────────────────────────────────────────────────────
+// ── 4. TAB NOTIFICATIONS ────────────────────────────────────────────────────
+// No OS-level toasts here (that needs a permission dialog) — just a small red
+// dot drawn onto the tab favicon while you're away, cleared the moment you
+// come back. notificationsEnabled is the user's opt-in for all of it.
 
-const joinSound = document.getElementById("joinSound");
-const leaveSound = document.getElementById("leaveSound");
-const muteToggleButton = document.getElementById("muteToggle");
-const muteIcon = document.getElementById("muteIcon");
-let soundEnabled = true;
+const notifyToggleButton = document.getElementById("notifyToggle");
+const notifyIcon = document.getElementById("notifyIcon");
+let notificationsEnabled = true;
 
-function playJoinSound() {
-  if (soundEnabled) joinSound.play().catch(() => { });
+const faviconLink = document.querySelector('link[rel="icon"]');
+const originalFaviconHref = faviconLink ? faviconLink.href : null;
+let tabDotShown = false;
+
+function showTabDot() {
+  if (tabDotShown || !faviconLink) return;
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    const r = img.width * 0.28;
+    ctx.beginPath();
+    ctx.arc(img.width - r, r, r, 0, Math.PI * 2);
+    ctx.fillStyle = "#ff3b30";
+    ctx.fill();
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = img.width * 0.06;
+    ctx.stroke();
+    faviconLink.href = canvas.toDataURL("image/png");
+  };
+  img.src = originalFaviconHref;
+  tabDotShown = true;
 }
-function playLeaveSound() {
-  if (soundEnabled) leaveSound.play().catch(() => { });
+function clearTabDot() {
+  if (!tabDotShown || !faviconLink) return;
+  faviconLink.href = originalFaviconHref;
+  tabDotShown = false;
 }
-function toggleMute() {
-  soundEnabled = !soundEnabled;
-  localStorage.setItem("soundEnabled", JSON.stringify(soundEnabled));
-  updateMuteIcon();
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) clearTabDot();
+});
+
+function toggleNotifications() {
+  notificationsEnabled = !notificationsEnabled;
+  localStorage.setItem("notificationsEnabled", JSON.stringify(notificationsEnabled));
+  updateNotifyIcon();
 }
 
 // Somebody typed your name in this room. One nudge per person per minute is
 // enforced server side, so this can just show it.
 socket.on("room mention", (data) => {
   const by = (data && data.by) || "Someone";
-  playJoinSound();
   if (window.toastr) toastr.info(by + " mentioned you");
+  if (notificationsEnabled) showTabDot();
   // Blink it into the tab title for anyone looking at another window.
   if (document.hidden) {
     const original = document.title;
@@ -308,11 +338,12 @@ socket.on("room mention", (data) => {
     document.addEventListener("visibilitychange", restore);
   }
 });
-function updateMuteIcon() {
-  muteIcon.src = soundEnabled
-    ? "images/icons/sound-on.svg"
-    : "images/icons/sound-off.svg";
-  muteIcon.alt = soundEnabled ? "Sound On" : "Sound Off";
+function updateNotifyIcon() {
+  notifyIcon.className = notificationsEnabled ? "fas fa-bell" : "fas fa-bell-slash";
+  notifyToggleButton.setAttribute(
+    "aria-label",
+    notificationsEnabled ? "Notifications On" : "Notifications Off",
+  );
 }
 
 // ── 5. CONTENTEDITABLE UTILITIES ────────────────────────────────────────────
@@ -1841,6 +1872,7 @@ function displayChatMessage(data) {
       }
     }
   } else {
+    if (notificationsEnabled && document.hidden) showTabDot();
     renderOtherUserMessage(chatDiv, newText);
   }
 }
@@ -3182,7 +3214,7 @@ socket.on("user joined", (data) => {
       createUserRow(data, c);
       adjustLayout();
       updateRoomInfo(data);
-      playJoinSound();
+      if (notificationsEnabled && document.hidden) showTabDot();
 
       // A new join can cross the voting threshold
       updateVotesUI(currentVotes);
@@ -3204,7 +3236,7 @@ socket.on("user left", (userId) => {
     if (row) {
       row.remove();
       adjustLayout();
-      playLeaveSound();
+      if (notificationsEnabled && document.hidden) showTabDot();
 
       // Dropping below the voting minimum must clean up vote UI immediately
       adjustVoteButtonVisibility();
@@ -3584,13 +3616,13 @@ window.addEventListener("load", () => {
   adjustLayout();
   initializeAppDirectory();
 
-  // Sound
-  const savedMute = localStorage.getItem("soundEnabled");
-  if (savedMute !== null) {
-    soundEnabled = JSON.parse(savedMute);
-    updateMuteIcon();
+  // Tab notifications
+  const savedNotify = localStorage.getItem("notificationsEnabled");
+  if (savedNotify !== null) {
+    notificationsEnabled = JSON.parse(savedNotify);
+    updateNotifyIcon();
   }
-  muteToggleButton.addEventListener("click", toggleMute);
+  notifyToggleButton.addEventListener("click", toggleNotifications);
 
   // Layout toggle (desktop, client-side view preference). Shown only at <=5
   // users; refreshLayoutToggle() handles when it appears/disappears.
