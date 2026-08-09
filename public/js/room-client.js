@@ -65,9 +65,7 @@ const isStaff = () => currentUserIsDev || currentUserIsMod;
 let selfRawText = "";
 let selfIsFiltered = false;
 
-const mutedUsers = new Set();
 const devContext = new Map();
-const storedMessagesForMutedUsers = new Map();
 
 const MAX_MESSAGE_LENGTH = 5000;
 
@@ -1712,22 +1710,6 @@ function adjustVoteButtonVisibility() {
   });
 }
 
-function adjustMuteButtonVisibility() {
-  document.querySelectorAll(".chat-row").forEach((row) => {
-    const uid = row.dataset.userId;
-    const btn = row.querySelector(".mute-button");
-    if (btn && uid !== currentUserId) {
-      btn.style.display = "inline-block";
-      if (mutedUsers.has(uid)) {
-        btn.innerHTML = "\uD83D\uDD07";
-        btn.classList.add("muted");
-        const ci = row.querySelector(".chat-input");
-        if (ci) ci.style.opacity = "0.3";
-      }
-    }
-  });
-}
-
 // Renders the "vote to mute a bot" status label + button state on bot rows.
 // Mirrors updateVotesUI: the server is the sole authority on the tally and
 // on whether the mute is currently enforced.
@@ -1808,12 +1790,6 @@ function updateCurrentMessages(messages) {
 }
 
 function displayChatMessage(data) {
-  if (mutedUsers.has(data.userId)) {
-    if (!storedMessagesForMutedUsers.has(data.userId))
-      storedMessagesForMutedUsers.set(data.userId, []);
-    storedMessagesForMutedUsers.get(data.userId).push(data);
-    return;
-  }
   const chatDiv = document.querySelector(
     `.chat-row[data-user-id="${data.userId}"] .chat-input`,
   );
@@ -2702,7 +2678,6 @@ function createUserRow(user, container) {
   row.appendChild(wrapper);
   container.appendChild(row);
   adjustVoteButtonVisibility();
-  adjustMuteButtonVisibility();
   return row;
 }
 
@@ -2750,7 +2725,6 @@ function updateRoomUI(roomData) {
   // createUserRow's own visibility passes ran against the off-DOM fragment, so
   // re-run them now that the rows are live.
   adjustVoteButtonVisibility();
-  adjustMuteButtonVisibility();
   adjustLayout();
   if (chatInput)
     setTimeout(() => {
@@ -4642,7 +4616,6 @@ function renderSpectate(data) {
     c.innerHTML = "";
     c.appendChild(frag);
     adjustVoteButtonVisibility();
-    adjustMuteButtonVisibility();
   }
   adjustLayout();
   if (data.currentMessages) updateCurrentMessages(data.currentMessages);
