@@ -210,6 +210,19 @@ html {
   border-color: var(--tk-chat-text);
 }
 
+/* Collapsed state for a vote-muted bot: adjustLayout() shrinks the row to
+   just its header via inline width/height, this hides whatever of the
+   message area doesn't get clipped by that and dims the tile. */
+.chat-row.bot-muted {
+  opacity: 0.6;
+  overflow: hidden;
+  transition: width 0.2s ease, height 0.2s ease, opacity 0.2s ease;
+}
+
+.chat-row.bot-muted .chat-input-wrapper {
+  overflow: hidden;
+}
+
 /* Styling for the user information above chat messages */
 .user-info {
   font-size: 14px;
