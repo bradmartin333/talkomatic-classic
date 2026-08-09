@@ -265,8 +265,8 @@
           </div>
         </div>
         <div class="navbar-section navbar-right">
-          <button id="muteToggle" class="mute-toggle" aria-label="Toggle Sound">
-            <img src="images/icons/sound-on.svg" alt="Sound On" id="muteIcon" />
+          <button id="notifyToggle" class="mute-toggle" aria-label="Notifications On">
+            <i class="fas fa-bell" id="notifyIcon"></i>
           </button>
           <button
             id="layoutToggle"
@@ -350,9 +350,6 @@
         </div>
       </div>
     </div>
-
-    <audio id="joinSound" src="audio/ding.mp3"></audio>
-    <audio id="leaveSound" src="audio/ding.mp3"></audio>
 
     <script src="/socket.io/socket.io.js"></script>
     <!-- Shared staff UI kit (modals, menus, toasts) -->
