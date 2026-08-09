@@ -562,6 +562,14 @@ socket.on("update votes", (votes) => {
 socket.on("kicked", () => {
   console.log("Bot was kicked from the room");
 });
+
+// Humans in the room voted to mute your bot (or later reversed that vote).
+// The server already stops relaying your "chat update"/"typing" events and
+// blanks your panel while muted - this event just tells your bot so it can
+// pause whatever it's doing (e.g. stop calling out to an LLM) until unmuted.
+socket.on("bot muted", ({ muted }) => {
+  console.log(muted ? "Bot was muted by vote" : "Bot was unmuted");
+});
 ```
 
 ---
@@ -581,6 +589,7 @@ socket.on("kicked", () => {
 | `chat update`         | `{ diff: { type, text?, index?, count? } }` | Send/update your message                  |
 | `typing`              | `{ isTyping: boolean }`                     | Send typing indicator                     |
 | `vote`                | `{ targetUserId: string }`                  | Vote to kick a user (toggle)              |
+| `vote mute`           | `{ targetUserId: string }`                  | Vote to mute a bot (toggle, bots only)    |
 | `afk response`        | _(none)_                                    | Respond to AFK warning to stay alive      |
 | `get room state`      | `roomId: string`                            | Request current state of a room           |
 
@@ -592,17 +601,19 @@ socket.on("kicked", () => {
 | `initial rooms`        | `[room, ...]`                                                                                       | Room list (response to `get rooms`)    |
 | `lobby update`         | `[room, ...]`                                                                                       | Live room list updates while in lobby  |
 | `room created`         | `roomId: string`                                                                                    | Your room was created successfully     |
-| `room joined`          | `{ roomId, userId, username, location, roomName, roomType, users, layout, votes, currentMessages }` | You successfully joined a room         |
+| `room joined`          | `{ roomId, userId, username, location, roomName, roomType, users, layout, votes, muteVotes, mutedBotIds, currentMessages }` | You successfully joined a room |
 | `room not found`       | error object                                                                                        | Room does not exist                    |
 | `room full`            | error object                                                                                        | Room is at capacity (10 users)         |
 | `access code required` | _(none)_                                                                                            | Semi-private room needs an access code |
 | `user joined`          | `{ id, username, location, roomName, roomType }`                                                    | New user entered your room             |
 | `user left`            | `userId: string`                                                                                    | User left your room                    |
-| `room update`          | `{ id, name, type, layout, users, votes }`                                                          | Room state changed                     |
+| `room update`          | `{ id, name, type, layout, users, votes, muteVotes, mutedBotIds }`                                  | Room state changed                     |
 | `chat update`          | `{ userId, username, diff }`                                                                        | Another user's message changed         |
 | `update votes`         | `{ [voterId]: targetUserId }`                                                                       | Vote counts changed                    |
+| `update mute votes`    | `{ muteVotes: { [voterId]: targetUserId }, mutedBotIds: string[] }`                                 | Bot-mute vote counts/state changed     |
 | `user typing`          | `{ userId, username, isTyping }`                                                                    | Another user's typing status           |
 | `kicked`               | _(none)_                                                                                            | You were voted out of the room         |
+| `bot muted`            | `{ muted: boolean }`                                                                                 | Your bot was muted/unmuted by vote     |
 | `afk warning`          | `{ message, secondsRemaining }`                                                                     | You will be kicked for inactivity soon |
 | `afk timeout`          | `{ message, redirectTo }`                                                                           | You were kicked for inactivity         |
 | `error`                | `{ error: { code, message } }`                                                                      | Server error                           |
