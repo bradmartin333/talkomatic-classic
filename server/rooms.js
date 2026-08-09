@@ -1454,13 +1454,18 @@ async function leaveRoom(socket, userId) {
       }
 
       if (room.muteVotes) {
-        const affectedTargets = new Set();
-        if (room.muteVotes[userId]) affectedTargets.add(room.muteVotes[userId]);
         delete room.muteVotes[userId];
         for (const vid in room.muteVotes) {
           if (room.muteVotes[vid] === userId) delete room.muteVotes[vid];
         }
         room.mutedBotIds?.delete(userId);
+        // The mute threshold depends on room.users.length, which just changed,
+        // so re-evaluate every bot that currently has votes or is muted - not
+        // only the target this leaver happened to vote for.
+        const affectedTargets = new Set([
+          ...Object.values(room.muteVotes),
+          ...(room.mutedBotIds || []),
+        ]);
         for (const targetId of affectedTargets)
           recomputeBotMuteState(room, targetId);
         emitRoomMuteVoteUpdates(roomId);
