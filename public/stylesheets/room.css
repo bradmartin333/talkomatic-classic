@@ -311,6 +311,32 @@ html {
   outline: none; /* Remove default focus outline */
 }
 
+/* Extended chat indicator: shown over another user's box when its text
+   overflows and this viewer has scrolled away from the bottom. Clicking it
+   snaps back down and re-enables auto-follow as more text streams in. */
+.chat-scroll-indicator {
+  display: none;
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  z-index: 3;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--tk-accent);
+  color: #000;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--tk-accent) 45%, transparent);
+}
+
+.chat-row.has-more-below .chat-scroll-indicator {
+  display: flex;
+}
+
 /* =============================================================================
      Responsive Styles
      -----------------------------------------------------------------------------
@@ -417,6 +443,14 @@ html {
 
   .chat-input {
     font-size: 16px; /* Prevent zoom on iOS */
+  }
+
+  .chat-scroll-indicator {
+    width: 22px;
+    height: 22px;
+    bottom: 5px;
+    right: 5px;
+    font-size: 10px;
   }
 
   .navbar-left {

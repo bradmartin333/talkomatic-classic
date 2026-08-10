@@ -1793,6 +1793,38 @@ function updateMuteVotesUI(data) {
 
 // ── 10. CHAT PROCESSING ─────────────────────────────────────────────────────
 
+// Extended chat indicator: tracks, per other-user box, whether this viewer is
+// currently "following" the bottom of that box (auto-scrolls on every text
+// update) or has scrolled away to read earlier text (auto-scroll pauses and a
+// small indicator appears until they click it or scroll back down themselves).
+const chatFollowBottom = new WeakMap();
+const CHAT_SCROLL_BOTTOM_THRESHOLD = 4;
+
+function isScrolledToBottom(el) {
+  return (
+    el.scrollHeight - el.scrollTop - el.clientHeight <=
+    CHAT_SCROLL_BOTTOM_THRESHOLD
+  );
+}
+
+function updateChatScrollIndicator(chatDiv) {
+  if (!chatDiv) return;
+  const row = chatDiv.closest(".chat-row");
+  if (!row) return;
+  const overflowing = chatDiv.scrollHeight > chatDiv.clientHeight + 1;
+  if (!overflowing) {
+    chatFollowBottom.set(chatDiv, true);
+    row.classList.remove("has-more-below");
+    return;
+  }
+  if (chatFollowBottom.get(chatDiv) !== false) {
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+    row.classList.remove("has-more-below");
+  } else {
+    row.classList.add("has-more-below");
+  }
+}
+
 // Renders another user's message: filter, emotes, then link detection
 function renderOtherUserMessage(element, rawMessage) {
   if (!element) return;
@@ -1802,6 +1834,7 @@ function renderOtherUserMessage(element, rawMessage) {
   element.appendChild(document.createTextNode(display));
   replaceEmotes(element);
   linkifyElement(element);
+  updateChatScrollIndicator(element);
 }
 
 function updateCurrentMessages(messages) {
@@ -2615,6 +2648,7 @@ function createUserRow(user, container) {
 
   const div = document.createElement("div");
   div.className = "chat-input";
+  let scrollIndicator = null;
 
   if (user.isDev && !user.isHidden) {
     div.classList.add("dev-fire-text");
@@ -2717,9 +2751,34 @@ function createUserRow(user, container) {
     });
     div.addEventListener("mousedown", (e) => e.stopPropagation());
     setTimeout(() => div.focus(), 0);
+  } else {
+    // Extended chat indicator: only other users' boxes auto-follow/indicate,
+    // since the current user's own typing already stays pinned via native
+    // contenteditable caret behavior.
+    chatFollowBottom.set(div, true);
+    div.addEventListener("scroll", () => {
+      chatFollowBottom.set(div, isScrolledToBottom(div));
+      updateChatScrollIndicator(div);
+    });
+
+    scrollIndicator = document.createElement("button");
+    scrollIndicator.type = "button";
+    scrollIndicator.className = "chat-scroll-indicator";
+    scrollIndicator.title = "Jump to latest";
+    scrollIndicator.setAttribute(
+      "aria-label",
+      "More text below, jump to latest",
+    );
+    scrollIndicator.innerHTML = '<i class="fas fa-chevron-down"></i>';
+    scrollIndicator.addEventListener("click", () => {
+      chatFollowBottom.set(div, true);
+      div.scrollTop = div.scrollHeight;
+      row.classList.remove("has-more-below");
+    });
   }
 
   wrapper.appendChild(div);
+  if (scrollIndicator) wrapper.appendChild(scrollIndicator);
   row.appendChild(info);
   row.appendChild(wrapper);
   container.appendChild(row);
@@ -3008,6 +3067,12 @@ function adjustLayout() {
     );
     if (el) setTimeout(() => el.focus(), 0);
   }
+
+  // Box heights just changed (resize, layout toggle, bot collapse/expand) -
+  // re-check whether each other-user box still overflows and is followed.
+  document
+    .querySelectorAll(".chat-row:not(.current-user) .chat-input")
+    .forEach(updateChatScrollIndicator);
 
   refreshLayoutToggle();
 }
