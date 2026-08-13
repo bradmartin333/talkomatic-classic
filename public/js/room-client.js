@@ -1989,18 +1989,23 @@ function updateCurrentMessages(messages) {
       selfRawText = text;
       lastSentMessage = text;
       const isActive = document.activeElement === chatDiv;
-      let cursor = isActive ? getCursorPosition(chatDiv) : 0;
-      const display = applyWordFilter(text);
-      chatDiv.innerHTML = "";
-      chatDiv.textContent = display;
-      replaceEmotes(chatDiv);
       selfIsFiltered = wordFilterEnabled && clientWordFilter?.ready;
       if (isActive) {
+        const cursor = getCursorPosition(chatDiv);
+        const display = applyWordFilter(text);
+        chatDiv.innerHTML = "";
+        chatDiv.textContent = display;
+        replaceEmotes(chatDiv);
         try {
           setCursorPosition(chatDiv, Math.min(cursor, display.length));
         } catch {
           placeCursorAtEnd(chatDiv);
         }
+      } else {
+        const display = applyWordFilter(text);
+        chatDiv.innerHTML = "";
+        chatDiv.textContent = display;
+        replaceEmotes(chatDiv);
       }
     } else {
       renderOtherUserMessage(chatDiv, text);
@@ -2015,9 +2020,11 @@ function displayChatMessage(data) {
   if (!chatDiv) return;
 
   let currentText =
-    data.userId !== currentUserId && chatDiv.dataset.rawText !== undefined
-      ? chatDiv.dataset.rawText
-      : getPlainText(chatDiv);
+    data.userId !== currentUserId
+      ? chatDiv.dataset.rawText !== undefined
+        ? chatDiv.dataset.rawText
+        : getPlainText(chatDiv)
+      : selfRawText;
   let newText = "";
   if (data.diff) {
     if (data.diff.type === "full-replace") newText = data.diff.text;
@@ -2043,18 +2050,20 @@ function displayChatMessage(data) {
     selfRawText = newText;
     lastSentMessage = newText;
     const isActive = document.activeElement === chatDiv;
-    let cursor = isActive ? getCursorPosition(chatDiv) : 0;
-    const display = applyWordFilter(selfRawText);
-    chatDiv.innerHTML = "";
-    chatDiv.textContent = display;
-    if (/[;:]/.test(display)) replaceEmotes(chatDiv);
     selfIsFiltered = wordFilterEnabled && clientWordFilter?.ready;
     if (isActive) {
+      const cursor = getCursorPosition(chatDiv);
+      const display = applyWordFilter(selfRawText);
+      chatDiv.innerHTML = "";
+      chatDiv.textContent = display;
+      if (/[;:]/.test(display)) replaceEmotes(chatDiv);
       try {
         setCursorPosition(chatDiv, Math.min(cursor, display.length));
       } catch {
         placeCursorAtEnd(chatDiv);
       }
+    } else {
+      renderOtherUserMessage(chatDiv, newText);
     }
   } else {
     if (notificationsEnabled && document.hidden) showTabDot();
@@ -2692,6 +2701,14 @@ function syncUserRowNote(row, user) {
 // local user's.
 const PANEL_STYLE_KEY = "talkomatic_panelStyle";
 
+// The room's true default colors, independent of any room-wide theme token
+// (--tk-accent/--tk-chat-bg/--tk-chat-text). Must stay in sync with
+// theme-engine.js's TOKENS defaults and room.css's :root block - duplicated
+// here (rather than read live) so "Reset to default" is reachable even for
+// users whose stale pre-CHAT-12 whole-page theme still overrides those
+// tokens at :root, since the room UI no longer offers a way to clear it.
+const TRUE_DEFAULT_PANEL_STYLE = { border: "#ffa500", bg: "#000000", text: "#ffa500" };
+
 function loadSavedPanelStyle() {
   try {
     const raw = localStorage.getItem(PANEL_STYLE_KEY);
@@ -2842,11 +2859,11 @@ function showPanelStylePopover(anchorEl, row, user) {
   clearBtn.className = "panel-style-clear";
   clearBtn.textContent = "Reset to default";
   clearBtn.addEventListener("click", () => {
-    draft.border = draft.bg = draft.text = null;
-    applyPanelStyleToRow(row, { panelStyle: null });
-    savePanelStyle(null);
+    Object.assign(draft, TRUE_DEFAULT_PANEL_STYLE);
+    applyPanelStyleToRow(row, { panelStyle: draft });
+    savePanelStyle(draft);
     clearTimeout(panelStyleEmitTimer);
-    socket.emit("set panel style", {});
+    socket.emit("set panel style", draft);
     closePanelStylePopover();
   });
   pop.appendChild(clearBtn);
@@ -3123,6 +3140,33 @@ function createUserRow(user, container) {
       }
     });
     div.addEventListener("mousedown", (e) => e.stopPropagation());
+    // Rich-render (code/emphasis/links/thumbnails, same pipeline as other
+    // users) once the box stops being edited; revert to plain the instant
+    // it's focused again so getPlainText()/updateSentMessage() always read
+    // a lossless DOM (applyEmphasis/createCodeNode strip markdown delimiters
+    // from the text content, which would corrupt the next keystroke).
+    div.addEventListener("blur", () => {
+      renderOtherUserMessage(div, selfRawText);
+    });
+    div.addEventListener("focus", () => {
+      let cursor = 0;
+      try {
+        cursor = getCursorPosition(div);
+      } catch {}
+      const display =
+        wordFilterEnabled && clientWordFilter?.ready
+          ? applyWordFilter(selfRawText)
+          : selfRawText;
+      div.innerHTML = "";
+      div.textContent = display;
+      replaceEmotes(div);
+      try {
+        setCursorPosition(div, Math.min(cursor, display.length));
+      } catch {
+        placeCursorAtEnd(div);
+      }
+      selfIsFiltered = wordFilterEnabled && clientWordFilter?.ready;
+    });
     setTimeout(() => div.focus(), 0);
   } else {
     // Extended chat indicator: only other users' boxes auto-follow/indicate,
@@ -3766,19 +3810,13 @@ socket.on("room update", (roomData) => {
       // If you're actively typing in your own box, leave it completely alone.
       // Rebuilding the DOM here is what was jumping the caret when someone
       // joined. Your local input is already the source of truth.
+      selfRawText = rawVal;
       const typingHere =
         activeEl?.classList.contains("chat-input") &&
         activeEl.closest(".chat-row")?.dataset.userId === uid;
-      if (typingHere) {
-        selfRawText = rawVal;
-        return;
-      }
-      selfRawText = rawVal;
-      const display = applyWordFilter(rawVal);
-      ci.innerHTML = "";
-      ci.textContent = display;
-      replaceEmotes(ci);
+      if (typingHere) return;
       selfIsFiltered = wordFilterEnabled && clientWordFilter?.ready;
+      renderOtherUserMessage(ci, rawVal);
     } else {
       renderOtherUserMessage(ci, rawVal);
     }
