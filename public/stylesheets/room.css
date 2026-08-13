@@ -201,13 +201,13 @@ html {
 .chat-row {
   display: flex;
   flex-direction: column;
-  border: 1px solid #ccc;
+  border: 1px solid var(--tk-row-border, #ccc);
   box-sizing: border-box;
 }
 
 /* Highlight for the current user’s messages */
 .chat-row.current-user {
-  border-color: var(--tk-chat-text);
+  border-color: var(--tk-row-border, var(--tk-chat-text));
 }
 
 /* Collapsed state for a vote-muted bot: adjustLayout() shrinks the row to
@@ -297,18 +297,106 @@ html {
   background: #ff0000;
 }
 
-/* Chat input box for typing messages */
+/* Chat input box for typing messages. Background/text color come from the
+   !important pre-paint rule in room.html's <head> (it has to win before
+   effects.css's theme layer loads); font-family is set in effects.css
+   (loaded after this file, so a rule here would never win the tie). Both
+   already fall back through --tk-row-chat-* (per-user panel style) before
+   the room-wide theme token. */
 .chat-input {
   flex-grow: 1;
   padding: 5px;
   border: none;
-  font-family: talkoText, Arial, sans-serif;
   font-size: 24px;
   resize: none;
   box-sizing: border-box;
-  background-color: var(--tk-card);
-  color: var(--tk-accent);
   outline: none; /* Remove default focus outline */
+}
+
+/* Per-user panel style button + popover (chat panel only: border, background,
+   text color, font - never the rest of the app). Own row only. */
+.panel-style-button {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  margin-left: 4px;
+  opacity: 0.75;
+  padding: 2px 4px;
+}
+
+.panel-style-button:hover {
+  opacity: 1;
+}
+
+.panel-style-popover {
+  position: fixed;
+  z-index: 100001;
+  width: 220px;
+  background: #000;
+  border: 1px solid #616161;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  font-family: talkoSS, Arial, sans-serif;
+}
+
+.panel-style-popover-title {
+  color: #ff9800;
+  font-size: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #333;
+  margin-bottom: 10px;
+}
+
+.panel-style-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.panel-style-row label {
+  flex: 1;
+  color: #ccc;
+  font-size: 12px;
+}
+
+.panel-style-row input[type="color"] {
+  width: 26px;
+  height: 26px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+  background: none;
+  padding: 0;
+}
+
+.panel-style-row select {
+  flex-basis: 130px;
+  background: #1b1b1b;
+  color: #fff;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 4px;
+  font-size: 12px;
+}
+
+.panel-style-clear {
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: #1b1b1b;
+  color: #ccc;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.panel-style-clear:hover {
+  background: #2a2a2a;
 }
 
 /* Extended chat indicator: shown over another user's box when its text
@@ -425,6 +513,11 @@ html {
   .user-info .staff-action-button {
     font-size: 12px;
     margin-left: 2px;
+  }
+  .user-info .panel-style-button {
+    font-size: 12px;
+    margin-left: 2px;
+    padding: 1px 3px;
   }
   .user-info .note-action-button.has-note {
     color: #ffb74d;

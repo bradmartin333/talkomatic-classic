@@ -371,6 +371,15 @@ function apiAuth(req, res, next) {
 
 // ── Validation ──────────────────────────────────────────────────────────────
 
+// Kept in sync with public/js/theme-engine.js's FONTS list by convention
+// (same duplication pattern as server/themes.js).
+const PANEL_STYLE_FONTS = [
+  "", "Inter", "Poppins", "Nunito", "Montserrat", "Lato", "Roboto Slab",
+  "Merriweather", "JetBrains Mono", "Space Mono", "VT323", "Press Start 2P",
+  "Orbitron", "Bebas Neue", "Comic Neue",
+];
+const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+
 const validationRules = {
   username: (v) => {
     if (!v || typeof v !== "string")
@@ -424,6 +433,21 @@ const validationRules = {
       return "Avatar Discord ID must be 17-20 digits.";
     if (!/^(?:a_)?[a-f0-9]{32}$/i.test(String(v.hash || "")))
       return "Avatar hash is invalid.";
+    return null;
+  },
+  // Per-user chat panel appearance: border/bg/text are optional hex colors,
+  // font is optional and must come from the same whitelist the theme editor
+  // uses. Everything is scoped to the chat panel only (see room.css).
+  panelStyle: (v) => {
+    if (v === undefined || v === null) return null;
+    if (typeof v !== "object") return "Panel style must be an object.";
+    for (const key of ["border", "bg", "text"]) {
+      const val = v[key];
+      if (val !== undefined && val !== null && val !== "" && !HEX_COLOR.test(String(val)))
+        return `Panel style ${key} must be a hex color.`;
+    }
+    if (v.font !== undefined && v.font !== null && v.font !== "" && !PANEL_STYLE_FONTS.includes(v.font))
+      return "Panel style font is not a recognized font.";
     return null;
   },
 };

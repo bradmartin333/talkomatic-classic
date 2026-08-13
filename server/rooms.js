@@ -30,6 +30,7 @@ const {
   isBlacklisted,
   createIPBasedUser,
   validateObject,
+  validate,
 } = require("./security");
 
 // Effective capacity for a room: a per-room override (set by a dev inside the
@@ -600,6 +601,9 @@ function formatUserForSocket(user, recipientSocket) {
   // Discord avatar: validated snowflake id + CDN hash only; clients rebuild
   // the cdn.discordapp.com URL themselves.
   if (user.avatar) formatted.avatar = user.avatar;
+  // Chat panel appearance (border/bg/text/font), scoped to the panel only.
+  // Unconditionally visible, same as avatar - not gated behind isDev/isMod.
+  if (user.panelStyle) formatted.panelStyle = user.panelStyle;
 
   // Hidden staff render as plain users to everyone EXCEPT a dev recipient: a
   // dev always needs to know who is staff, so a hidden (or vanished) dev/mod
@@ -2981,6 +2985,32 @@ function registerSocketHandlers(opts) {
         else room.muteVotes[userId] = data.targetUserId;
         recomputeBotMuteState(room, data.targetUserId);
         emitRoomMuteVoteUpdates(roomId);
+      }),
+    );
+
+    // ── Panel Style (border/bg/text color + font, chat panel only) ──────
+    socket.on(
+      "set panel style",
+      safe(async (data) => {
+        const userId = socket.handshake.session?.userId;
+        const roomId = socket.roomId;
+        if (!roomId || !userId) return;
+        const room = state.rooms.get(roomId);
+        const user = room?.users.find((u) => u.id === userId);
+        if (!user) return;
+        if (validate("panelStyle", data)) return;
+        const hasAny = data && (data.border || data.bg || data.text || data.font);
+        if (!hasAny) {
+          delete user.panelStyle;
+        } else {
+          user.panelStyle = {
+            border: data.border || null,
+            bg: data.bg || null,
+            text: data.text || null,
+            font: data.font || null,
+          };
+        }
+        emitRoomSnapshot(roomId);
       }),
     );
 

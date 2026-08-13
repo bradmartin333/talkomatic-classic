@@ -1435,16 +1435,6 @@ const APPS_DATA = {
     openInNewTab: false,
     action: "piano",
   },
-  themeEditor: {
-    name: "Theme Editor",
-    description: "Recolor Talkomatic your way, no CSS needed",
-    icon: "🎨",
-    iconClass: "placeholder",
-    status: "available",
-    url: null,
-    openInNewTab: false,
-    action: "themeEditor",
-  },
 };
 let appDirectoryDropdown = null;
 
@@ -1493,8 +1483,6 @@ function createAppDirectoryDropdown() {
           openTalkoboard();
         } else if (app.action === "piano") {
           openPiano();
-        } else if (app.action === "themeEditor") {
-          if (window.ThemeEditor) window.ThemeEditor.open();
         } else if (app.openInNewTab) {
           window.open(app.url, "_blank", "noopener,noreferrer");
         } else {
@@ -2514,6 +2502,180 @@ function syncUserRowNote(row, user) {
   if (noteBtn) noteBtn.classList.toggle("has-note", !!note);
 }
 
+// ── Panel Style (per-user chat panel border/background/text/font) ──────────
+// Scoped to the chat panel ONLY (.chat-row / .chat-input), never the rest of
+// the app - unlike theme-engine.js, which themes the whole page. Applied as
+// CSS custom properties on the row so it works for every user's row (this is
+// shared UI, everyone in the room sees everyone else's panel), not just the
+// local user's.
+const PANEL_STYLE_KEY = "talkomatic_panelStyle";
+
+function loadSavedPanelStyle() {
+  try {
+    const raw = localStorage.getItem(PANEL_STYLE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") return parsed;
+  } catch (e) {}
+  return null;
+}
+
+function savePanelStyle(style) {
+  const hasAny = style && (style.border || style.bg || style.text || style.font);
+  if (hasAny) localStorage.setItem(PANEL_STYLE_KEY, JSON.stringify(style));
+  else localStorage.removeItem(PANEL_STYLE_KEY);
+}
+
+function applyPanelStyleToRow(row, user) {
+  if (!row) return;
+  const style = (user && user.panelStyle) || null;
+  const vars = {
+    "--tk-row-border": style && style.border,
+    "--tk-row-chat-bg": style && style.bg,
+    "--tk-row-chat-text": style && style.text,
+    "--tk-row-chat-font": style && style.font ? `"${style.font}", talkoSS, Arial, sans-serif` : null,
+  };
+  for (const [prop, val] of Object.entries(vars)) {
+    if (val) row.style.setProperty(prop, val);
+    else row.style.removeProperty(prop);
+  }
+}
+
+// No server-side rate limiter exists for this event (unlike chat/typing), so
+// the client-side debounce is the only mitigation and is treated as required.
+let panelStyleEmitTimer = null;
+function emitPanelStyle(style) {
+  clearTimeout(panelStyleEmitTimer);
+  panelStyleEmitTimer = setTimeout(() => {
+    socket.emit("set panel style", style || {});
+  }, 400);
+}
+
+function closePanelStylePopover() {
+  const existing = document.getElementById("panelStylePopover");
+  if (existing) existing.remove();
+  document.removeEventListener("click", onPanelStylePopoverOutsideClick, true);
+}
+
+function onPanelStylePopoverOutsideClick(e) {
+  const pop = document.getElementById("panelStylePopover");
+  if (!pop) return;
+  if (pop.contains(e.target) || e.target.closest(".panel-style-button")) return;
+  closePanelStylePopover();
+}
+
+function makePanelStyleColorRow(labelText, initial, onChange) {
+  const row = document.createElement("div");
+  row.className = "panel-style-row";
+  const label = document.createElement("label");
+  label.textContent = labelText;
+  const input = document.createElement("input");
+  input.type = "color";
+  const hexPattern = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+  input.value = initial && hexPattern.test(initial) ? initial : "#000000";
+  input.addEventListener("input", () => onChange(input.value));
+  row.appendChild(label);
+  row.appendChild(input);
+  return row;
+}
+
+function showPanelStylePopover(anchorEl, row, user) {
+  closePanelStylePopover();
+  const current = (user && user.panelStyle) || {};
+
+  const pop = document.createElement("div");
+  pop.id = "panelStylePopover";
+  pop.className = "panel-style-popover";
+
+  const title = document.createElement("div");
+  title.className = "panel-style-popover-title";
+  title.textContent = "Chat panel style";
+  pop.appendChild(title);
+
+  const draft = {
+    border: current.border || null,
+    bg: current.bg || null,
+    text: current.text || null,
+    font: current.font || null,
+  };
+
+  const commit = () => {
+    applyPanelStyleToRow(row, { panelStyle: draft });
+    savePanelStyle(draft);
+    emitPanelStyle(draft);
+  };
+
+  pop.appendChild(
+    makePanelStyleColorRow("Border", draft.border || "#cccccc", (v) => {
+      draft.border = v;
+      commit();
+    }),
+  );
+  pop.appendChild(
+    makePanelStyleColorRow("Background", draft.bg || "#000000", (v) => {
+      draft.bg = v;
+      commit();
+    }),
+  );
+  pop.appendChild(
+    makePanelStyleColorRow("Text", draft.text || "#ffa500", (v) => {
+      draft.text = v;
+      commit();
+    }),
+  );
+
+  const fontRow = document.createElement("div");
+  fontRow.className = "panel-style-row";
+  const fontLabel = document.createElement("label");
+  fontLabel.textContent = "Font";
+  const fontSelect = document.createElement("select");
+  (window.ThemeEngine ? window.ThemeEngine.FONTS : [""]).forEach((f) => {
+    const opt = document.createElement("option");
+    opt.value = f;
+    opt.textContent = f || "Default";
+    if (f === (draft.font || "")) opt.selected = true;
+    fontSelect.appendChild(opt);
+  });
+  fontSelect.addEventListener("change", () => {
+    draft.font = fontSelect.value || null;
+    commit();
+  });
+  fontRow.appendChild(fontLabel);
+  fontRow.appendChild(fontSelect);
+  pop.appendChild(fontRow);
+
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "panel-style-clear";
+  clearBtn.textContent = "Reset to default";
+  clearBtn.addEventListener("click", () => {
+    draft.border = draft.bg = draft.text = draft.font = null;
+    applyPanelStyleToRow(row, { panelStyle: null });
+    savePanelStyle(null);
+    clearTimeout(panelStyleEmitTimer);
+    socket.emit("set panel style", {});
+    closePanelStylePopover();
+  });
+  pop.appendChild(clearBtn);
+
+  document.body.appendChild(pop);
+  const r = anchorEl.getBoundingClientRect();
+  const pw = pop.offsetWidth;
+  const ph = pop.offsetHeight;
+  let top = r.bottom + 4;
+  if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 4);
+  let left = r.left;
+  if (left + pw > window.innerWidth - 8)
+    left = Math.max(8, window.innerWidth - pw - 8);
+  pop.style.top = top + "px";
+  pop.style.left = left + "px";
+
+  setTimeout(
+    () => document.addEventListener("click", onPanelStylePopoverOutsideClick, true),
+    0,
+  );
+}
+
 function createUserRow(user, container) {
   const row = document.createElement("div");
   row.classList.add("chat-row");
@@ -2579,6 +2741,23 @@ function createUserRow(user, container) {
   nameEl.className = "ui-name";
   nameEl.textContent = user.username;
   info.appendChild(nameEl);
+
+  // Panel style picker: only on your own row. Colors/font apply to this chat
+  // panel only and are visible to everyone in the room (see applyPanelStyleToRow).
+  if (user.id === currentUserId) {
+    const paletteBtn = document.createElement("button");
+    paletteBtn.type = "button";
+    paletteBtn.className = "panel-style-button";
+    paletteBtn.innerHTML = '<i class="fas fa-palette"></i>';
+    paletteBtn.title = "Customize this chat panel";
+    paletteBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const pop = document.getElementById("panelStylePopover");
+      if (pop) closePanelStylePopover();
+      else showPanelStylePopover(paletteBtn, row, user);
+    });
+    info.appendChild(paletteBtn);
+  }
 
   // Vote-to-mute a bot: status label to the left of the vote button, both
   // shown only on bot rows (bots are any socket authenticated via a bot
@@ -2658,17 +2837,17 @@ function createUserRow(user, container) {
     );
   }
 
-  if (user.devColor && user.isDev && !user.isHidden) {
-    div.style.setProperty("color", user.devColor, "important");
-  }
-
   div.contentEditable = user.id === currentUserId;
   div.style.cssText =
-    "width:100%;height:100%;background:black;color:orange;overflow-x:hidden;overflow-y:auto;padding:6px 8px;box-sizing:border-box;outline:none;white-space:pre-wrap;word-break:break-word;position:absolute;top:0;left:0;z-index:2";
+    "width:100%;height:100%;overflow-x:hidden;overflow-y:auto;padding:6px 8px;box-sizing:border-box;outline:none;white-space:pre-wrap;word-break:break-word;position:absolute;top:0;left:0;z-index:2";
   div.spellcheck = false;
 
+  applyPanelStyleToRow(row, user);
+
+  // Dev text color wins over a personal panel style, same precedence as the
+  // dev/mod rank border flair below.
   if (user.devColor && user.isDev && !user.isHidden) {
-    div.style.color = user.devColor;
+    div.style.setProperty("color", user.devColor, "important");
   }
 
   if (user.id === currentUserId) {
@@ -2882,7 +3061,6 @@ function injectStyles() {
     .emote-stack { display:inline-grid; grid-template-areas:"stack"; align-items:center; justify-items:center; vertical-align:middle; margin:0 2px; line-height:0; }
     .emote-stack > .emote { grid-area:stack; margin:0; }
     .emote-overlay { margin:0; }
-    .chat-input { background-color:black; color:orange; outline:none; white-space:pre-wrap; word-break:break-word; }
     .emote-autocomplete { position:absolute; z-index:10000; background:#333; border:1px solid #555; border-radius:4px; max-height:300px; overflow-y:auto; width:200px; box-shadow:0 3px 10px rgba(0,0,0,0.3); }
     .emote-autocomplete-header { padding:5px 10px; font-weight:bold; border-bottom:1px solid #555; color:#eee; }
     .emote-autocomplete-list { max-height:250px; overflow-y:auto; }
@@ -3215,6 +3393,15 @@ socket.on("room joined", (data) => {
   if (data.muteVotes || data.mutedBotIds) updateMuteVotesUI(data);
   if (data.currentMessages) updateCurrentMessages(data.currentMessages);
 
+  // Restore this user's chat panel style (border/bg/text/font) so a rejoin or
+  // reload re-applies it locally and re-broadcasts it to everyone else in the
+  // room - the server drops it when the user leaves.
+  const savedPanelStyle = loadSavedPanelStyle();
+  if (savedPanelStyle) {
+    applyPanelStyleToRow(getCurrentUserRow(), { panelStyle: savedPanelStyle });
+    socket.emit("set panel style", savedPanelStyle);
+  }
+
   // Appearance controls (hide/vanish/color) now live inside the Staff panel,
   // so the navbar only gains a single "Staff" button - keeps mobile tidy.
   if (currentUserIsDev) {
@@ -3364,6 +3551,7 @@ socket.on("room update", (roomData) => {
       const row = document.querySelector(`.chat-row[data-user-id="${u.id}"]`);
       if (!row) return;
       applyDevAppearanceToRow(row, u);
+      applyPanelStyleToRow(row, u);
       syncUserRowNote(row, u);
     });
   }
