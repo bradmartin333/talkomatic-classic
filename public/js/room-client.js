@@ -2758,62 +2758,15 @@ function emitPanelStyle(style) {
   }, 400);
 }
 
-function closePanelStylePopover() {
-  const existing = document.getElementById("panelStylePopover");
-  if (existing) existing.remove();
-  document.removeEventListener("click", onPanelStylePopoverOutsideClick, true);
-}
+// Builds the 3 inline color swatches (border/background/text) + reset-all
+// button shown directly in your own row - no popover/dialog, every change
+// applies and saves on the "input" event itself (fires per keystroke/drag
+// on a color input), so nothing needs an explicit save/confirm step.
+function buildPanelStyleControls(row, user) {
+  const wrap = document.createElement("div");
+  wrap.className = "panel-style-inline";
 
-function onPanelStylePopoverOutsideClick(e) {
-  const pop = document.getElementById("panelStylePopover");
-  if (!pop) return;
-  if (pop.contains(e.target) || e.target.closest(".panel-style-button")) return;
-  closePanelStylePopover();
-}
-
-// Converts a computed "rgb(r, g, b)" / "rgba(r, g, b, a)" string to hex, so a
-// swatch can preview the color a reset would actually produce (e.g. your own
-// row's default border is the theme's accent color, not plain gray).
-function rgbToHex(rgb) {
-  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(rgb || "");
-  if (!m) return "#000000";
-  return (
-    "#" +
-    m
-      .slice(1, 4)
-      .map((n) => Number(n).toString(16).padStart(2, "0"))
-      .join("")
-  );
-}
-
-function makePanelStyleColorRow(labelText, initial, onChange) {
-  const row = document.createElement("div");
-  row.className = "panel-style-row";
-  const label = document.createElement("label");
-  label.textContent = labelText;
-  const input = document.createElement("input");
-  input.type = "color";
-  const hexPattern = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
-  input.value = initial && hexPattern.test(initial) ? initial : "#000000";
-  input.addEventListener("input", () => onChange(input.value));
-  row.appendChild(label);
-  row.appendChild(input);
-  return row;
-}
-
-function showPanelStylePopover(anchorEl, row, user) {
-  closePanelStylePopover();
   const current = (user && user.panelStyle) || {};
-
-  const pop = document.createElement("div");
-  pop.id = "panelStylePopover";
-  pop.className = "panel-style-popover";
-
-  const title = document.createElement("div");
-  title.className = "panel-style-popover-title";
-  title.textContent = "Chat panel style";
-  pop.appendChild(title);
-
   const draft = {
     border: current.border || null,
     bg: current.bg || null,
@@ -2826,64 +2779,68 @@ function showPanelStylePopover(anchorEl, row, user) {
     emitPanelStyle(draft);
   };
 
-  // Swatch defaults reflect whatever is ACTUALLY rendered right now (with no
-  // draft override yet applied for that field), so they preview the same
-  // color "Reset to default" would produce - not a guessed fallback. Your own
-  // row's default border, for example, is the theme's accent color, not gray.
-  const ci = row.querySelector(".chat-input");
-  const resolvedBorder = rgbToHex(getComputedStyle(row).borderColor);
-  const resolvedBg = rgbToHex(getComputedStyle(ci).backgroundColor);
-  const resolvedText = rgbToHex(getComputedStyle(ci).color);
+  // An untouched swatch shows the same color a reset would produce. Read from
+  // the constants rather than getComputedStyle(): on a hard reload this runs
+  // before room.css has necessarily applied, and the computed value would
+  // then be the UA default (black) for all three.
+  const hexPattern = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 
-  pop.appendChild(
-    makePanelStyleColorRow("Border", draft.border || resolvedBorder, (v) => {
+  const makeSwatch = (title, initial, onChange) => {
+    const input = document.createElement("input");
+    input.type = "color";
+    input.className = "panel-style-swatch";
+    input.title = title;
+    input.setAttribute("aria-label", title);
+    input.value = initial && hexPattern.test(initial) ? initial : "#000000";
+    input.addEventListener("input", () => onChange(input.value));
+    wrap.appendChild(input);
+    return input;
+  };
+
+  const borderInput = makeSwatch(
+    "Panel border color",
+    draft.border || TRUE_DEFAULT_PANEL_STYLE.border,
+    (v) => {
       draft.border = v;
       commit();
-    }),
+    },
   );
-  pop.appendChild(
-    makePanelStyleColorRow("Background", draft.bg || resolvedBg, (v) => {
+  const bgInput = makeSwatch(
+    "Panel background color",
+    draft.bg || TRUE_DEFAULT_PANEL_STYLE.bg,
+    (v) => {
       draft.bg = v;
       commit();
-    }),
+    },
   );
-  pop.appendChild(
-    makePanelStyleColorRow("Text", draft.text || resolvedText, (v) => {
+  const textInput = makeSwatch(
+    "Panel text color",
+    draft.text || TRUE_DEFAULT_PANEL_STYLE.text,
+    (v) => {
       draft.text = v;
       commit();
-    }),
+    },
   );
 
-  const clearBtn = document.createElement("button");
-  clearBtn.type = "button";
-  clearBtn.className = "panel-style-clear";
-  clearBtn.textContent = "Reset to default";
-  clearBtn.addEventListener("click", () => {
+  const resetBtn = document.createElement("button");
+  resetBtn.type = "button";
+  resetBtn.className = "panel-style-reset";
+  resetBtn.innerHTML = '<i class="fas fa-rotate-left"></i>';
+  resetBtn.title = "Reset panel colors to default";
+  resetBtn.setAttribute("aria-label", "Reset panel colors to default");
+  resetBtn.addEventListener("click", () => {
     Object.assign(draft, TRUE_DEFAULT_PANEL_STYLE);
+    borderInput.value = draft.border;
+    bgInput.value = draft.bg;
+    textInput.value = draft.text;
     applyPanelStyleToRow(row, { panelStyle: draft });
     savePanelStyle(draft);
     clearTimeout(panelStyleEmitTimer);
     socket.emit("set panel style", draft);
-    closePanelStylePopover();
   });
-  pop.appendChild(clearBtn);
+  wrap.appendChild(resetBtn);
 
-  document.body.appendChild(pop);
-  const r = anchorEl.getBoundingClientRect();
-  const pw = pop.offsetWidth;
-  const ph = pop.offsetHeight;
-  let top = r.bottom + 4;
-  if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 4);
-  let left = r.left;
-  if (left + pw > window.innerWidth - 8)
-    left = Math.max(8, window.innerWidth - pw - 8);
-  pop.style.top = top + "px";
-  pop.style.left = left + "px";
-
-  setTimeout(
-    () => document.addEventListener("click", onPanelStylePopoverOutsideClick, true),
-    0,
-  );
+  return wrap;
 }
 
 function createUserRow(user, container) {
@@ -2951,24 +2908,6 @@ function createUserRow(user, container) {
   nameEl.className = "ui-name";
   nameEl.textContent = user.username;
   info.appendChild(nameEl);
-
-  // Panel style picker: only on your own row. Colors apply to this chat
-  // panel only and are visible to everyone in the room (see applyPanelStyleToRow).
-  if (user.id === currentUserId) {
-    const paletteBtn = document.createElement("button");
-    paletteBtn.type = "button";
-    paletteBtn.className = "panel-style-button";
-    paletteBtn.innerHTML = '<i class="fas fa-palette"></i>';
-    paletteBtn.title = "Customize this chat panel";
-    paletteBtn.setAttribute("aria-label", "Customize this chat panel");
-    paletteBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const pop = document.getElementById("panelStylePopover");
-      if (pop) closePanelStylePopover();
-      else showPanelStylePopover(paletteBtn, row, user);
-    });
-    info.appendChild(paletteBtn);
-  }
 
   // Vote-to-mute a bot: status label to the left of the vote button, both
   // shown only on bot rows (bots are any socket authenticated via a bot
@@ -3199,6 +3138,13 @@ function createUserRow(user, container) {
   row.appendChild(info);
   row.appendChild(wrapper);
   container.appendChild(row);
+
+  // Panel style controls: only on your own row. Colors apply to this chat
+  // panel only and are visible to everyone in the room (see applyPanelStyleToRow).
+  if (user.id === currentUserId) {
+    info.appendChild(buildPanelStyleControls(row, user));
+  }
+
   adjustVoteButtonVisibility();
   return row;
 }
