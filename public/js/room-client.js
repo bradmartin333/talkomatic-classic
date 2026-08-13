@@ -1813,15 +1813,168 @@ function updateChatScrollIndicator(chatDiv) {
   }
 }
 
-// Renders another user's message: filter, emotes, then link detection
+// ── MARKDOWN-LITE: CODE ──────────────────────────────────────────────────
+// Splits a raw message into ordered {type, value} segments so fenced/inline
+// code content never reaches the word filter, emotes, links, or emphasis
+// (backticks escape their contents, same as everywhere else markdown works).
+
+// Phase 1: pull out ```fenced``` blocks, line by line. An unterminated fence
+// runs to the end of the message rather than swallowing nothing.
+function splitCodeBlocks(text) {
+  const lines = text.split("\n");
+  const segments = [];
+  let buf = [];
+  const flushText = () => {
+    if (buf.length) segments.push({ type: "text", value: buf.join("\n") });
+    buf = [];
+  };
+  let i = 0;
+  while (i < lines.length) {
+    if (/^\s*```/.test(lines[i])) {
+      flushText();
+      i++;
+      const block = [];
+      while (i < lines.length && !/^\s*```/.test(lines[i])) block.push(lines[i++]);
+      i++; // consume the closing fence, if there is one
+      segments.push({ type: "code-block", value: block.join("\n") });
+      continue;
+    }
+    buf.push(lines[i]);
+    i++;
+  }
+  flushText();
+  return segments;
+}
+
+// Phase 2: within each remaining text segment, pull out `inline code` spans.
+// Content is restricted to a single line so a forgotten closing backtick
+// can't swallow the rest of the message.
+function splitInlineCode(segments) {
+  const result = [];
+  const inlineRe = /(`+)([^\n]+?)\1/g;
+  for (const seg of segments) {
+    if (seg.type !== "text") {
+      result.push(seg);
+      continue;
+    }
+    let last = 0;
+    let match;
+    inlineRe.lastIndex = 0;
+    while ((match = inlineRe.exec(seg.value)) !== null) {
+      if (match.index > last)
+        result.push({ type: "text", value: seg.value.slice(last, match.index) });
+      result.push({ type: "code-inline", value: match[2] });
+      last = match.index + match[0].length;
+    }
+    if (last < seg.value.length)
+      result.push({ type: "text", value: seg.value.slice(last) });
+  }
+  return result;
+}
+
+function createCodeNode(text, isBlock) {
+  const node = document.createElement(isBlock ? "pre" : "code");
+  node.className = isBlock ? "chat-code-block" : "chat-code-inline";
+  node.textContent = text;
+  return node;
+}
+
+// ── MARKDOWN-LITE: BOLD/ITALIC ──────────────────────────────────────────────
+// Non-destructive text-node walk, same shape as linkifyElement() below: it
+// must run AFTER replaceEmotes() (which does a full innerHTML rebuild) and
+// is safe to run after linkifyElement() since it skips .chat-link contents.
+const EMPHASIS_PATTERN =
+  /\*\*([^\n]+?)\*\*|__([^\n]+?)__|\*([^*\n]+?)\*|_([^_\n]+?)_/g;
+
+function applyEmphasis(element) {
+  if (!element) return;
+
+  const walker = document.createTreeWalker(
+    element,
+    NodeFilter.SHOW_TEXT,
+    null,
+    false,
+  );
+  const candidates = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (
+      node.parentNode?.closest?.(
+        ".chat-link, .chat-code-inline, .chat-code-block",
+      )
+    )
+      continue;
+    EMPHASIS_PATTERN.lastIndex = 0;
+    if (EMPHASIS_PATTERN.test(node.textContent)) candidates.push(node);
+  }
+
+  for (const node of candidates) {
+    const text = node.textContent;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    let found = false;
+    let match;
+
+    EMPHASIS_PATTERN.lastIndex = 0;
+    while ((match = EMPHASIS_PATTERN.exec(text)) !== null) {
+      const before = match.index > 0 ? text[match.index - 1] : "";
+      const after = text[EMPHASIS_PATTERN.lastIndex] || "";
+      // snake_case and file_names are not italics.
+      if (match[4] != null && (/\w/.test(before) || /\w/.test(after))) continue;
+
+      frag.appendChild(document.createTextNode(text.slice(last, match.index)));
+      const inner = match[1] ?? match[2] ?? match[3] ?? match[4];
+      const tag = match[1] != null || match[2] != null ? "strong" : "em";
+      const emphasisEl = document.createElement(tag);
+      emphasisEl.textContent = inner;
+      frag.appendChild(emphasisEl);
+
+      last = match.index + match[0].length;
+      found = true;
+    }
+
+    if (!found) continue;
+    frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  }
+}
+
+// Runs word filter → emotes → link detection → emphasis on a plain-text
+// segment, inside a detached wrapper so the existing (element-wide) helpers
+// can be reused unmodified: their "is this the focused element" branches
+// simply no-op on a disconnected node.
+function buildTextSegmentNodes(text) {
+  const wrapper = document.createElement("span");
+  const display = applyWordFilter(text);
+  wrapper.appendChild(document.createTextNode(display));
+  replaceEmotes(wrapper);
+  linkifyElement(wrapper);
+  applyEmphasis(wrapper);
+  return wrapper;
+}
+
+// Renders another user's message: code segments are carved out first, then
+// each remaining text segment gets filter/emotes/links/emphasis, then any
+// image-link thumbnails are added.
 function renderOtherUserMessage(element, rawMessage) {
   if (!element) return;
   element.dataset.rawText = rawMessage;
-  const display = applyWordFilter(rawMessage);
   element.innerHTML = "";
-  element.appendChild(document.createTextNode(display));
-  replaceEmotes(element);
-  linkifyElement(element);
+
+  const frag = document.createDocumentFragment();
+  const segments = splitInlineCode(splitCodeBlocks(rawMessage));
+  for (const seg of segments) {
+    if (seg.type === "code-inline") {
+      frag.appendChild(createCodeNode(seg.value, false));
+    } else if (seg.type === "code-block") {
+      frag.appendChild(createCodeNode(seg.value, true));
+    } else {
+      const wrapper = buildTextSegmentNodes(seg.value);
+      while (wrapper.firstChild) frag.appendChild(wrapper.firstChild);
+    }
+  }
+  element.appendChild(frag);
+  addImageThumbnails(element);
   updateChatScrollIndicator(element);
 }
 
@@ -1861,7 +2014,10 @@ function displayChatMessage(data) {
   );
   if (!chatDiv) return;
 
-  let currentText = getPlainText(chatDiv);
+  let currentText =
+    data.userId !== currentUserId && chatDiv.dataset.rawText !== undefined
+      ? chatDiv.dataset.rawText
+      : getPlainText(chatDiv);
   let newText = "";
   if (data.diff) {
     if (data.diff.type === "full-replace") newText = data.diff.text;
@@ -1979,6 +2135,32 @@ function linkifyElement(element) {
     if (!found) continue;
     frag.appendChild(document.createTextNode(text.slice(last)));
     node.parentNode.replaceChild(frag, node);
+  }
+}
+
+// Renders a small preview alongside (not instead of) the existing
+// safety-gated .chat-link text. https-only: a schemeless URL set as img.src
+// would resolve as a relative path against Talkomatic's own origin instead
+// of the external site. A broken image just removes itself, leaving the
+// link text intact and still clickable.
+const IMAGE_EXT_PATTERN = /\.(?:png|jpe?g|gif|webp)(?:[?#][^\s]*)?$/i;
+
+function addImageThumbnails(element) {
+  if (!element) return;
+  const links = element.querySelectorAll(".chat-link");
+  for (const span of links) {
+    const url = span.dataset.url;
+    if (!url || !/^https:\/\//i.test(url) || !IMAGE_EXT_PATTERN.test(url))
+      continue;
+    const img = document.createElement("img");
+    img.className = "chat-img-thumb";
+    img.referrerPolicy = "no-referrer";
+    img.decoding = "async";
+    img.loading = "lazy";
+    img.alt = "";
+    img.src = url;
+    img.onerror = () => img.remove();
+    span.insertAdjacentElement("afterend", img);
   }
 }
 
@@ -3101,6 +3283,11 @@ function injectStyles() {
     .link-warning-back:hover { background:#555; }
     .link-warning-visit { background:#ff9800; color:#000; border:none; padding:10px 18px; border-radius:6px; cursor:pointer; font-weight:bold; }
     .link-warning-visit:hover { background:#ffb74d; }
+    /* Markdown-lite: code (colors match desk.js .dk-code-in/.dk-code-bl) */
+    .chat-code-inline { font-family:"Courier New",monospace; font-size:14px; background:#000; border:1px solid #333; border-radius:3px; padding:0 4px; color:#ffb454; word-break:break-word; }
+    .chat-code-block { display:block; font-family:"Courier New",monospace; font-size:14px; background:#000; border:1px solid #333; border-radius:5px; padding:8px 10px; margin:4px 0; color:#ededed; white-space:pre-wrap; word-break:break-word; max-height:180px; overflow:auto; }
+    /* Image-link thumbnails */
+    .chat-img-thumb { display:block; max-width:100%; max-height:96px; width:auto; height:auto; object-fit:contain; border-radius:4px; border:1px solid #616161; margin-top:4px; }
 
     /* Mobile: prefer dynamic viewport units where supported */
     @supports (height: 100dvh) {
