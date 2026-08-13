@@ -1989,18 +1989,20 @@ function updateCurrentMessages(messages) {
       selfRawText = text;
       lastSentMessage = text;
       const isActive = document.activeElement === chatDiv;
-      let cursor = isActive ? getCursorPosition(chatDiv) : 0;
-      const display = applyWordFilter(text);
-      chatDiv.innerHTML = "";
-      chatDiv.textContent = display;
-      replaceEmotes(chatDiv);
       selfIsFiltered = wordFilterEnabled && clientWordFilter?.ready;
       if (isActive) {
+        const cursor = getCursorPosition(chatDiv);
+        const display = applyWordFilter(text);
+        chatDiv.innerHTML = "";
+        chatDiv.textContent = display;
+        replaceEmotes(chatDiv);
         try {
           setCursorPosition(chatDiv, Math.min(cursor, display.length));
         } catch {
           placeCursorAtEnd(chatDiv);
         }
+      } else {
+        renderOtherUserMessage(chatDiv, text);
       }
     } else {
       renderOtherUserMessage(chatDiv, text);
@@ -2015,9 +2017,11 @@ function displayChatMessage(data) {
   if (!chatDiv) return;
 
   let currentText =
-    data.userId !== currentUserId && chatDiv.dataset.rawText !== undefined
-      ? chatDiv.dataset.rawText
-      : getPlainText(chatDiv);
+    data.userId !== currentUserId
+      ? chatDiv.dataset.rawText !== undefined
+        ? chatDiv.dataset.rawText
+        : getPlainText(chatDiv)
+      : selfRawText;
   let newText = "";
   if (data.diff) {
     if (data.diff.type === "full-replace") newText = data.diff.text;
@@ -2043,18 +2047,20 @@ function displayChatMessage(data) {
     selfRawText = newText;
     lastSentMessage = newText;
     const isActive = document.activeElement === chatDiv;
-    let cursor = isActive ? getCursorPosition(chatDiv) : 0;
-    const display = applyWordFilter(selfRawText);
-    chatDiv.innerHTML = "";
-    chatDiv.textContent = display;
-    if (/[;:]/.test(display)) replaceEmotes(chatDiv);
     selfIsFiltered = wordFilterEnabled && clientWordFilter?.ready;
     if (isActive) {
+      const cursor = getCursorPosition(chatDiv);
+      const display = applyWordFilter(selfRawText);
+      chatDiv.innerHTML = "";
+      chatDiv.textContent = display;
+      if (/[;:]/.test(display)) replaceEmotes(chatDiv);
       try {
         setCursorPosition(chatDiv, Math.min(cursor, display.length));
       } catch {
         placeCursorAtEnd(chatDiv);
       }
+    } else {
+      renderOtherUserMessage(chatDiv, newText);
     }
   } else {
     if (notificationsEnabled && document.hidden) showTabDot();
@@ -3131,6 +3137,18 @@ function createUserRow(user, container) {
       }
     });
     div.addEventListener("mousedown", (e) => e.stopPropagation());
+    // Rich-render (code/emphasis/links/thumbnails, same pipeline as other
+    // users) once the box stops being edited; revert to plain the instant
+    // it's focused again so getPlainText()/updateSentMessage() always read
+    // a lossless DOM (applyEmphasis/createCodeNode strip markdown delimiters
+    // from the text content, which would corrupt the next keystroke).
+    div.addEventListener("blur", () => {
+      renderOtherUserMessage(div, selfRawText);
+    });
+    div.addEventListener("focus", () => {
+      renderChatInputFromRaw();
+      selfIsFiltered = wordFilterEnabled && clientWordFilter?.ready;
+    });
     setTimeout(() => div.focus(), 0);
   } else {
     // Extended chat indicator: only other users' boxes auto-follow/indicate,
@@ -3774,19 +3792,13 @@ socket.on("room update", (roomData) => {
       // If you're actively typing in your own box, leave it completely alone.
       // Rebuilding the DOM here is what was jumping the caret when someone
       // joined. Your local input is already the source of truth.
+      selfRawText = rawVal;
       const typingHere =
         activeEl?.classList.contains("chat-input") &&
         activeEl.closest(".chat-row")?.dataset.userId === uid;
-      if (typingHere) {
-        selfRawText = rawVal;
-        return;
-      }
-      selfRawText = rawVal;
-      const display = applyWordFilter(rawVal);
-      ci.innerHTML = "";
-      ci.textContent = display;
-      replaceEmotes(ci);
+      if (typingHere) return;
       selfIsFiltered = wordFilterEnabled && clientWordFilter?.ready;
+      renderOtherUserMessage(ci, rawVal);
     } else {
       renderOtherUserMessage(ci, rawVal);
     }
