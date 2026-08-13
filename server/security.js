@@ -432,7 +432,8 @@ const validationRules = {
   // scoped to the chat panel only (see room.css).
   panelStyle: (v) => {
     if (v === undefined || v === null) return null;
-    if (typeof v !== "object") return "Panel style must be an object.";
+    if (typeof v !== "object" || Array.isArray(v))
+      return "Panel style must be an object.";
     for (const key of ["border", "bg", "text"]) {
       const val = v[key];
       if (val !== undefined && val !== null && val !== "" && !HEX_COLOR.test(String(val)))
