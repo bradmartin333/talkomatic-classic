@@ -2761,6 +2761,7 @@ function createUserRow(user, container) {
     paletteBtn.className = "panel-style-button";
     paletteBtn.innerHTML = '<i class="fas fa-palette"></i>';
     paletteBtn.title = "Customize this chat panel";
+    paletteBtn.setAttribute("aria-label", "Customize this chat panel");
     paletteBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       const pop = document.getElementById("panelStylePopover");
