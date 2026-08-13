@@ -2002,7 +2002,10 @@ function updateCurrentMessages(messages) {
           placeCursorAtEnd(chatDiv);
         }
       } else {
-        renderOtherUserMessage(chatDiv, text);
+        const display = applyWordFilter(text);
+        chatDiv.innerHTML = "";
+        chatDiv.textContent = display;
+        replaceEmotes(chatDiv);
       }
     } else {
       renderOtherUserMessage(chatDiv, text);
