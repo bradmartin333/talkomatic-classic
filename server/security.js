@@ -371,6 +371,8 @@ function apiAuth(req, res, next) {
 
 // ── Validation ──────────────────────────────────────────────────────────────
 
+const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+
 const validationRules = {
   username: (v) => {
     if (!v || typeof v !== "string")
@@ -424,6 +426,19 @@ const validationRules = {
       return "Avatar Discord ID must be 17-20 digits.";
     if (!/^(?:a_)?[a-f0-9]{32}$/i.test(String(v.hash || "")))
       return "Avatar hash is invalid.";
+    return null;
+  },
+  // Per-user chat panel appearance: border/bg/text are optional hex colors,
+  // scoped to the chat panel only (see room.css).
+  panelStyle: (v) => {
+    if (v === undefined || v === null) return null;
+    if (typeof v !== "object" || Array.isArray(v))
+      return "Panel style must be an object.";
+    for (const key of ["border", "bg", "text"]) {
+      const val = v[key];
+      if (val !== undefined && val !== null && val !== "" && !HEX_COLOR.test(String(val)))
+        return `Panel style ${key} must be a hex color.`;
+    }
     return null;
   },
 };

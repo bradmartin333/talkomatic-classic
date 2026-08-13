@@ -67,8 +67,10 @@
         vertical-align: middle;
       }
       .chat-input {
-        background-color: var(--tk-chat-bg, #000) !important;
-        color: var(--tk-chat-text, orange) !important;
+        /* A per-user panel style (--tk-row-chat-*) wins over the room-wide
+           theme token, which wins over the hardcoded default. */
+        background-color: var(--tk-row-chat-bg, var(--tk-chat-bg, #000)) !important;
+        color: var(--tk-row-chat-text, var(--tk-chat-text, orange)) !important;
         overflow-x: hidden !important;
         overflow-y: auto !important;
         outline: none !important;
