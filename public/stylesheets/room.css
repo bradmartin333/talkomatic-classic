@@ -313,80 +313,56 @@ html {
   outline: none; /* Remove default focus outline */
 }
 
-/* Per-user panel style button + popover (chat panel only: border, background,
-   text color - never the rest of the app). Own row only. */
-.panel-style-button {
-  background: none;
-  border: none;
-  color: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  margin-left: 4px;
-  opacity: 0.75;
-  padding: 2px 4px;
-}
-
-.panel-style-button:hover {
-  opacity: 1;
-}
-
-.panel-style-popover {
-  position: fixed;
-  z-index: 100001;
-  width: 220px;
-  background: #000;
-  border: 1px solid #616161;
-  border-radius: 8px;
-  padding: 12px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
-  font-family: talkoSS, Arial, sans-serif;
-}
-
-.panel-style-popover-title {
-  color: #ff9800;
-  font-size: 12px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid #333;
-  margin-bottom: 10px;
-}
-
-.panel-style-row {
+/* Per-user panel style controls (chat panel only: border, background, text
+   color - never the rest of the app). Own row only. Inline in the row's
+   info bar - no popover/dialog - so every swatch is always visible and
+   changes apply immediately on "input" (no separate save step). */
+.panel-style-inline {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 3px;
+  margin-left: 4px;
 }
 
-.panel-style-row label {
-  flex: 1;
-  color: #ccc;
-  font-size: 12px;
-}
-
-.panel-style-row input[type="color"] {
-  width: 26px;
-  height: 26px;
+.panel-style-swatch {
+  width: 24px;
+  height: 24px;
   border: 1px solid #555;
-  border-radius: 4px;
+  border-radius: 3px;
   cursor: pointer;
   background: none;
   padding: 0;
 }
 
-.panel-style-clear {
-  width: 100%;
-  margin-top: 4px;
-  padding: 6px;
-  border: 1px solid #555;
-  border-radius: 4px;
-  background: #1b1b1b;
-  color: #ccc;
-  cursor: pointer;
-  font-size: 12px;
+/* A color input paints its swatch inside a padded wrapper by default, which
+   leaves the visible color as a small square floating in the control. Strip
+   both so the color fills the whole box. */
+.panel-style-swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
 }
 
-.panel-style-clear:hover {
-  background: #2a2a2a;
+.panel-style-swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+
+.panel-style-swatch::-moz-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+
+.panel-style-reset {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.75;
+  padding: 2px 3px;
+}
+
+.panel-style-reset:hover {
+  opacity: 1;
 }
 
 /* Extended chat indicator: shown over another user's box when its text
@@ -504,10 +480,14 @@ html {
     font-size: 12px;
     margin-left: 2px;
   }
-  .user-info .panel-style-button {
-    font-size: 12px;
-    margin-left: 2px;
-    padding: 1px 3px;
+  .user-info .panel-style-swatch {
+    width: 20px;
+    height: 20px;
+  }
+  .user-info .panel-style-reset {
+    font-size: 11px;
+    margin-left: 1px;
+    padding: 1px 2px;
   }
   .user-info .note-action-button.has-note {
     color: #ffb74d;
