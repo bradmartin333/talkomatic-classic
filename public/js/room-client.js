@@ -2515,7 +2515,16 @@ function loadSavedPanelStyle() {
     const raw = localStorage.getItem(PANEL_STYLE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") return parsed;
+    if (!parsed || typeof parsed !== "object") return null;
+
+    const hexPattern = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+    const style = {
+      border: hexPattern.test(String(parsed.border || "")) ? String(parsed.border) : null,
+      bg: hexPattern.test(String(parsed.bg || "")) ? String(parsed.bg) : null,
+      text: hexPattern.test(String(parsed.text || "")) ? String(parsed.text) : null,
+    };
+
+    return style.border || style.bg || style.text ? style : null;
   } catch (e) {}
   return null;
 }
