@@ -299,10 +299,9 @@ html {
 
 /* Chat input box for typing messages. Background/text color come from the
    !important pre-paint rule in room.html's <head> (it has to win before
-   effects.css's theme layer loads); font-family is set in effects.css
-   (loaded after this file, so a rule here would never win the tie). Both
-   already fall back through --tk-row-chat-* (per-user panel style) before
-   the room-wide theme token. */
+   effects.css's theme layer loads) - a rule here would never win that tie.
+   It already falls back through --tk-row-chat-* (per-user panel style)
+   before the room-wide theme token. */
 .chat-input {
   flex-grow: 1;
   padding: 5px;
@@ -314,7 +313,7 @@ html {
 }
 
 /* Per-user panel style button + popover (chat panel only: border, background,
-   text color, font - never the rest of the app). Own row only. */
+   text color - never the rest of the app). Own row only. */
 .panel-style-button {
   background: none;
   border: none;
@@ -371,16 +370,6 @@ html {
   cursor: pointer;
   background: none;
   padding: 0;
-}
-
-.panel-style-row select {
-  flex-basis: 130px;
-  background: #1b1b1b;
-  color: #fff;
-  border: 1px solid #555;
-  border-radius: 4px;
-  padding: 4px;
-  font-size: 12px;
 }
 
 .panel-style-clear {

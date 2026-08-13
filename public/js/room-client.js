@@ -2502,7 +2502,7 @@ function syncUserRowNote(row, user) {
   if (noteBtn) noteBtn.classList.toggle("has-note", !!note);
 }
 
-// ── Panel Style (per-user chat panel border/background/text/font) ──────────
+// ── Panel Style (per-user chat panel border/background/text color) ─────────
 // Scoped to the chat panel ONLY (.chat-row / .chat-input), never the rest of
 // the app - unlike theme-engine.js, which themes the whole page. Applied as
 // CSS custom properties on the row so it works for every user's row (this is
@@ -2521,7 +2521,7 @@ function loadSavedPanelStyle() {
 }
 
 function savePanelStyle(style) {
-  const hasAny = style && (style.border || style.bg || style.text || style.font);
+  const hasAny = style && (style.border || style.bg || style.text);
   if (hasAny) localStorage.setItem(PANEL_STYLE_KEY, JSON.stringify(style));
   else localStorage.removeItem(PANEL_STYLE_KEY);
 }
@@ -2533,7 +2533,6 @@ function applyPanelStyleToRow(row, user) {
     "--tk-row-border": style && style.border,
     "--tk-row-chat-bg": style && style.bg,
     "--tk-row-chat-text": style && style.text,
-    "--tk-row-chat-font": style && style.font ? `"${style.font}", talkoSS, Arial, sans-serif` : null,
   };
   for (const [prop, val] of Object.entries(vars)) {
     if (val) row.style.setProperty(prop, val);
@@ -2562,6 +2561,21 @@ function onPanelStylePopoverOutsideClick(e) {
   if (!pop) return;
   if (pop.contains(e.target) || e.target.closest(".panel-style-button")) return;
   closePanelStylePopover();
+}
+
+// Converts a computed "rgb(r, g, b)" / "rgba(r, g, b, a)" string to hex, so a
+// swatch can preview the color a reset would actually produce (e.g. your own
+// row's default border is the theme's accent color, not plain gray).
+function rgbToHex(rgb) {
+  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(rgb || "");
+  if (!m) return "#000000";
+  return (
+    "#" +
+    m
+      .slice(1, 4)
+      .map((n) => Number(n).toString(16).padStart(2, "0"))
+      .join("")
+  );
 }
 
 function makePanelStyleColorRow(labelText, initial, onChange) {
@@ -2596,7 +2610,6 @@ function showPanelStylePopover(anchorEl, row, user) {
     border: current.border || null,
     bg: current.bg || null,
     text: current.text || null,
-    font: current.font || null,
   };
 
   const commit = () => {
@@ -2605,51 +2618,40 @@ function showPanelStylePopover(anchorEl, row, user) {
     emitPanelStyle(draft);
   };
 
+  // Swatch defaults reflect whatever is ACTUALLY rendered right now (with no
+  // draft override yet applied for that field), so they preview the same
+  // color "Reset to default" would produce - not a guessed fallback. Your own
+  // row's default border, for example, is the theme's accent color, not gray.
+  const ci = row.querySelector(".chat-input");
+  const resolvedBorder = rgbToHex(getComputedStyle(row).borderColor);
+  const resolvedBg = rgbToHex(getComputedStyle(ci).backgroundColor);
+  const resolvedText = rgbToHex(getComputedStyle(ci).color);
+
   pop.appendChild(
-    makePanelStyleColorRow("Border", draft.border || "#cccccc", (v) => {
+    makePanelStyleColorRow("Border", draft.border || resolvedBorder, (v) => {
       draft.border = v;
       commit();
     }),
   );
   pop.appendChild(
-    makePanelStyleColorRow("Background", draft.bg || "#000000", (v) => {
+    makePanelStyleColorRow("Background", draft.bg || resolvedBg, (v) => {
       draft.bg = v;
       commit();
     }),
   );
   pop.appendChild(
-    makePanelStyleColorRow("Text", draft.text || "#ffa500", (v) => {
+    makePanelStyleColorRow("Text", draft.text || resolvedText, (v) => {
       draft.text = v;
       commit();
     }),
   );
-
-  const fontRow = document.createElement("div");
-  fontRow.className = "panel-style-row";
-  const fontLabel = document.createElement("label");
-  fontLabel.textContent = "Font";
-  const fontSelect = document.createElement("select");
-  (window.ThemeEngine ? window.ThemeEngine.FONTS : [""]).forEach((f) => {
-    const opt = document.createElement("option");
-    opt.value = f;
-    opt.textContent = f || "Default";
-    if (f === (draft.font || "")) opt.selected = true;
-    fontSelect.appendChild(opt);
-  });
-  fontSelect.addEventListener("change", () => {
-    draft.font = fontSelect.value || null;
-    commit();
-  });
-  fontRow.appendChild(fontLabel);
-  fontRow.appendChild(fontSelect);
-  pop.appendChild(fontRow);
 
   const clearBtn = document.createElement("button");
   clearBtn.type = "button";
   clearBtn.className = "panel-style-clear";
   clearBtn.textContent = "Reset to default";
   clearBtn.addEventListener("click", () => {
-    draft.border = draft.bg = draft.text = draft.font = null;
+    draft.border = draft.bg = draft.text = null;
     applyPanelStyleToRow(row, { panelStyle: null });
     savePanelStyle(null);
     clearTimeout(panelStyleEmitTimer);
@@ -2742,7 +2744,7 @@ function createUserRow(user, container) {
   nameEl.textContent = user.username;
   info.appendChild(nameEl);
 
-  // Panel style picker: only on your own row. Colors/font apply to this chat
+  // Panel style picker: only on your own row. Colors apply to this chat
   // panel only and are visible to everyone in the room (see applyPanelStyleToRow).
   if (user.id === currentUserId) {
     const paletteBtn = document.createElement("button");
@@ -3393,7 +3395,7 @@ socket.on("room joined", (data) => {
   if (data.muteVotes || data.mutedBotIds) updateMuteVotesUI(data);
   if (data.currentMessages) updateCurrentMessages(data.currentMessages);
 
-  // Restore this user's chat panel style (border/bg/text/font) so a rejoin or
+  // Restore this user's chat panel style (border/bg/text) so a rejoin or
   // reload re-applies it locally and re-broadcasts it to everyone else in the
   // room - the server drops it when the user leaves.
   const savedPanelStyle = loadSavedPanelStyle();

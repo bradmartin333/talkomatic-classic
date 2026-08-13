@@ -601,7 +601,7 @@ function formatUserForSocket(user, recipientSocket) {
   // Discord avatar: validated snowflake id + CDN hash only; clients rebuild
   // the cdn.discordapp.com URL themselves.
   if (user.avatar) formatted.avatar = user.avatar;
-  // Chat panel appearance (border/bg/text/font), scoped to the panel only.
+  // Chat panel appearance (border/bg/text), scoped to the panel only.
   // Unconditionally visible, same as avatar - not gated behind isDev/isMod.
   if (user.panelStyle) formatted.panelStyle = user.panelStyle;
 
@@ -2988,7 +2988,7 @@ function registerSocketHandlers(opts) {
       }),
     );
 
-    // ── Panel Style (border/bg/text color + font, chat panel only) ──────
+    // ── Panel Style (border/bg/text color, chat panel only) ──────────────
     socket.on(
       "set panel style",
       safe(async (data) => {
@@ -2999,7 +2999,7 @@ function registerSocketHandlers(opts) {
         const user = room?.users.find((u) => u.id === userId);
         if (!user) return;
         if (validate("panelStyle", data)) return;
-        const hasAny = data && (data.border || data.bg || data.text || data.font);
+        const hasAny = data && (data.border || data.bg || data.text);
         if (!hasAny) {
           delete user.panelStyle;
         } else {
@@ -3007,7 +3007,6 @@ function registerSocketHandlers(opts) {
             border: data.border || null,
             bg: data.bg || null,
             text: data.text || null,
-            font: data.font || null,
           };
         }
         emitRoomSnapshot(roomId);
