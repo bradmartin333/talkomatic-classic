@@ -2995,6 +2995,12 @@ function registerSocketHandlers(opts) {
         const userId = socket.handshake.session?.userId;
         const roomId = socket.roomId;
         if (!roomId || !userId) return;
+
+        // Basic server-side throttling: prevents snapshot spam from a malicious client.
+        const now = Date.now();
+        if (socket._lastPanelStyleAt && now - socket._lastPanelStyleAt < 250) return;
+        socket._lastPanelStyleAt = now;
+
         const room = state.rooms.get(roomId);
         const user = room?.users.find((u) => u.id === userId);
         if (!user) return;
