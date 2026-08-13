@@ -2692,6 +2692,14 @@ function syncUserRowNote(row, user) {
 // local user's.
 const PANEL_STYLE_KEY = "talkomatic_panelStyle";
 
+// The room's true default colors, independent of any room-wide theme token
+// (--tk-accent/--tk-chat-bg/--tk-chat-text). Must stay in sync with
+// theme-engine.js's TOKENS defaults and room.css's :root block - duplicated
+// here (rather than read live) so "Reset to default" is reachable even for
+// users whose stale pre-CHAT-12 whole-page theme still overrides those
+// tokens at :root, since the room UI no longer offers a way to clear it.
+const TRUE_DEFAULT_PANEL_STYLE = { border: "#ffa500", bg: "#000000", text: "#ffa500" };
+
 function loadSavedPanelStyle() {
   try {
     const raw = localStorage.getItem(PANEL_STYLE_KEY);
@@ -2842,11 +2850,11 @@ function showPanelStylePopover(anchorEl, row, user) {
   clearBtn.className = "panel-style-clear";
   clearBtn.textContent = "Reset to default";
   clearBtn.addEventListener("click", () => {
-    draft.border = draft.bg = draft.text = null;
-    applyPanelStyleToRow(row, { panelStyle: null });
-    savePanelStyle(null);
+    Object.assign(draft, TRUE_DEFAULT_PANEL_STYLE);
+    applyPanelStyleToRow(row, { panelStyle: draft });
+    savePanelStyle(draft);
     clearTimeout(panelStyleEmitTimer);
-    socket.emit("set panel style", {});
+    socket.emit("set panel style", draft);
     closePanelStylePopover();
   });
   pop.appendChild(clearBtn);
