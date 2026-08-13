@@ -3149,7 +3149,22 @@ function createUserRow(user, container) {
       renderOtherUserMessage(div, selfRawText);
     });
     div.addEventListener("focus", () => {
-      renderChatInputFromRaw();
+      let cursor = 0;
+      try {
+        cursor = getCursorPosition(div);
+      } catch {}
+      const display =
+        wordFilterEnabled && clientWordFilter?.ready
+          ? applyWordFilter(selfRawText)
+          : selfRawText;
+      div.innerHTML = "";
+      div.textContent = display;
+      replaceEmotes(div);
+      try {
+        setCursorPosition(div, Math.min(cursor, display.length));
+      } catch {
+        placeCursorAtEnd(div);
+      }
       selfIsFiltered = wordFilterEnabled && clientWordFilter?.ready;
     });
     setTimeout(() => div.focus(), 0);
