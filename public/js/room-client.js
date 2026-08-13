@@ -2728,6 +2728,16 @@ function loadSavedPanelStyle() {
   return null;
 }
 
+// The server only holds panelStyle for the lifetime of a room membership, so on
+// a reload or rejoin our own style is missing from the first snapshots. The
+// localStorage copy is the durable one - fall back to it for our own row until
+// the server echoes our re-broadcast back to us.
+function resolvePanelStyle(user) {
+  if (user && user.panelStyle) return user.panelStyle;
+  if (user && user.id === currentUserId) return loadSavedPanelStyle();
+  return null;
+}
+
 function savePanelStyle(style) {
   const hasAny = style && (style.border || style.bg || style.text);
   if (hasAny) localStorage.setItem(PANEL_STYLE_KEY, JSON.stringify(style));
@@ -2736,7 +2746,7 @@ function savePanelStyle(style) {
 
 function applyPanelStyleToRow(row, user) {
   if (!row) return;
-  const style = (user && user.panelStyle) || null;
+  const style = resolvePanelStyle(user);
   const vars = {
     "--tk-row-border": style && style.border,
     "--tk-row-chat-bg": style && style.bg,
@@ -2766,7 +2776,7 @@ function buildPanelStyleControls(row, user) {
   const wrap = document.createElement("div");
   wrap.className = "panel-style-inline";
 
-  const current = (user && user.panelStyle) || {};
+  const current = resolvePanelStyle(user) || {};
   const draft = {
     border: current.border || null,
     bg: current.bg || null,
@@ -3582,14 +3592,12 @@ socket.on("room joined", (data) => {
   if (data.muteVotes || data.mutedBotIds) updateMuteVotesUI(data);
   if (data.currentMessages) updateCurrentMessages(data.currentMessages);
 
-  // Restore this user's chat panel style (border/bg/text) so a rejoin or
-  // reload re-applies it locally and re-broadcasts it to everyone else in the
-  // room - the server drops it when the user leaves.
+  // Re-broadcast this user's chat panel style (border/bg/text) - the server
+  // drops it when the user leaves, so after a rejoin or reload the rest of the
+  // room needs it re-asserted. Our own row already renders it without waiting
+  // for the echo (see resolvePanelStyle).
   const savedPanelStyle = loadSavedPanelStyle();
-  if (savedPanelStyle) {
-    applyPanelStyleToRow(getCurrentUserRow(), { panelStyle: savedPanelStyle });
-    socket.emit("set panel style", savedPanelStyle);
-  }
+  if (savedPanelStyle) socket.emit("set panel style", savedPanelStyle);
 
   // Appearance controls (hide/vanish/color) now live inside the Staff panel,
   // so the navbar only gains a single "Staff" button - keeps mobile tidy.
