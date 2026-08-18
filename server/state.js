@@ -18,7 +18,10 @@ const CONFIG = {
     MAX_ROOM_CAPACITY: 10,
     BASE_MAX_ROOMS: 15,
     ROOM_SCALING_INCREMENT: 5,
-    MAX_CONNECTIONS_PER_IP: 8,
+    // Overridable so a single machine can simulate a full room; a real room
+    // holds more users than one IP is normally allowed to open sockets for.
+    MAX_CONNECTIONS_PER_IP:
+      Number(process.env.MAX_CONNECTIONS_PER_IP) || 8,
     SOCKET_MAX_REQUESTS_WINDOW: 1,
     SOCKET_MAX_REQUESTS_PER_WINDOW: 75,
     CHAT_UPDATE_RATE_LIMIT: 500,
