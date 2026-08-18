@@ -31,7 +31,7 @@ BOT_TOKEN=tk_your_token_here node bot.js
 
 ## Example 1: Greeter Bot
 
-A simple bot that joins a room and greets users when they arrive or leave. Demonstrates: connection, authentication, room joining, event listening, sending messages, and AFK handling.
+A simple bot that joins a room and greets users when they arrive or leave. Demonstrates: connection, authentication, room joining, event listening, sending messages, and activity heartbeats.
 
 ```javascript
 // greeter-bot.js
@@ -97,14 +97,14 @@ socket.on("user left", (userId) => {
   sendMessage(`👋 Someone just left. See you next time!`);
 });
 
-// ── AFK Handling ────────────────────────────────────────────────────────────
+// ── Holding a Seat ──────────────────────────────────────────────────────────
+// Nothing kicks this bot for being idle. The heartbeat only matters if the room
+// fills up and people are queued: a silent occupant yields its seat to them.
 
-socket.on("afk warning", () => {
-  socket.emit("afk response");
-});
+setInterval(() => socket.emit("afk response"), 120000);
 
-socket.on("afk timeout", (data) => {
-  console.log(`[!] Kicked for AFK: ${data.message}`);
+socket.on("room capacity evicted", (data) => {
+  console.log(`[!] Yielded seat in ${data.roomName}; watching from the queue`);
 });
 
 // ── Error Handling ──────────────────────────────────────────────────────────
@@ -296,10 +296,10 @@ function handleCommand(cmd, args, username) {
   }
 }
 
-// ── AFK / Error / Shutdown ──────────────────────────────────────────────────
+// ── Heartbeat / Error / Shutdown ────────────────────────────────────────────
 
-socket.on("afk warning", () => socket.emit("afk response"));
-socket.on("afk timeout", () => process.exit(1));
+setInterval(() => socket.emit("afk response"), 120000);
+socket.on("room capacity evicted", () => process.exit(1));
 socket.on("kicked", () => {
   console.log("[!] Kicked");
   process.exit(0);
@@ -524,8 +524,8 @@ socket.on("user left", (uid) => {
   userMessages.delete(uid);
 });
 
-socket.on("afk warning", () => socket.emit("afk response"));
-socket.on("afk timeout", () => process.exit(1));
+setInterval(() => socket.emit("afk response"), 120000);
+socket.on("room capacity evicted", () => process.exit(1));
 socket.on("kicked", () => process.exit(0));
 socket.on("error", (d) => console.error("[!]", d.error?.message || d));
 socket.on("connect_error", (e) => console.error("[!]", e.message));
@@ -660,11 +660,11 @@ function startClock() {
   clockInterval = setInterval(() => updateStatus(), 60000);
 }
 
-// ── AFK / Error / Shutdown ──────────────────────────────────────────────────
+// ── Heartbeat / Error / Shutdown ────────────────────────────────────────────
 
-socket.on("afk warning", () => socket.emit("afk response"));
-socket.on("afk timeout", () => {
-  console.log("[!] AFK kicked — restarting");
+setInterval(() => socket.emit("afk response"), 120000);
+socket.on("room capacity evicted", () => {
+  console.log("[!] Yielded seat to the queue — restarting");
   process.exit(1); // let a process manager (pm2, systemd) restart
 });
 socket.on("kicked", () => {
@@ -788,14 +788,9 @@ def on_user_left(user_id):
     user_messages.pop(user_id, None)
 
 
-@sio.on('afk warning')
-def on_afk_warning(data):
-    sio.emit('afk response')
-
-
-@sio.on('afk timeout')
-def on_afk_timeout(data):
-    print(f"[!] AFK kicked: {data.get('message')}")
+@sio.on('room capacity evicted')
+def on_capacity_evicted(data):
+    print(f"[!] Yielded seat in {data.get('roomName')} to the queue")
     sys.exit(1)
 
 

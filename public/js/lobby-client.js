@@ -90,8 +90,6 @@
     BAD_REQUEST: "Bad Request",
     FORBIDDEN: "Forbidden",
     CIRCUIT_OPEN: "Circuit Open",
-    AFK_WARNING: "AFK Warning",
-    AFK_TIMEOUT: "AFK Timeout",
   };
 
   window.showErrorModal = function (message, title) {

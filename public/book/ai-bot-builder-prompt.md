@@ -131,22 +131,26 @@ Listen for these while inside a room:
   'update votes' → { [voterId]: targetUserId }                      — vote counts changed
   'kicked'      → (no payload)                                      — bot was voted out
 
-=== AFK SYSTEM (CRITICAL) ===
+=== IDLE AND ROOM CAPACITY ===
 
-The server kicks inactive users:
-  - Warning at 2.5 minutes of inactivity.
-  - Kick at 3 minutes of inactivity.
-  - The timer ONLY resets when: (a) the bot sends a 'chat update' event, OR (b) the bot emits 'afk response'.
+Bots are NEVER kicked for being idle. A bot may sit silent in a room forever.
 
-EVERY bot MUST handle AFK. Two options:
+Idle time matters only when a room is full (10 users) and people are waiting in
+the queue. An occupant silent past the idle threshold (5 minutes) yields its
+seat to the queue head and moves to the back of the queue. If nobody is waiting,
+nothing happens.
 
-Option A (recommended for idle bots):
-  socket.on('afk warning', () => socket.emit('afk response'));
+Activity is refreshed by: (a) sending a 'chat update', or (b) emitting
+'afk response' as a plain "still here" heartbeat (old name, kept for
+compatibility). Typing indicators and 'get rooms' do NOT count.
 
-Option B (for active bots):
-  Send a 'chat update' at least once every 2 minutes. Any chat update resets the timer.
+If your bot should hold its seat in a busy room:
+  setInterval(() => socket.emit('afk response'), 120000);
 
-Always listen for 'afk timeout' → { message, redirectTo } which means the bot was kicked.
+Prefer letting a quiet bot yield rather than holding a seat away from a person.
+
+Listen for 'room capacity evicted' → { roomId, roomName } — the bot yielded its
+seat and is now watching from the queue.
 
 === ERROR HANDLING ===
 
@@ -180,8 +184,8 @@ Common error codes: VALIDATION_ERROR, UNAUTHORIZED, NOT_FOUND, RATE_LIMITED, ROO
 
 1. The bot token MUST be read from an environment variable (BOT_TOKEN), never hardcoded.
 2. Always pass the token in `auth: { token }` when creating the Socket.IO connection.
-3. Always handle 'afk warning' by emitting 'afk response'.
-4. Always handle 'error', 'connect_error', 'kicked', and 'afk timeout'.
+3. Send a periodic 'afk response' heartbeat only if the bot must hold its seat in a full room.
+4. Always handle 'error', 'connect_error', 'kicked', and 'room capacity evicted'.
 5. Always listen for 'signin status' to confirm successful sign-in before doing anything.
 6. Always clean up on SIGINT/SIGTERM (leave room, disconnect).
 7. Track other users' messages using a Map and apply diffs correctly.

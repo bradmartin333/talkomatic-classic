@@ -1,5 +1,5 @@
 // server/rooms.js
-// Room management, chat processing, AFK handling, socket events, cleanup.
+// Room management, chat processing, idle tracking, socket events, cleanup.
 // Includes anti-spam (pressure cleanup, per-IP limits), vote-kick, dev mode
 // (force-kick, vanish, hide, color), and Talkoboard stroke storage.
 
@@ -385,7 +385,7 @@ async function pressureCleanup() {
       const soloSince = state.roomSoloSince.get(roomId);
       if (soloSince && now - soloSince >= ttl) {
         // Staff and bots are exempt: a dev, mod, or bot can hold a room open
-        // indefinitely, the same way staff bypass AFK and capacity. Never
+        // indefinitely, the same way staff bypass capacity. Never
         // solo-close on them.
         const soloSocket = findSocketByUserId(room.users[0].id, roomId);
         if (soloSocket && (soloSocket.isDev || soloSocket.isMod || soloSocket.isBot))
@@ -409,7 +409,7 @@ async function pressureCleanup() {
       const soloUser = room.users[0];
       const soloSocket = findSocketByUserId(soloUser.id, roomId);
       if (soloSocket) {
-        soloSocket.emit("afk timeout", {
+        soloSocket.emit("room closed", {
           message:
             "Your room was closed due to extended single-occupancy. " +
             "You can create a new room anytime.",
@@ -1204,54 +1204,29 @@ function updateRoom(roomId) {
   }
 }
 
-// ── AFK ─────────────────────────────────────────────────────────────────────
+// ── Idle Tracking ───────────────────────────────────────────────────────────
+// Being idle is never grounds for removal on its own. It only decides who
+// yields their seat when the room is full and someone is waiting in the queue.
 
-function clearAFKTimers(userId) {
-  if (state.afkWarningTimers.has(userId)) {
-    clearTimeout(state.afkWarningTimers.get(userId));
-    state.afkWarningTimers.delete(userId);
-  }
-  if (state.afkTimers.has(userId)) {
-    clearTimeout(state.afkTimers.get(userId));
-    state.afkTimers.delete(userId);
-  }
+function clearUserActivity(userId) {
+  state.userLastActivity.delete(userId);
 }
 
-function setupAFKTimers(socket, userId) {
-  clearAFKTimers(userId);
-  if (!socket || !socket.roomId) return;
-  if (socket.isDev || socket.isMod || socket.isBot) return; // staff and bots bypass AFK
-  if (socket.boardOpen) return; // drawing on the board counts as active
-  if (socket.pianoOpen) return; // playing the piano counts as active
-
-  state.afkWarningTimers.set(
-    userId,
-    setTimeout(() => {
-      if (socket.connected)
-        socket.emit("afk warning", {
-          message: "You have been inactive.",
-          secondsRemaining: 30,
-        });
-    }, CONFIG.TIMING.AFK_WARNING_TIME),
-  );
-  state.afkTimers.set(
-    userId,
-    setTimeout(
-      () => handleAFKTimeout(socket, userId),
-      CONFIG.LIMITS.MAX_AFK_TIME,
-    ),
-  );
+function markUserActive(userId) {
+  if (userId) state.userLastActivity.set(userId, Date.now());
 }
 
-async function handleAFKTimeout(socket, userId) {
-  if (!socket || !socket.roomId) return;
-  console.log(`AFK timeout: ${userId} in room ${socket.roomId}`);
-  socket.emit("afk timeout", {
-    message: "Removed from room due to inactivity.",
-    redirectTo: "/",
-  });
-  await leaveRoom(socket, userId);
-  clearAFKTimers(userId);
+// Staff hold their seat regardless. Bots do not - a squatting bot yields to a
+// waiting human. A user with no recorded activity is treated as active until
+// their first stamp lands, so a fresh join is never instantly evictable.
+function isUserEvictable(user, socket) {
+  if (!user) return false;
+  if (user.isDev || user.isMod) return false;
+  if (socket && (socket.isDev || socket.isMod)) return false;
+  if (socket && (socket.boardOpen || socket.pianoOpen)) return false;
+  const last = state.userLastActivity.get(user.id);
+  if (!last) return false;
+  return Date.now() - last > CONFIG.TIMING.IDLE_THRESHOLD_MS;
 }
 
 // ── Chat Processing ─────────────────────────────────────────────────────────
@@ -1395,7 +1370,7 @@ async function processPendingChatUpdates(userId, socket) {
       diff: { type: "full-replace", text: msg },
     });
 
-    setupAFKTimers(socket, userId);
+    markUserActive(userId);
 
     if (pending.diffs.length > 0) {
       state.batchProcessingTimers.set(
@@ -1421,7 +1396,7 @@ async function leaveRoom(socket, userId) {
   try {
     const roomId = socket.roomId;
     if (!roomId) return;
-    clearAFKTimers(userId);
+    clearUserActivity(userId);
 
     finalizeBoardUserStroke(roomId, userId);
     pianoDropPresence(roomId, userId, true);
@@ -1642,7 +1617,6 @@ function joinRoom(socket, roomId, userId) {
         createErrorResponse(ERROR_CODES.ROOM_FULL, "Room is full."),
       );
 
-    clearAFKTimers(userId);
     room.users = room.users.filter((u) => u.id !== userId);
     socket.join(roomId);
 
@@ -1687,7 +1661,7 @@ function joinRoom(socket, roomId, userId) {
       }
     }
 
-    setupAFKTimers(socket, userId);
+    markUserActive(userId);
     updateRoomSoloTracking(roomId);
 
     // Session save must complete before emitting join success, so the
@@ -2060,7 +2034,7 @@ function registerSocketHandlers(opts) {
         if (!socket.roomId || !socket.handshake.session?.userId) return;
         if (socket.spectating) return; // spectators are read-only
         socket.boardOpen = true;
-        clearAFKTimers(socket.handshake.session.userId);
+        markUserActive(socket.handshake.session.userId);
 
         const bs = getBoardState(socket.roomId);
         const room = state.rooms.get(socket.roomId);
@@ -2300,7 +2274,7 @@ function registerSocketHandlers(opts) {
         const userId = socket.handshake.session.userId;
         socket.boardOpen = false;
         finalizeBoardUserStroke(socket.roomId, userId);
-        setupAFKTimers(socket, userId);
+        markUserActive(userId);
         emitSubAppEvent(
           socket,
           "board user status",
@@ -2379,7 +2353,7 @@ function registerSocketHandlers(opts) {
         if (socket.spectating) return; // spectators are read-only
         const userId = socket.handshake.session.userId;
         socket.pianoOpen = true;
-        clearAFKTimers(userId);
+        markUserActive(userId);
 
         const ps = getPianoState(socket.roomId);
         ps.open.add(userId);
@@ -2419,7 +2393,7 @@ function registerSocketHandlers(opts) {
         if (!socket.roomId || !socket.handshake.session?.userId) return;
         const userId = socket.handshake.session.userId;
         socket.pianoOpen = false;
-        setupAFKTimers(socket, userId);
+        markUserActive(userId);
         // Keep mute across a close so it can't be self-cleared.
         pianoDropPresence(socket.roomId, userId, false);
       }),
@@ -3024,7 +2998,7 @@ function registerSocketHandlers(opts) {
       safe(async () => {
         const userId = socket.handshake.session?.userId;
         if (userId) {
-          clearAFKTimers(userId);
+          clearUserActivity(userId);
           await leaveRoom(socket, userId);
         }
       }),
@@ -3168,12 +3142,15 @@ function registerSocketHandlers(opts) {
       }),
     );
 
-    // ── AFK Response ────────────────────────────────────────────────────
+    // ── Heartbeat ───────────────────────────────────────────────────────
+    // Kept under the old "afk response" name so bots already in the wild keep
+    // working. Nothing kicks for inactivity any more; this just lets a client
+    // say "still here" so it does not yield its seat to the queue.
     socket.on(
       "afk response",
       safe(async () => {
         const userId = socket.handshake.session?.userId;
-        if (userId && socket.roomId) setupAFKTimers(socket, userId);
+        if (userId && socket.roomId) markUserActive(userId);
       }),
     );
 
@@ -3185,7 +3162,7 @@ function registerSocketHandlers(opts) {
         const username = socket.handshake.session?.username || "Unknown";
         const location = socket.handshake.session?.location || "Unknown";
         if (userId) {
-          clearAFKTimers(userId);
+          clearUserActivity(userId);
           await leaveRoom(socket, userId);
           state.userMessageBuffers.delete(userId);
           state.devUsers.delete(userId);
@@ -3288,8 +3265,8 @@ function startCleanupIntervals() {
         state.typingTimeouts.delete(id);
       }
     }
-    for (const id of state.afkTimers.keys()) {
-      if (!active.has(id)) clearAFKTimers(id);
+    for (const id of state.userLastActivity.keys()) {
+      if (!active.has(id)) clearUserActivity(id);
     }
   }, 300000);
 
@@ -3421,7 +3398,7 @@ function startCleanupIntervals() {
         if (!activeIds.has(u.id)) {
           console.log(`Ghost removed: "${u.username}" from "${room.name}"`);
           state.userMessageBuffers.delete(u.id);
-          clearAFKTimers(u.id);
+          clearUserActivity(u.id);
           state.devUsers.delete(u.id);
           finalizeBoardUserStroke(roomId, u.id);
           pianoDropPresence(roomId, u.id, true);
@@ -3511,7 +3488,7 @@ function purgeAllGhostUsers() {
     room.users = room.users.filter((u) => {
       if (activeIds.has(u.id)) return true; // live socket -> a real user, keep
       state.userMessageBuffers.delete(u.id);
-      clearAFKTimers(u.id);
+      clearUserActivity(u.id);
       state.devUsers.delete(u.id);
       if (room.votes) {
         delete room.votes[u.id];

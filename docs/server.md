@@ -233,18 +233,18 @@ socket.emit("join room", {
 
 ## User Experience Features
 
-### AFK Detection
+### Idle Detection
 
-The server monitors user activity and manages AFK (Away From Keyboard) status:
+The server tracks per-user activity, but **nobody is removed for being idle**. Idle time decides only who yields a seat when a full room has people waiting in the queue:
 
 ```javascript
-CONFIG.LIMITS.MAX_AFK_TIME = 180000; // 3 minutes until AFK timeout
-CONFIG.TIMING.AFK_WARNING_TIME = 150000; // 2.5 minutes - warn before kick
+CONFIG.TIMING.IDLE_THRESHOLD_MS = 300000; // 5 minutes; env-overridable
 ```
 
-- Users inactive for 2.5 minutes receive a warning
-- After 3 minutes of inactivity, users are returned to the lobby
-- Any user activity (typing, sending messages) resets the AFK timer
+- Sending a `chat update`, or an `afk response` heartbeat, refreshes the timestamp
+- A user silent past the threshold is *eligible* to yield their seat, nothing more
+- Eviction happens only when the room is full and someone is queued; the longest-present idle occupant yields and moves to the back of the queue
+- Staff never yield; bots do
 
 ### Typing Indicators
 
@@ -385,29 +385,16 @@ socket.on("message", (message) => {
 });
 ```
 
-### Handling AFK Warnings
+### Holding a Seat in a Busy Room
 
-Bots should listen for and respond to AFK warnings to prevent being kicked:
+Bots are never kicked for idling. A heartbeat only matters if the bot needs to keep its seat in a room that fills up:
 
 ```javascript
-socket.on("afk warning", (data) => {
-  console.log(
-    `AFK Warning: ${data.message}, ${data.secondsRemaining}s remaining`
-  );
+// "Still here" - refreshes the activity timestamp without posting anything
+setInterval(() => socket.emit("afk response"), 120000);
 
-  // Send a response to show the bot is still active
-  socket.emit("afk response", { active: true });
-
-  // Also send some activity to reset the timer
-  socket.emit("typing", { isTyping: true });
-  setTimeout(() => {
-    socket.emit("typing", { isTyping: false });
-  }, 500);
-});
-
-socket.on("afk timeout", (data) => {
-  console.log(`AFK Timeout: ${data.message}`);
-  // Handle reconnection if needed
+socket.on("room capacity evicted", (data) => {
+  console.log(`Yielded seat in ${data.roomName}; watching from the queue`);
 });
 ```
 
@@ -419,7 +406,7 @@ socket.on("afk timeout", (data) => {
 4. **Maintain persistent connections** rather than reconnecting frequently
 5. **Target 10-15 fps** for real-time display bots (plenty below the 60/sec limit)
 6. **Implement client-side rate limiting** before server-side limits are reached
-7. **Handle AFK warnings** to prevent automatic disconnection
+7. **Send an activity heartbeat** only if the bot must hold its seat in a full room
 8. **Cache room and user data** to reduce unnecessary requests
 9. **Use exponential backoff** when encountering rate limits
 10. **Monitor connectivity** and implement graceful reconnection

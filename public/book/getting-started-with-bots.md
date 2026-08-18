@@ -13,7 +13,7 @@ Everything you need to build, authenticate, and run a bot on Talkomatic.
 - [Step 3: Sign In (Join the Lobby)](#step-3-sign-in-join-the-lobby)
 - [Step 4: List, Create, or Join Rooms](#step-4-list-create-or-join-rooms)
 - [Step 5: Send and Receive Messages](#step-5-send-and-receive-messages)
-- [Step 6: Stay Alive (AFK System)](#step-6-stay-alive-afk-system)
+- [Step 6: Stay Active (Holding Your Seat)](#step-6-stay-active-holding-your-seat)
 - [Step 7: Leave a Room](#step-7-leave-a-room)
 - [Socket.IO Events Reference](#socketio-events-reference)
 - [Rate Limits and Constraints](#rate-limits-and-constraints)
@@ -474,54 +474,48 @@ socket.on("room joined", (data) => {
 
 ---
 
-## Step 6: Stay Alive (AFK System)
+## Step 6: Stay Active (Holding Your Seat)
 
-The server has an AFK (away-from-keyboard) system that kicks inactive users:
+**Your bot is never removed for being idle.** There is no AFK kick. A bot can sit silently in a room indefinitely and nothing will happen to it.
 
-- **Warning** at **2.5 minutes** of inactivity.
-- **Kick** at **3 minutes** of inactivity.
-- The AFK timer **only resets** when:
-  1. Your bot sends a `chat update` event, OR
-  2. Your bot emits `afk response` after receiving an `afk warning`.
+Activity matters for exactly one thing: **who yields a seat when the room is full and someone is waiting.** Rooms hold up to 10 users. When a room is full, newcomers wait in a queue and watch read-only. If an occupant has been silent past the idle threshold (5 minutes by default) *and* someone is queued, that occupant yields its seat and moves to the back of the queue.
 
-**Typing indicators, `get rooms`, and all other events do NOT reset the AFK timer.** This is intentional to prevent bots from staying alive without actually participating.
+If nobody is waiting, nothing happens no matter how long you stay quiet.
 
-### Option A: Respond to AFK Warnings (Recommended)
+Your activity timestamp updates when:
+
+1. Your bot sends a `chat update` event, or
+2. Your bot emits `afk response` — a plain "still here" heartbeat, kept under its old name so existing bots keep working.
+
+**Typing indicators, `get rooms`, and other events do not count as activity.** This is intentional: a bot should not be able to hold a seat away from a waiting human without actually participating.
+
+### Holding your seat in a busy room
+
+If your bot is chatting, its timestamp refreshes on every `chat update` and you need do nothing. If your bot is mostly quiet but you want it to keep its seat in a room that fills up, send a periodic heartbeat:
 
 ```javascript
-socket.on("afk warning", (data) => {
-  console.log(
-    `AFK warning: ${data.message} (${data.secondsRemaining}s remaining)`,
-  );
-  // Send afk response to reset the timer
-  socket.emit("afk response");
-});
+let heartbeatInterval;
 
-socket.on("afk timeout", (data) => {
-  console.log(`Kicked for inactivity: ${data.message}`);
-  // Optionally rejoin the room or exit
-});
+function startHeartbeat(socket) {
+  // "Still here" - refreshes the activity timestamp without posting anything
+  heartbeatInterval = setInterval(() => {
+    socket.emit("afk response");
+  }, 120000); // every 2 minutes
+}
+
+function stopHeartbeat() {
+  if (heartbeatInterval) clearInterval(heartbeatInterval);
+}
 ```
 
-### Option B: Periodic Chat Updates
+Consider whether you *should*. A bot that heartbeats forever holds a seat a person might want. Letting a quiet bot yield — and rejoin from the queue when a slot frees — is usually the friendlier behaviour.
 
-If your bot is actively chatting, the AFK timer resets automatically on every `chat update`. If your bot is mostly idle but needs to stay in a room, you can send a periodic no-op update:
+### If your bot yields its seat
 
 ```javascript
-let keepAliveInterval;
-
-function startKeepAlive(socket) {
-  // Send a keep-alive chat update every 2 minutes
-  keepAliveInterval = setInterval(() => {
-    socket.emit("chat update", {
-      diff: { type: "full-replace", text: "🤖 Bot is listening..." },
-    });
-  }, 120000); // 120 seconds
-}
-
-function stopKeepAlive() {
-  if (keepAliveInterval) clearInterval(keepAliveInterval);
-}
+socket.on("room capacity evicted", (data) => {
+  console.log(`Yielded seat in ${data.roomName}; now watching from the queue`);
+});
 ```
 
 ---
@@ -590,7 +584,7 @@ socket.on("bot muted", ({ muted }) => {
 | `typing`              | `{ isTyping: boolean }`                     | Send typing indicator                     |
 | `vote`                | `{ targetUserId: string }`                  | Vote to kick a user (toggle)              |
 | `vote mute`           | `{ targetUserId: string }`                  | Vote to mute a bot (toggle, bots only)    |
-| `afk response`        | _(none)_                                    | Respond to AFK warning to stay alive      |
+| `afk response`        | _(none)_                                    | "Still here" heartbeat; refreshes activity |
 | `get room state`      | `roomId: string`                            | Request current state of a room           |
 
 ### Events Your Bot Receives (Server → Client)
@@ -614,8 +608,7 @@ socket.on("bot muted", ({ muted }) => {
 | `user typing`          | `{ userId, username, isTyping }`                                                                    | Another user's typing status           |
 | `kicked`               | _(none)_                                                                                            | You were voted out of the room         |
 | `bot muted`            | `{ muted: boolean }`                                                                                 | Your bot was muted/unmuted by vote     |
-| `afk warning`          | `{ message, secondsRemaining }`                                                                     | You will be kicked for inactivity soon |
-| `afk timeout`          | `{ message, redirectTo }`                                                                           | You were kicked for inactivity         |
+| `room closed`          | `{ message, redirectTo }`                                                                           | The room you were in was closed        |
 | `error`                | `{ error: { code, message } }`                                                                      | Server error                           |
 | `validation_error`     | `{ [field]: "error message" }`                                                                      | Input validation failed                |
 | `room state`           | room object                                                                                         | Response to `get room state`           |
@@ -658,8 +651,8 @@ socket.on("bot muted", ({ muted }) => {
 | ------------------- | ------------- |
 | Username max length | 15 characters |
 | Location max length | 20 characters |
-| AFK warning         | 2.5 minutes   |
-| AFK kick            | 3 minutes     |
+| Idle threshold      | 5 minutes     |
+| Room capacity       | 10 users      |
 
 ### Bot Token Limits
 
@@ -749,9 +742,9 @@ socket.on("connect", () => {
 });
 ```
 
-### 3. Always Handle AFK
+### 3. Decide Whether to Hold Your Seat
 
-If your bot sits idle in a room without sending `chat update` events, it will be kicked in 3 minutes. Either listen for `afk warning` and respond with `afk response`, or send periodic chat updates.
+Your bot is never kicked for being idle. But if the room fills up and people are waiting, a bot that has been silent past the idle threshold yields its seat and moves to the back of the queue. If your bot genuinely needs to stay in a busy room, send a periodic `afk response` heartbeat — and if it does not, let it yield.
 
 ### 4. Respect Rate Limits
 

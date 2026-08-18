@@ -91,8 +91,6 @@ const ERROR_CODES = {
   BAD_REQUEST: "Bad Request",
   FORBIDDEN: "Forbidden",
   CIRCUIT_OPEN: "Circuit Open",
-  AFK_WARNING: "AFK Warning",
-  AFK_TIMEOUT: "AFK Timeout",
 };
 
 // ── 2. WORD FILTER ──────────────────────────────────────────────────────────
@@ -3334,7 +3332,7 @@ function adjustLayout() {
     ? "horizontal"
     : userLayoutPreference || currentRoomLayout;
 
-  // Reset styles that only the crowd grid sets, so the <=5 layouts below are
+  // Reset styles that only the crowd grid sets, so the <=4 layouts below are
   // never affected by a previous larger headcount.
   container.style.flexWrap = "";
   container.style.alignContent = "";
@@ -3342,10 +3340,10 @@ function adjustLayout() {
   container.style.overflowY = "";
   rows.forEach((row) => (row.style.flex = ""));
 
-  if (rows.length > 5) {
+  if (rows.length > 4) {
     // Crowd mode: balanced grid (columns x rows) that fills the room. Column
     // count follows the layout preference and the available width; it only
-    // scrolls if cells would otherwise get too short. The <=5 cases are
+    // scrolls if cells would otherwise get too short. The <=4 cases are
     // left exactly as they were.
     container.style.flexDirection = "row";
     container.style.flexWrap = "wrap";
@@ -3454,15 +3452,15 @@ function adjustLayout() {
   refreshLayoutToggle();
 }
 
-// The layout toggle only makes sense on desktop in a small room. Past 5 users
+// The layout toggle only makes sense on desktop in a small room. Past 4 users
 // the room switches to the crowd grid, so the toggle is removed; it comes back
-// the moment the room drops to 5 or fewer. Also keeps the icon and tooltip in
+// the moment the room drops to 4 or fewer. Also keeps the icon and tooltip in
 // sync with whichever layout is actually on screen.
 function refreshLayoutToggle() {
   const btn = document.getElementById("layoutToggle");
   if (!btn) return;
   const userCount = document.querySelectorAll(".chat-row").length;
-  const show = !isMobile() && userCount > 0 && userCount <= 5;
+  const show = !isMobile() && userCount > 0 && userCount <= 4;
   btn.style.display = show ? "flex" : "none";
   if (!show) return;
   const horizontal =
@@ -3812,8 +3810,8 @@ socket.on("access code required", () => {
   );
 });
 
-socket.on("afk timeout", (data) => {
-  showInfoModal(data.message ?? "Removed from room due to inactivity.", () => {
+socket.on("room closed", (data) => {
+  showInfoModal(data.message ?? "This room was closed.", () => {
     window.location.href = data.redirectTo ?? "/";
   });
 });
@@ -3957,8 +3955,7 @@ async function joinRoom(roomId, accessCode = null) {
 // On reconnect (an idle/backgrounded tab that dropped, or a server restart)
 // get the user back into their room with no manual step. Without this we become
 // a ghost: still in the room on our own screen, but gone for everyone else, and
-// our typing reaches no one. Staff notice this most because they are never
-// AFK-redirected out of a room. Spectators re-spectate.
+// our typing reaches no one. Spectators re-spectate.
 //
 // A plain network blip keeps the server's session, so a bare rejoin works and
 // semi-private access stays valid via the session. A server restart wipes the
@@ -4076,7 +4073,7 @@ window.addEventListener("load", () => {
   }
   notifyToggleButton.addEventListener("click", toggleNotifications);
 
-  // Layout toggle (desktop, client-side view preference). Shown only at <=5
+  // Layout toggle (desktop, client-side view preference). Shown only at <=4
   // users; refreshLayoutToggle() handles when it appears/disappears.
   const layoutBtn = document.getElementById("layoutToggle");
   if (layoutBtn) layoutBtn.addEventListener("click", toggleRoomLayout);

@@ -12,7 +12,6 @@ const WordFilter = require("../public/js/word-filter.js");
 const CONFIG = {
   LIMITS: {
     MAX_USERNAME_LENGTH: 15,
-    MAX_AFK_TIME: 600000,
     MAX_LOCATION_LENGTH: 20,
     MAX_ROOM_NAME_LENGTH: 25,
     MAX_MESSAGE_LENGTH: 5000,
@@ -83,7 +82,11 @@ const CONFIG = {
     // Slow mode: broadcast cadence for rooms a staffer has throttled. Keystrokes
     // are still captured; the room just sees updates less frequently.
     SLOW_MODE_BATCH_INTERVAL: 1000,
-    AFK_WARNING_TIME: 300000,
+    // How long a user must be silent before they are eligible to yield their
+    // seat to someone waiting in the queue. Nobody is removed for being idle
+    // on its own - this only matters when the room is full and someone is
+    // waiting. Overridable so tests need not wait the full five minutes.
+    IDLE_THRESHOLD_MS: Number(process.env.IDLE_THRESHOLD_MS) || 300000,
     BOT_BLOCK_DURATION: 300000,
     BOT_TOKEN_EXPIRY: 2592000000,
     BOT_TOKEN_CLEANUP_INTERVAL: 86400000,
@@ -114,8 +117,6 @@ const ERROR_CODES = {
   BAD_REQUEST: "BAD_REQUEST",
   FORBIDDEN: "FORBIDDEN",
   CIRCUIT_OPEN: "CIRCUIT_OPEN",
-  AFK_WARNING: "AFK_WARNING",
-  AFK_TIMEOUT: "AFK_TIMEOUT",
   ROOM_NAME_EXISTS: "ROOM_NAME_EXISTS",
   ROOM_LIMIT_REACHED: "ROOM_LIMIT_REACHED",
   BOT_TOKEN_REQUIRED: "BOT_TOKEN_REQUIRED",
@@ -159,9 +160,9 @@ const state = {
   pendingChatUpdates: new Map(),
   batchProcessingTimers: new Map(),
 
-  // AFK
-  afkTimers: new Map(),
-  afkWarningTimers: new Map(),
+  // Idle tracking: userId -> timestamp of that user's last real activity.
+  // Drives queue-eviction eligibility, not removal on its own.
+  userLastActivity: new Map(),
 
   // Circuit breaker
   chatCircuitState: {
