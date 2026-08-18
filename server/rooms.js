@@ -1219,13 +1219,15 @@ function markUserActive(userId) {
   if (userId) state.userLastActivity.set(userId, Date.now());
 }
 
-// Staff hold their seat regardless. Bots do not - a squatting bot yields to a
-// waiting human. A user with no recorded activity is treated as active until
-// their first stamp lands, so a fresh join is never instantly evictable.
+// Staff and bots hold their seat regardless - the same exemption
+// pressureCleanup() already gives bots from solo-room closure (:387-392), so
+// a resident bot is never displaced by the queue either. A user with no
+// recorded activity is treated as active until their first stamp lands, so a
+// fresh join is never instantly evictable.
 function isUserEvictable(user, socket) {
   if (!user) return false;
-  if (user.isDev || user.isMod) return false;
-  if (socket && (socket.isDev || socket.isMod)) return false;
+  if (user.isDev || user.isMod || user.isBot) return false;
+  if (socket && (socket.isDev || socket.isMod || socket.isBot)) return false;
   if (socket && (socket.boardOpen || socket.pianoOpen)) return false;
   const last = state.userLastActivity.get(user.id);
   if (!last) return false;
