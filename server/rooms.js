@@ -3408,8 +3408,12 @@ function registerSocketHandlers(opts) {
         if (userId) {
           clearUserActivity(userId);
           dropFromAllQueues(userId);
+          // leaveRoom() already deletes the buffer for every real departure -
+          // and deliberately skips it when the user ghosts, so a fresh join's
+          // currentMessages snapshot still has their last-typed text. A second
+          // unconditional delete() here (a leftover from before ghosts existed)
+          // would wipe that text out from under the ghost immediately.
           await leaveRoom(socket, userId);
-          state.userMessageBuffers.delete(userId);
           state.devUsers.delete(userId);
           if (state.typingTimeouts.has(userId)) {
             clearTimeout(state.typingTimeouts.get(userId));
