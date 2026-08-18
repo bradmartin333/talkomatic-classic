@@ -85,6 +85,10 @@ const CONFIG = {
     // seat to someone waiting in the queue. Nobody is removed for being idle
     // on its own - this only matters when the room is full and someone is
     // waiting. Overridable so tests need not wait the full five minutes.
+    // NOTE: `|| 300000` means IDLE_THRESHOLD_MS=0 is silently ignored (0 is
+    // falsy) and falls back to the default - there is no way to configure a
+    // literal zero-grace threshold this way. Use "1" for effectively-instant
+    // eviction in a test if you need that.
     IDLE_THRESHOLD_MS: Number(process.env.IDLE_THRESHOLD_MS) || 300000,
     BOT_BLOCK_DURATION: 300000,
     BOT_TOKEN_EXPIRY: 2592000000,
@@ -113,6 +117,10 @@ const CONFIG = {
 // they had (8 vs. a 10-user room) - see CHAT-25. The x2 leaves headroom for
 // queue watchers, who hold a real socket too, and for a household running
 // a couple of tabs each.
+// NOTE: `|| ...` means MAX_CONNECTIONS_PER_IP=0 is silently ignored (0 is
+// falsy) and falls back to the computed default - there is no way to
+// configure a literal zero (block an IP entirely from here) this way; use
+// the IP blocklist for that instead.
 CONFIG.LIMITS.MAX_CONNECTIONS_PER_IP =
   Number(process.env.MAX_CONNECTIONS_PER_IP) ||
   CONFIG.LIMITS.MAX_ROOM_CAPACITY * 2;
