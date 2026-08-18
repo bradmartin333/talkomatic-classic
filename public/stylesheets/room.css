@@ -169,6 +169,14 @@ html {
   background-color: var(--tk-tile-hover);
 }
 
+/* .queue-chip's own `display: flex` above has the same specificity as the
+   browser default `[hidden] { display: none }` and comes later in the
+   cascade, so it would otherwise win and show the chip with an empty queue.
+   The extra attribute selector here outranks both. */
+.queue-chip[hidden] {
+  display: none;
+}
+
 .queue-chip i {
   color: var(--tk-accent);
 }
