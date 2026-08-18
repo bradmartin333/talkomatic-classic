@@ -382,6 +382,11 @@ async function pressureCleanup() {
     if (roomId === MAIN_ROOM_ID) continue;
     if (room.users && room.users.length >= 2) continue;
     if (room.users && room.users.length === 1) {
+      // A lone ghost isn't "occupying" the room for solo-TTL purposes -
+      // they persist until reclaimed by a join. Skipping here also avoids
+      // findSocketByUserId returning null for them below, which would
+      // otherwise silently defeat the staff/bot exemption right after.
+      if (room.users[0].departed) continue;
       const soloSince = state.roomSoloSince.get(roomId);
       if (soloSince && now - soloSince >= ttl) {
         // Staff and bots are exempt: a dev, mod, or bot can hold a room open
@@ -444,7 +449,10 @@ function updateRoomSoloTracking(roomId) {
     state.roomSoloSince.delete(roomId);
     return;
   }
-  if (room.users && room.users.length === 1) {
+  // A ghost isn't "occupying" the room for solo-TTL purposes - they persist
+  // until reclaimed by a join, not until a timer decides against them.
+  const realUsers = (room.users || []).filter((u) => !u.departed);
+  if (realUsers.length === 1) {
     if (!state.roomSoloSince.has(roomId)) {
       state.roomSoloSince.set(roomId, Date.now());
     }
@@ -1578,14 +1586,45 @@ async function leaveRoom(socket, userId) {
       const leftUser = room.users.find((u) => u.id === userId);
       room.lastActiveTime = Date.now();
 
+      // Outstanding votes are about active participation, not seat
+      // occupancy - a ghost's own cast vote (kick choice, bot-mute vote)
+      // must not keep counting just because their panel lingers. This runs
+      // unconditionally, ghost or real removal alike; only the room.users
+      // mutation and buffer deletion below are what actually differ.
+      if (room.votes) {
+        delete room.votes[userId];
+        for (const vid in room.votes) {
+          if (room.votes[vid] === userId) delete room.votes[vid];
+        }
+        emitRoomVoteUpdates(roomId);
+      }
+
+      if (room.muteVotes) {
+        delete room.muteVotes[userId];
+        for (const vid in room.muteVotes) {
+          if (room.muteVotes[vid] === userId) delete room.muteVotes[vid];
+        }
+        room.mutedBotIds?.delete(userId);
+        // The mute threshold depends on room.users.length, which just changed,
+        // so re-evaluate every bot that currently has votes or is muted - not
+        // only the target this leaver happened to vote for.
+        const affectedTargets = new Set([
+          ...Object.values(room.muteVotes),
+          ...(room.mutedBotIds || []),
+        ]);
+        for (const targetId of affectedTargets)
+          recomputeBotMuteState(room, targetId);
+        emitRoomMuteVoteUpdates(roomId);
+      }
+
       // Nobody is waiting: leave the panel and last-typed text in place
       // (a "ghost") instead of wiping it, so the room doesn't suddenly look
-      // emptier than it needs to. Skips the removal/votes/buffer cleanup
-      // below entirely - that all happens later, when the ghost is finally
-      // reclaimed (evictGhost(), on a FIFO-boot join) or when the user
-      // reconnects and un-ghosts their own seat (joinRoom's reclaim check).
-      // If the queue is non-empty, this is unchanged from before: remove and
-      // promote immediately.
+      // emptier than it needs to. Only the room.users removal and buffer
+      // deletion are skipped here - that happens later, when the ghost is
+      // finally reclaimed (evictGhost(), on a FIFO-boot join) or when the
+      // user reconnects and un-ghosts their own seat (joinRoom's reclaim
+      // check). If the queue is non-empty, this is unchanged from before:
+      // remove and promote immediately.
       if ((!room.queue || room.queue.length === 0) && leftUser) {
         ghosted = true;
         leftUser.departed = true;
@@ -1596,32 +1635,6 @@ async function leaveRoom(socket, userId) {
         updateRoomSoloTracking(roomId);
       } else {
         room.users = room.users.filter((u) => u.id !== userId);
-
-        if (room.votes) {
-          delete room.votes[userId];
-          for (const vid in room.votes) {
-            if (room.votes[vid] === userId) delete room.votes[vid];
-          }
-          emitRoomVoteUpdates(roomId);
-        }
-
-        if (room.muteVotes) {
-          delete room.muteVotes[userId];
-          for (const vid in room.muteVotes) {
-            if (room.muteVotes[vid] === userId) delete room.muteVotes[vid];
-          }
-          room.mutedBotIds?.delete(userId);
-          // The mute threshold depends on room.users.length, which just changed,
-          // so re-evaluate every bot that currently has votes or is muted - not
-          // only the target this leaver happened to vote for.
-          const affectedTargets = new Set([
-            ...Object.values(room.muteVotes),
-            ...(room.mutedBotIds || []),
-          ]);
-          for (const targetId of affectedTargets)
-            recomputeBotMuteState(room, targetId);
-          emitRoomMuteVoteUpdates(roomId);
-        }
 
         socket.leave(roomId);
         emitRoomUserLeft(roomId, userId, leftUser);
@@ -3642,6 +3655,10 @@ function startCleanupIntervals() {
       if (!room.users || room.users.length === 0) continue;
       const before = room.users.length;
       room.users = room.users.filter((u) => {
+        // Departed users have no live socket by design - that's not
+        // staleness, it's the whole point of a ghost panel. Only sweep
+        // entries that never intended to be here without one.
+        if (u.departed) return true;
         if (!activeIds.has(u.id)) {
           console.log(`Ghost removed: "${u.username}" from "${room.name}"`);
           state.userMessageBuffers.delete(u.id);
@@ -3741,6 +3758,7 @@ function purgeAllGhostUsers() {
     const before = room.users.length;
     room.users = room.users.filter((u) => {
       if (activeIds.has(u.id)) return true; // live socket -> a real user, keep
+      if (u.departed) return true; // no socket by design - not staleness
       state.userMessageBuffers.delete(u.id);
       clearUserActivity(u.id);
       state.devUsers.delete(u.id);
