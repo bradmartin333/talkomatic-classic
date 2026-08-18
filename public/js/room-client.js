@@ -2854,6 +2854,7 @@ function createUserRow(user, container) {
   const row = document.createElement("div");
   row.classList.add("chat-row");
   if (user.id === currentUserId) row.classList.add("current-user");
+  if (user.departed) row.classList.add("departed");
   row.dataset.userId = user.id;
   row.dataset.username = user.username || "";
 
@@ -2915,6 +2916,15 @@ function createUserRow(user, container) {
   nameEl.className = "ui-name";
   nameEl.textContent = user.username;
   info.appendChild(nameEl);
+
+  // Ghost: they left while the queue was empty, so their panel/text lingers
+  // instead of disappearing. Marked, not disguised as still-present.
+  if (user.departed) {
+    const leftLabel = document.createElement("span");
+    leftLabel.className = "departed-label";
+    leftLabel.textContent = "left";
+    info.appendChild(leftLabel);
+  }
 
   // Vote-to-mute a bot: status label to the left of the vote button, both
   // shown only on bot rows (bots are any socket authenticated via a bot
@@ -3785,6 +3795,25 @@ socket.on("room update", (roomData) => {
       applyDevAppearanceToRow(row, u);
       applyPanelStyleToRow(row, u);
       syncUserRowNote(row, u);
+
+      // Ghost toggle: a fresh departure marks an existing row without
+      // recreating it; a reconnect reclaiming their own seat un-marks it the
+      // same way.
+      const wasDeparted = row.classList.contains("departed");
+      const isDeparted = !!u.departed;
+      if (wasDeparted !== isDeparted) {
+        row.classList.toggle("departed", isDeparted);
+        const info = row.querySelector(".user-info");
+        const existingLabel = info?.querySelector(".departed-label");
+        if (isDeparted && info && !existingLabel) {
+          const leftLabel = document.createElement("span");
+          leftLabel.className = "departed-label";
+          leftLabel.textContent = "left";
+          info.appendChild(leftLabel);
+        } else if (!isDeparted && existingLabel) {
+          existingLabel.remove();
+        }
+      }
     });
   }
 

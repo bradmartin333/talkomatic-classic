@@ -281,6 +281,27 @@ html {
   overflow: hidden;
 }
 
+/* Ghost panel: someone left while the queue was empty, so their panel and
+   last-typed text linger read-only rather than disappearing. Dimmed (not
+   collapsed, unlike .bot-muted) so the lingering text stays legible - the
+   point is filling the room, not hiding what was said. */
+.chat-row.departed {
+  opacity: 0.6;
+}
+
+.chat-row.departed .chat-input {
+  cursor: default;
+}
+
+.departed-label {
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: var(--tk-border);
+  color: var(--tk-muted);
+}
+
 /* Styling for the user information above chat messages */
 .user-info {
   font-size: 14px;

@@ -598,6 +598,9 @@ function formatUserForSocket(user, recipientSocket) {
     deviceType: user.deviceType || "unknown",
   };
   if (user.isBot) formatted.isBot = true;
+  // Ghost panel: they left while the queue was empty, so their last text
+  // stays up (see leaveRoom's ghost branch) rendered read-only and dimmed.
+  if (user.departed) formatted.departed = true;
   // Discord avatar: validated snowflake id + CDN hash only; clients rebuild
   // the cdn.discordapp.com URL themselves.
   if (user.avatar) formatted.avatar = user.avatar;
@@ -1323,6 +1326,11 @@ async function yieldSeatToQueue(room) {
   if (!room?.queue?.length) return false;
 
   const candidates = (room.users || [])
+    // Ghosts have no live socket to yield with - they're reclaimed by
+    // evictGhost() on a join instead. Shouldn't be reachable in practice
+    // (ghosts only exist while the queue is empty, and this only runs once
+    // it isn't), but the filter costs nothing and removes the doubt.
+    .filter((u) => !u.departed)
     .map((u) => ({ user: u, socket: findSocketByUserId(u.id, room.id) }))
     .filter(({ user, socket }) => isUserEvictable(user, socket))
     .sort((a, b) => (a.user.joinedAt || 0) - (b.user.joinedAt || 0));
@@ -1344,6 +1352,32 @@ async function yieldSeatToQueue(room) {
     enqueueUser(socket, room, user.id, user.username, user.location);
   }
   return true;
+}
+
+// Reclaim a ghost's seat for real - the same cleanup leaveRoom would have
+// done for them if the queue hadn't been empty when they left. Called when a
+// newcomer arrives at capacity and a ghost is the oldest thing occupying it.
+function evictGhost(room, ghost) {
+  room.users = room.users.filter((u) => u.id !== ghost.id);
+  state.userMessageBuffers.delete(ghost.id);
+  clearUserActivity(ghost.id);
+
+  if (room.votes) {
+    delete room.votes[ghost.id];
+    for (const vid in room.votes) {
+      if (room.votes[vid] === ghost.id) delete room.votes[vid];
+    }
+    emitRoomVoteUpdates(room.id);
+  }
+  if (room.muteVotes) {
+    delete room.muteVotes[ghost.id];
+    for (const vid in room.muteVotes) {
+      if (room.muteVotes[vid] === ghost.id) delete room.muteVotes[vid];
+    }
+    room.mutedBotIds?.delete(ghost.id);
+  }
+
+  emitRoomUserLeft(room.id, ghost.id, ghost);
 }
 
 // ── Chat Processing ─────────────────────────────────────────────────────────
@@ -1518,6 +1552,7 @@ async function leaveRoom(socket, userId) {
     finalizeBoardUserStroke(roomId, userId);
     pianoDropPresence(roomId, userId, true);
 
+    let ghosted = false;
     const room = state.rooms.get(roomId);
     if (room) {
       // Ownership guard. leaveRoom is keyed only by userId, but during the
@@ -1541,45 +1576,64 @@ async function leaveRoom(socket, userId) {
       }
 
       const leftUser = room.users.find((u) => u.id === userId);
-      room.users = room.users.filter((u) => u.id !== userId);
       room.lastActiveTime = Date.now();
 
-      if (room.votes) {
-        delete room.votes[userId];
-        for (const vid in room.votes) {
-          if (room.votes[vid] === userId) delete room.votes[vid];
+      // Nobody is waiting: leave the panel and last-typed text in place
+      // (a "ghost") instead of wiping it, so the room doesn't suddenly look
+      // emptier than it needs to. Skips the removal/votes/buffer cleanup
+      // below entirely - that all happens later, when the ghost is finally
+      // reclaimed (evictGhost(), on a FIFO-boot join) or when the user
+      // reconnects and un-ghosts their own seat (joinRoom's reclaim check).
+      // If the queue is non-empty, this is unchanged from before: remove and
+      // promote immediately.
+      if ((!room.queue || room.queue.length === 0) && leftUser) {
+        ghosted = true;
+        leftUser.departed = true;
+        leftUser.departedAt = Date.now();
+        socket.leave(roomId);
+        updateRoom(roomId);
+        sendDevRoomContext(roomId);
+        updateRoomSoloTracking(roomId);
+      } else {
+        room.users = room.users.filter((u) => u.id !== userId);
+
+        if (room.votes) {
+          delete room.votes[userId];
+          for (const vid in room.votes) {
+            if (room.votes[vid] === userId) delete room.votes[vid];
+          }
+          emitRoomVoteUpdates(roomId);
         }
-        emitRoomVoteUpdates(roomId);
-      }
 
-      if (room.muteVotes) {
-        delete room.muteVotes[userId];
-        for (const vid in room.muteVotes) {
-          if (room.muteVotes[vid] === userId) delete room.muteVotes[vid];
+        if (room.muteVotes) {
+          delete room.muteVotes[userId];
+          for (const vid in room.muteVotes) {
+            if (room.muteVotes[vid] === userId) delete room.muteVotes[vid];
+          }
+          room.mutedBotIds?.delete(userId);
+          // The mute threshold depends on room.users.length, which just changed,
+          // so re-evaluate every bot that currently has votes or is muted - not
+          // only the target this leaver happened to vote for.
+          const affectedTargets = new Set([
+            ...Object.values(room.muteVotes),
+            ...(room.mutedBotIds || []),
+          ]);
+          for (const targetId of affectedTargets)
+            recomputeBotMuteState(room, targetId);
+          emitRoomMuteVoteUpdates(roomId);
         }
-        room.mutedBotIds?.delete(userId);
-        // The mute threshold depends on room.users.length, which just changed,
-        // so re-evaluate every bot that currently has votes or is muted - not
-        // only the target this leaver happened to vote for.
-        const affectedTargets = new Set([
-          ...Object.values(room.muteVotes),
-          ...(room.mutedBotIds || []),
-        ]);
-        for (const targetId of affectedTargets)
-          recomputeBotMuteState(room, targetId);
-        emitRoomMuteVoteUpdates(roomId);
+
+        socket.leave(roomId);
+        emitRoomUserLeft(roomId, userId, leftUser);
+        updateRoom(roomId);
+        sendDevRoomContext(roomId);
+        updateRoomSoloTracking(roomId);
+
+        // A seat just opened - hand it to whoever has been waiting longest.
+        promoteFromQueue(room);
+
+        if (room.users.length === 0) startRoomDeletionTimer(roomId);
       }
-
-      socket.leave(roomId);
-      emitRoomUserLeft(roomId, userId, leftUser);
-      updateRoom(roomId);
-      sendDevRoomContext(roomId);
-      updateRoomSoloTracking(roomId);
-
-      // A seat just opened - hand it to whoever has been waiting longest.
-      promoteFromQueue(room);
-
-      if (room.users.length === 0) startRoomDeletionTimer(roomId);
     }
 
     if (socket.handshake.session) {
@@ -1590,7 +1644,11 @@ async function leaveRoom(socket, userId) {
         console.error("Session save in leaveRoom:", e),
       );
     }
-    state.userMessageBuffers.delete(userId);
+    // A ghost's buffer IS the persisted "their text" - filterCurrentMessagesForSocket
+    // reads it for every room.users entry, ghosts included, on every future
+    // join/snapshot. Only cleared for real when the ghost is finally reclaimed
+    // (evictGhost) or the user reconnects and un-ghosts their own seat.
+    if (!ghosted) state.userMessageBuffers.delete(userId);
     state.devUsers.delete(userId);
 
     socket.roomId = null;
@@ -1735,10 +1793,23 @@ function joinRoom(socket, roomId, userId) {
     // A full room no longer turns people away: they wait in the queue and
     // watch read-only until a seat frees. Because the count above excludes
     // this user's own stale entry, someone merely reconnecting reclaims their
-    // seat instead of being sent to the back of the line.
+    // seat instead of being sent to the back of the line - including a ghost
+    // reclaiming their own seat (their departed entry is excluded the same
+    // way, so this check never re-counts it against them).
     if (!isStaff && joinableUserCount >= roomCapacity(room)) {
-      enqueueUser(socket, room, userId, username, location);
-      return;
+      // Ghosts absorb arrivals first: the room only *looks* full. Evict the
+      // one that's been sitting longest and seat the newcomer in its place
+      // rather than queueing them - real queueing is the last resort, once
+      // there's truly no ghost left to reclaim.
+      const oldestGhost = (room.users || [])
+        .filter((u) => u.departed)
+        .sort((a, b) => (a.departedAt || 0) - (b.departedAt || 0))[0];
+      if (oldestGhost) {
+        evictGhost(room, oldestGhost);
+      } else {
+        enqueueUser(socket, room, userId, username, location);
+        return;
+      }
     }
 
     dequeueUser(room, userId);
