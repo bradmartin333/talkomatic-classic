@@ -51,9 +51,20 @@ if (!ROOM_ID) {
 // per IP, but nothing limits how many connections reuse a single token - so
 // asking for one per simulated user makes 10 users impossible locally.
 async function requestToken() {
-  const res = await fetch(`${SERVER}/api/v1/bot-tokens/request`, {
-    method: "POST",
-  });
+  let res;
+  try {
+    res = await fetch(`${SERVER}/api/v1/bot-tokens/request`, {
+      method: "POST",
+    });
+  } catch (err) {
+    // Node's fetch collapses every network failure to the unhelpful message
+    // "fetch failed" and buries the real reason in err.cause.
+    throw new Error(
+      `Could not reach ${SERVER} (${err.cause?.code || err.cause?.message || err.message}). ` +
+        `Is the server running? Start it in another terminal:\n` +
+        `  IDLE_THRESHOLD_MS=15000 MAX_CONNECTIONS_PER_IP=40 npm start`,
+    );
+  }
   if (!res.ok) {
     throw new Error(
       `Token request failed (${res.status}). Tokens are limited to 3/hour ` +
