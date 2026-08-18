@@ -18,10 +18,6 @@ const CONFIG = {
     MAX_ROOM_CAPACITY: 10,
     BASE_MAX_ROOMS: 15,
     ROOM_SCALING_INCREMENT: 5,
-    // Overridable so a single machine can simulate a full room; a real room
-    // holds more users than one IP is normally allowed to open sockets for.
-    MAX_CONNECTIONS_PER_IP:
-      Number(process.env.MAX_CONNECTIONS_PER_IP) || 8,
     SOCKET_MAX_REQUESTS_WINDOW: 1,
     SOCKET_MAX_REQUESTS_PER_WINDOW: 75,
     CHAT_UPDATE_RATE_LIMIT: 500,
@@ -108,6 +104,18 @@ const CONFIG = {
     PROTOCOL: 1,
   },
 };
+
+// A single IP must always be able to fill an entire room's worth of
+// connections on its own - shared NAT (office, school, family Wi-Fi) is
+// normal, and the app's own advertised room capacity should never be
+// unreachable from one network origin. Tied to MAX_ROOM_CAPACITY (rather
+// than a bare number) so the two can't quietly drift apart again the way
+// they had (8 vs. a 10-user room) - see CHAT-25. The x2 leaves headroom for
+// queue watchers, who hold a real socket too, and for a household running
+// a couple of tabs each.
+CONFIG.LIMITS.MAX_CONNECTIONS_PER_IP =
+  Number(process.env.MAX_CONNECTIONS_PER_IP) ||
+  CONFIG.LIMITS.MAX_ROOM_CAPACITY * 2;
 
 const ERROR_CODES = {
   VALIDATION_ERROR: "VALIDATION_ERROR",
