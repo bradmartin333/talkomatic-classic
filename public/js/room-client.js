@@ -3708,26 +3708,34 @@ socket.on("room not found", () => {
 });
 
 socket.on("user joined", (data) => {
-  if (!document.querySelector(`.chat-row[data-user-id="${data.id}"]`)) {
-    const c = document.querySelector(".chat-container");
-    if (c) {
-      createUserRow(data, c);
-      adjustLayout();
-      updateRoomInfo(data);
-      if (notificationsEnabled && document.hidden) showTabDot();
+  const c = document.querySelector(".chat-container");
+  if (!c) return;
 
-      // A new join can cross the voting threshold
-      updateVotesUI(currentVotes);
+  // A row can already exist here if an earlier "user left" for this same
+  // userId never arrived (dropped over the network, a transport hiccup) -
+  // rebuilding unconditionally, rather than no-op'ing when one's found,
+  // guarantees a rejoin always shows blank instead of getting stuck with
+  // whatever stale text that missed removal left behind.
+  const existingRow = document.querySelector(
+    `.chat-row[data-user-id="${data.id}"]`,
+  );
+  if (existingRow) existingRow.remove();
 
-      // Confetti only on the dev's own screen
-      if (data.isDev && !data.isHidden && currentUserIsDev) {
-        triggerDevConfetti();
-      }
-    }
-    // No explicit refocus here: adjustLayout() already restores focus to the
-    // chat input only when it was active, so a join never steals focus from a
-    // dev's open modal (or pops the mobile keyboard when you're not typing).
+  createUserRow(data, c);
+  adjustLayout();
+  updateRoomInfo(data);
+  if (notificationsEnabled && document.hidden) showTabDot();
+
+  // A new join can cross the voting threshold
+  updateVotesUI(currentVotes);
+
+  // Confetti only on the dev's own screen
+  if (data.isDev && !data.isHidden && currentUserIsDev) {
+    triggerDevConfetti();
   }
+  // No explicit refocus here: adjustLayout() already restores focus to the
+  // chat input only when it was active, so a join never steals focus from a
+  // dev's open modal (or pops the mobile keyboard when you're not typing).
 });
 
 socket.on("user left", (userId) => {
