@@ -7,11 +7,18 @@
 // queue only forms when the room is full AND occupants have gone quiet, which
 // is impossible to stage with static flags.
 //
+// Run this against your OWN local dev server only - never a shared/remote
+// one. The env overrides below deliberately weaken real anti-abuse limits,
+// and this spins up real bot connections into a real room.
+//
 // The server caps sockets per IP well below a room's capacity, so simulating a
 // full room needs both overrides on the server side:
 //
 //   IDLE_THRESHOLD_MS=15000 MAX_CONNECTIONS_PER_IP=40 npm start
 //   node tools/simulate-users.js --count 12 --room 000001
+//
+// Via npm, args need the `--` separator or npm swallows them itself:
+//   npm run simulate -- --count 12 --room 000001
 //
 // Commands: list | idle <n|all> | active <n|all> | add [k] | drop <n> | quit
 
@@ -33,7 +40,10 @@ const IDLE_COUNT = Number(opt("idle", 0));
 const CHAT_INTERVAL_MS = Number(opt("chat-interval", 3000));
 
 if (!ROOM_ID) {
-  console.error("Missing --room <roomId>. Example: --room 000001");
+  console.error(
+    "Missing --room <roomId>. Example: node tools/simulate-users.js --room 000001\n" +
+      "Via npm, remember the -- separator: npm run simulate -- --room 000001",
+  );
   process.exit(1);
 }
 
