@@ -3721,7 +3721,14 @@ socket.on("user joined", (data) => {
   );
   if (existingRow) existingRow.remove();
 
-  createUserRow(data, c);
+  const row = createUserRow(data, c);
+  // A ghost's last text survives its rejoin (server-side buffer never got
+  // cleared - see leaveRoom's ghost branch), and our own "room joined" already
+  // shows it via currentMessages. Apply it here too so every OTHER client's
+  // freshly-built row for them starts in sync instead of sitting blank.
+  if (data.text) {
+    renderOtherUserMessage(row.querySelector(".chat-input"), data.text);
+  }
   adjustLayout();
   updateRoomInfo(data);
   if (notificationsEnabled && document.hidden) showTabDot();

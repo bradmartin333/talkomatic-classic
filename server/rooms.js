@@ -881,6 +881,14 @@ function emitRoomUserJoined(room, joinedUser) {
       ...visibleUser,
       roomName: room.name,
       roomType: room.type,
+      // A rejoin reclaiming a ghost's seat carries that ghost's last text
+      // along with it - the buffer already survived the departure (see
+      // leaveRoom's ghost branch); this is what lets every OTHER client's
+      // freshly-created row for them start in sync with what the rejoining
+      // user's own "room joined" currentMessages already shows, instead of
+      // sitting blank until their next keystroke. Empty for an ordinary
+      // first-time join, since nothing is buffered yet.
+      text: state.userMessageBuffers.get(joinedUser.id) || "",
     });
   }
 }
