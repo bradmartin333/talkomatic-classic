@@ -8,14 +8,22 @@
 // is impossible to stage with static flags.
 //
 // Run this against your OWN local dev server only - never a shared/remote
-// one. The env overrides below deliberately weaken real anti-abuse limits,
-// and this spins up real bot connections into a real room.
+// one. IDLE_THRESHOLD_MS below deliberately weakens the real idle timeout,
+// and this spins up real connections into a real room.
 //
-// The server caps sockets per IP well below a room's capacity, so simulating a
-// full room needs both overrides on the server side:
+// Simulated users connect as HUMANS by default (spoofed browser headers, no
+// bot token) - NOT as bots. This matters: bots are exempt from idle-eviction
+// (server/rooms.js:isUserEvictable), and the server outright rejects a bot
+// token from anything that looks like a browser, so there is no in-between.
+// Pass --as-bot to instead go through the bot-token flow and verify the
+// OPPOSITE thing: that bot occupants never yield their seat.
 //
-//   IDLE_THRESHOLD_MS=15000 MAX_CONNECTIONS_PER_IP=40 npm start
+//   IDLE_THRESHOLD_MS=15000 npm start
 //   node tools/simulate-users.js --count 12 --room 000001
+//
+// A full room's own connection cap now comfortably exceeds MAX_ROOM_CAPACITY
+// by default, so MAX_CONNECTIONS_PER_IP only needs overriding for a much
+// bigger stress test (queue watchers add up fast): MAX_CONNECTIONS_PER_IP=60
 //
 // Via npm, args need the `--` separator or npm swallows them itself:
 //   npm run simulate -- --count 12 --room 000001
@@ -38,6 +46,19 @@ const ACCESS_CODE = opt("access-code", null);
 // How many of the initial batch start idle; the rest chatter.
 const IDLE_COUNT = Number(opt("idle", 0));
 const CHAT_INTERVAL_MS = Number(opt("chat-interval", 3000));
+const AS_BOT = args.includes("--as-bot");
+
+// Score >= 3 of 4 in server/security.js's detectBrowserRequest() to be
+// treated as a real browser rather than a bot. Node's socket.io-client won't
+// send these on its own the way a real browser does - has to be spelled out.
+const BROWSER_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Accept-Encoding": "gzip, deflate, br",
+};
 
 if (!ROOM_ID) {
   console.error(
@@ -62,7 +83,7 @@ async function requestToken() {
     throw new Error(
       `Could not reach ${SERVER} (${err.cause?.code || err.cause?.message || err.message}). ` +
         `Is the server running? Start it in another terminal:\n` +
-        `  IDLE_THRESHOLD_MS=15000 MAX_CONNECTIONS_PER_IP=40 npm start`,
+        `  IDLE_THRESHOLD_MS=15000 npm start`,
     );
   }
   if (!res.ok) {
@@ -78,11 +99,15 @@ const users = [];
 
 function spawn(token, index) {
   const name = `Sim${String(index).padStart(2, "0")}`;
-  const socket = io(SERVER, {
-    auth: { token },
-    transports: ["websocket"],
-    reconnection: false,
-  });
+  const socket = AS_BOT
+    ? io(SERVER, { auth: { token }, transports: ["websocket"], reconnection: false })
+    : io(SERVER, {
+        // No token: looking like a browser and carrying one is rejected
+        // outright (server.js: "Bot tokens not allowed in browsers").
+        extraHeaders: BROWSER_HEADERS,
+        transports: ["websocket"],
+        reconnection: false,
+      });
 
   const user = {
     index,
@@ -150,7 +175,8 @@ function spawn(token, index) {
     if (/Too many connections/i.test(err.message)) {
       log(
         user,
-        "raise MAX_CONNECTIONS_PER_IP on the server to simulate a full room",
+        "hit MAX_CONNECTIONS_PER_IP (default now covers a full room; " +
+          "raise it further for a bigger test, e.g. MAX_CONNECTIONS_PER_IP=60)",
       );
     }
   });
@@ -213,9 +239,10 @@ function printList() {
 let rl;
 
 (async () => {
-  const token = opt("token", null) || (await requestToken());
+  const token = AS_BOT ? opt("token", null) || (await requestToken()) : null;
   console.log(`Server: ${SERVER}`);
   console.log(`Room:   ${ROOM_ID}`);
+  console.log(`Mode:   ${AS_BOT ? "bots (bot-token, exempt from idle-eviction)" : "humans (spoofed browser, evictable)"}`);
   console.log(`Spawning ${COUNT} users (${IDLE_COUNT} idle)...\n`);
 
   for (let i = 1; i <= COUNT; i++) {
