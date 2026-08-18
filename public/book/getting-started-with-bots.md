@@ -13,7 +13,7 @@ Everything you need to build, authenticate, and run a bot on Talkomatic.
 - [Step 3: Sign In (Join the Lobby)](#step-3-sign-in-join-the-lobby)
 - [Step 4: List, Create, or Join Rooms](#step-4-list-create-or-join-rooms)
 - [Step 5: Send and Receive Messages](#step-5-send-and-receive-messages)
-- [Step 6: Stay Active (Holding Your Seat)](#step-6-stay-active-holding-your-seat)
+- [Step 6: Staying in a Room](#step-6-staying-in-a-room)
 - [Step 7: Leave a Room](#step-7-leave-a-room)
 - [Socket.IO Events Reference](#socketio-events-reference)
 - [Rate Limits and Constraints](#rate-limits-and-constraints)
@@ -351,7 +351,7 @@ socket.on("access code required", () => {
 
 ### Joining a Full Room
 
-Rooms hold up to 10 users. When a room is full, `join room` does not fail — you receive `room queued` instead of `room joined` and start watching the room read-only (same shape as `room joined`, plus `position`). You're promoted automatically, with a normal `room joined`, when a seat opens: either an occupant leaves, or an occupant who has gone quiet past the idle threshold yields their seat (see [Step 6](#step-6-stay-active-holding-your-seat)).
+Rooms hold up to 10 users. When a room is full, `join room` does not fail — you receive `room queued` instead of `room joined` and start watching the room read-only (same shape as `room joined`, plus `position`). You're promoted automatically, with a normal `room joined`, when a seat opens: either an occupant leaves, or a human occupant who has gone quiet past the idle threshold yields their seat. Bots are exempt from yielding (see [Step 6](#step-6-staying-in-a-room)) — if your bot is queued, it's waiting behind a human-only seat, not a bot's.
 
 ```javascript
 socket.on("room queued", (data) => {
@@ -366,7 +366,7 @@ socket.on("queue promoted", () => {
 });
 ```
 
-If your bot yields its own seat later (see Step 6), it re-enters the queue at the back rather than being disconnected — `room capacity evicted` fires, then eventually another `room queued`.
+Bots never yield a seat once they have one (see [Step 6](#step-6-staying-in-a-room)), so `room capacity evicted` never fires for a bot. That event, and re-entering the queue at the back, is what happens to *human* occupants who go quiet in a full room.
 
 **`room joined` payload:**
 
@@ -495,49 +495,13 @@ socket.on("room joined", (data) => {
 
 ---
 
-## Step 6: Stay Active (Holding Your Seat)
+## Step 6: Staying in a Room
 
-**Your bot is never removed for being idle.** There is no AFK kick. A bot can sit silently in a room indefinitely and nothing will happen to it.
+**Your bot is never removed for being idle, and it never yields its seat to the queue.** There is no AFK kick, and bots are exempt from the seat-yielding that applies to human occupants (a bot can sit silently in a full room forever without displacing anyone or being displaced) — the same exemption bots already get from solo-room closure. A bot can sit connected and silent indefinitely and nothing will happen to it.
 
-Activity matters for exactly one thing: **who yields a seat when the room is full and someone is waiting.** Rooms hold up to 10 users. When a room is full, newcomers wait in a queue and watch read-only. If an occupant has been silent past the idle threshold (5 minutes by default) *and* someone is queued, that occupant yields its seat and moves to the back of the queue.
+This means you don't need a heartbeat and don't need to handle `room capacity evicted` — that event is for human occupants, not bots. If your bot needs to know when a room fills up (e.g. to log it), `queue update` reports the current line.
 
-If nobody is waiting, nothing happens no matter how long you stay quiet.
-
-Your activity timestamp updates when:
-
-1. Your bot sends a `chat update` event, or
-2. Your bot emits `afk response` — a plain "still here" heartbeat, kept under its old name so existing bots keep working.
-
-**Typing indicators, `get rooms`, and other events do not count as activity.** This is intentional: a bot should not be able to hold a seat away from a waiting human without actually participating.
-
-### Holding your seat in a busy room
-
-If your bot is chatting, its timestamp refreshes on every `chat update` and you need do nothing. If your bot is mostly quiet but you want it to keep its seat in a room that fills up, send a periodic heartbeat:
-
-```javascript
-let heartbeatInterval;
-
-function startHeartbeat(socket) {
-  // "Still here" - refreshes the activity timestamp without posting anything
-  heartbeatInterval = setInterval(() => {
-    socket.emit("afk response");
-  }, 120000); // every 2 minutes
-}
-
-function stopHeartbeat() {
-  if (heartbeatInterval) clearInterval(heartbeatInterval);
-}
-```
-
-Consider whether you *should*. A bot that heartbeats forever holds a seat a person might want. Letting a quiet bot yield — and rejoin from the queue when a slot frees — is usually the friendlier behaviour.
-
-### If your bot yields its seat
-
-```javascript
-socket.on("room capacity evicted", (data) => {
-  console.log(`Yielded seat in ${data.roomName}; now watching from the queue`);
-});
-```
+**Note for room design:** because your bot never yields, a room your bot occupies always has one fewer seat available to humans than its stated capacity. If you're running several bots, keep that in mind.
 
 ---
 
@@ -674,8 +638,8 @@ socket.on("bot muted", ({ muted }) => {
 | ------------------- | ------------- |
 | Username max length | 15 characters |
 | Location max length | 20 characters |
-| Idle threshold      | 5 minutes     |
-| Room capacity       | 10 users      |
+| Idle threshold       | 5 minutes (humans only - bots are exempt) |
+| Room capacity        | 10 users      |
 
 ### Bot Token Limits
 
@@ -764,9 +728,9 @@ socket.on("connect", () => {
 });
 ```
 
-### 3. Decide Whether to Hold Your Seat
+### 3. Be Mindful of the Seat You Hold
 
-Your bot is never kicked for being idle. But if the room fills up and people are waiting, a bot that has been silent past the idle threshold yields its seat and moves to the back of the queue. If your bot genuinely needs to stay in a busy room, send a periodic `afk response` heartbeat — and if it does not, let it yield.
+Your bot is never kicked for being idle, and it never yields to the queue the way a quiet human does. That's convenient, but it also means a room with your bot in it has one less seat available to actual people, indefinitely. If you're running a bot mainly for testing, leave the room when you're done rather than leaving it occupying a seat.
 
 ### 4. Respect Rate Limits
 

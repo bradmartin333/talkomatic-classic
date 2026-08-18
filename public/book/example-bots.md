@@ -97,15 +97,8 @@ socket.on("user left", (userId) => {
   sendMessage(`👋 Someone just left. See you next time!`);
 });
 
-// ── Holding a Seat ──────────────────────────────────────────────────────────
-// Nothing kicks this bot for being idle. The heartbeat only matters if the room
-// fills up and people are queued: a silent occupant yields its seat to them.
-
-setInterval(() => socket.emit("afk response"), 120000);
-
-socket.on("room capacity evicted", (data) => {
-  console.log(`[!] Yielded seat in ${data.roomName}; watching from the queue`);
-});
+// Nothing kicks this bot for being idle, and it never yields its seat to the
+// queue - bots are exempt from both. No heartbeat needed.
 
 // ── Error Handling ──────────────────────────────────────────────────────────
 
@@ -296,10 +289,8 @@ function handleCommand(cmd, args, username) {
   }
 }
 
-// ── Heartbeat / Error / Shutdown ────────────────────────────────────────────
+// ── Error / Shutdown (bots never idle-kick or yield to the queue) ──────────
 
-setInterval(() => socket.emit("afk response"), 120000);
-socket.on("room capacity evicted", () => process.exit(1));
 socket.on("kicked", () => {
   console.log("[!] Kicked");
   process.exit(0);
@@ -524,8 +515,6 @@ socket.on("user left", (uid) => {
   userMessages.delete(uid);
 });
 
-setInterval(() => socket.emit("afk response"), 120000);
-socket.on("room capacity evicted", () => process.exit(1));
 socket.on("kicked", () => process.exit(0));
 socket.on("error", (d) => console.error("[!]", d.error?.message || d));
 socket.on("connect_error", (e) => console.error("[!]", e.message));
@@ -660,13 +649,8 @@ function startClock() {
   clockInterval = setInterval(() => updateStatus(), 60000);
 }
 
-// ── Heartbeat / Error / Shutdown ────────────────────────────────────────────
+// ── Error / Shutdown (bots never idle-kick or yield to the queue) ──────────
 
-setInterval(() => socket.emit("afk response"), 120000);
-socket.on("room capacity evicted", () => {
-  console.log("[!] Yielded seat to the queue — restarting");
-  process.exit(1); // let a process manager (pm2, systemd) restart
-});
 socket.on("kicked", () => {
   console.log("[!] Voted out");
   process.exit(0);
@@ -786,12 +770,6 @@ def on_user_joined(data):
 @sio.on('user left')
 def on_user_left(user_id):
     user_messages.pop(user_id, None)
-
-
-@sio.on('room capacity evicted')
-def on_capacity_evicted(data):
-    print(f"[!] Yielded seat in {data.get('roomName')} to the queue")
-    sys.exit(1)
 
 
 @sio.on('kicked')

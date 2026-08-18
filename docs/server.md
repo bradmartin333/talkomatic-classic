@@ -242,9 +242,9 @@ CONFIG.TIMING.IDLE_THRESHOLD_MS = 300000; // 5 minutes; env-overridable
 ```
 
 - Sending a `chat update`, or an `afk response` heartbeat, refreshes the timestamp
-- A user silent past the threshold is *eligible* to yield their seat, nothing more
+- A human occupant silent past the threshold is *eligible* to yield their seat, nothing more
 - Eviction happens only when the room is full and someone is queued; the longest-present idle occupant yields and moves to the back of the queue
-- Staff never yield; bots do
+- Staff and bots never yield - same exemption bots already get from solo-room closure
 
 ### Typing Indicators
 
@@ -387,16 +387,7 @@ socket.on("message", (message) => {
 
 ### Holding a Seat in a Busy Room
 
-Bots are never kicked for idling. A heartbeat only matters if the bot needs to keep its seat in a room that fills up:
-
-```javascript
-// "Still here" - refreshes the activity timestamp without posting anything
-setInterval(() => socket.emit("afk response"), 120000);
-
-socket.on("room capacity evicted", (data) => {
-  console.log(`Yielded seat in ${data.roomName}; watching from the queue`);
-});
-```
+Bots are never kicked for idling, and never yield their seat to the queue - no heartbeat needed, and `room capacity evicted` never fires for a bot. A room a bot occupies has one less seat available to humans, indefinitely, so leave the room when a bot's job is done rather than leaving it idling in it.
 
 ### Best Practices for Bots
 
@@ -406,7 +397,7 @@ socket.on("room capacity evicted", (data) => {
 4. **Maintain persistent connections** rather than reconnecting frequently
 5. **Target 10-15 fps** for real-time display bots (plenty below the 60/sec limit)
 6. **Implement client-side rate limiting** before server-side limits are reached
-7. **Send an activity heartbeat** only if the bot must hold its seat in a full room
+7. **Leave the room when done** - your bot never yields its seat on its own
 8. **Cache room and user data** to reduce unnecessary requests
 9. **Use exponential backoff** when encountering rate limits
 10. **Monitor connectivity** and implement graceful reconnection

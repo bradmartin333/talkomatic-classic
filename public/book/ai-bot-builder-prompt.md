@@ -135,24 +135,16 @@ Listen for these while inside a room:
 
 === IDLE AND ROOM CAPACITY ===
 
-Bots are NEVER kicked for being idle. A bot may sit silent in a room forever.
+Bots are NEVER kicked for being idle, and NEVER yield their seat to the queue
+(same exemption bots already get from solo-room closure). A bot may sit silent
+in a room forever without being displaced. No heartbeat needed, and you will
+never receive 'room capacity evicted' - that event is for human occupants only.
 
-Idle time matters only when a room is full (10 users) and people are waiting in
-the queue. An occupant silent past the idle threshold (5 minutes) yields its
-seat to the queue head and moves to the back of the queue. If nobody is waiting,
-nothing happens.
-
-Activity is refreshed by: (a) sending a 'chat update', or (b) emitting
-'afk response' as a plain "still here" heartbeat (old name, kept for
-compatibility). Typing indicators and 'get rooms' do NOT count.
-
-If your bot should hold its seat in a busy room:
-  setInterval(() => socket.emit('afk response'), 120000);
-
-Prefer letting a quiet bot yield rather than holding a seat away from a person.
-
-Listen for 'room capacity evicted' → { roomId, roomName } — the bot yielded its
-seat and is now watching from the queue.
+Rooms hold 10 users. When full, a joining bot gets 'room queued' instead of
+'room joined' (same payload, plus `position`) and watches read-only until a
+human occupant leaves or yields. Because your bot never yields once seated, a
+room your bot occupies has one less seat available to humans, indefinitely -
+leave the room when you're done rather than idling in it forever.
 
 === ERROR HANDLING ===
 
@@ -186,8 +178,8 @@ Common error codes: VALIDATION_ERROR, UNAUTHORIZED, NOT_FOUND, RATE_LIMITED, FOR
 
 1. The bot token MUST be read from an environment variable (BOT_TOKEN), never hardcoded.
 2. Always pass the token in `auth: { token }` when creating the Socket.IO connection.
-3. Send a periodic 'afk response' heartbeat only if the bot must hold its seat in a full room.
-4. Always handle 'error', 'connect_error', 'kicked', and 'room capacity evicted'.
+3. No heartbeat needed - bots are exempt from idle-eviction, so no 'afk response' loop is required.
+4. Always handle 'error', 'connect_error', and 'kicked'.
 5. Always listen for 'signin status' to confirm successful sign-in before doing anything.
 6. Always clean up on SIGINT/SIGTERM (leave room, disconnect).
 7. Track other users' messages using a Map and apply diffs correctly.
