@@ -338,14 +338,35 @@ socket.on("room not found", () => {
   console.log("Room does not exist");
 });
 
-socket.on("room full", () => {
-  console.log("Room is full (10/10)");
+// A full room no longer rejects the join - you're queued and watch read-only
+// instead. See "Joining a Full Room" below.
+socket.on("room queued", (data) => {
+  console.log(`Room is full - watching from position ${data.position}`);
 });
 
 socket.on("access code required", () => {
   console.log("This room requires an access code");
 });
 ```
+
+### Joining a Full Room
+
+Rooms hold up to 10 users. When a room is full, `join room` does not fail — you receive `room queued` instead of `room joined` and start watching the room read-only (same shape as `room joined`, plus `position`). You're promoted automatically, with a normal `room joined`, when a seat opens: either an occupant leaves, or an occupant who has gone quiet past the idle threshold yields their seat (see [Step 6](#step-6-stay-active-holding-your-seat)).
+
+```javascript
+socket.on("room queued", (data) => {
+  console.log(`Watching ${data.roomName} from position ${data.position}`);
+  // data.currentMessages and data.users work exactly as in "room joined" -
+  // you can read the room, you just cannot write to it (chat update, typing,
+  // votes, etc. are all rejected while queued).
+});
+
+socket.on("queue promoted", () => {
+  console.log("A seat opened up - the next event will be a normal 'room joined'");
+});
+```
+
+If your bot yields its own seat later (see Step 6), it re-enters the queue at the back rather than being disconnected — `room capacity evicted` fires, then eventually another `room queued`.
 
 **`room joined` payload:**
 
@@ -595,13 +616,15 @@ socket.on("bot muted", ({ muted }) => {
 | `initial rooms`        | `[room, ...]`                                                                                       | Room list (response to `get rooms`)    |
 | `lobby update`         | `[room, ...]`                                                                                       | Live room list updates while in lobby  |
 | `room created`         | `roomId: string`                                                                                    | Your room was created successfully     |
-| `room joined`          | `{ roomId, userId, username, location, roomName, roomType, users, layout, votes, muteVotes, mutedBotIds, currentMessages }` | You successfully joined a room |
+| `room joined`          | `{ roomId, userId, username, location, roomName, roomType, users, layout, votes, muteVotes, mutedBotIds, currentMessages, queue }` | You successfully joined a room |
+| `room queued`          | same shape as `room joined`, plus `position: number`                                               | Room is full; you're watching read-only from position N |
+| `queue promoted`       | `{ roomId, roomName }`                                                                              | A seat opened; a normal `room joined` follows |
 | `room not found`       | error object                                                                                        | Room does not exist                    |
-| `room full`            | error object                                                                                        | Room is at capacity (10 users)         |
 | `access code required` | _(none)_                                                                                            | Semi-private room needs an access code |
 | `user joined`          | `{ id, username, location, roomName, roomType }`                                                    | New user entered your room             |
 | `user left`            | `userId: string`                                                                                    | User left your room                    |
-| `room update`          | `{ id, name, type, layout, users, votes, muteVotes, mutedBotIds }`                                  | Room state changed                     |
+| `room update`          | `{ id, name, type, layout, users, votes, muteVotes, mutedBotIds, queue }`                            | Room state changed                     |
+| `queue update`         | `{ queue: [{ userId, username, position }] }`                                                       | The waiting line changed               |
 | `chat update`          | `{ userId, username, diff }`                                                                        | Another user's message changed         |
 | `update votes`         | `{ [voterId]: targetUserId }`                                                                       | Vote counts changed                    |
 | `update mute votes`    | `{ muteVotes: { [voterId]: targetUserId }, mutedBotIds: string[] }`                                 | Bot-mute vote counts/state changed     |
@@ -701,7 +724,6 @@ socket.on("disconnect", (reason) => {
 | `UNAUTHORIZED`       | Not signed in                                      |
 | `NOT_FOUND`          | Room not found                                     |
 | `RATE_LIMITED`       | Too many requests                                  |
-| `ROOM_FULL`          | Room is at capacity                                |
 | `FORBIDDEN`          | Action not allowed (banned, already in room, etc.) |
 | `ROOM_NAME_EXISTS`   | Room name already taken                            |
 | `ROOM_LIMIT_REACHED` | Server room limit hit                              |

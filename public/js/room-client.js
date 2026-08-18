@@ -86,7 +86,6 @@ const ERROR_CODES = {
   UNAUTHORIZED: "Unauthorized",
   NOT_FOUND: "Not Found",
   RATE_LIMITED: "Rate Limited",
-  ROOM_FULL: "Room Full",
   ACCESS_DENIED: "Access Denied",
   BAD_REQUEST: "Bad Request",
   FORBIDDEN: "Forbidden",
@@ -3238,7 +3237,44 @@ function updateRoomInfo(data) {
   if (typeEl && roomType) {
     typeEl.textContent = `${getRoomTypeDisplay(roomType) || "Public"} room`;
   }
+
+  if (data.queue !== undefined) renderQueueChip(data.queue);
 }
+
+// ── Queue Chip (navbar, between the clock and the waffle menu) ─────────────
+// Names are server-supplied usernames rendered via textContent - never trust
+// them as markup.
+let queueChipExpanded = false;
+function renderQueueChip(queue) {
+  const chip = document.getElementById("queueChip");
+  if (!chip) return;
+  const list = Array.isArray(queue) ? queue : [];
+
+  if (list.length === 0) {
+    chip.hidden = true;
+    queueChipExpanded = false;
+    chip.setAttribute("aria-expanded", "false");
+    return;
+  }
+
+  chip.hidden = false;
+  const countEl = chip.querySelector(".queue-chip-count");
+  const namesEl = chip.querySelector(".queue-chip-names");
+  if (countEl)
+    countEl.textContent = `${list.length} waiting`;
+  if (namesEl) namesEl.textContent = list.map((q) => q.username).join(", ");
+  chip.setAttribute("aria-expanded", String(queueChipExpanded));
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const chip = document.getElementById("queueChip");
+  if (chip) {
+    chip.addEventListener("click", () => {
+      queueChipExpanded = !queueChipExpanded;
+      chip.setAttribute("aria-expanded", String(queueChipExpanded));
+    });
+  }
+});
 
 // ── 14. LAYOUT ──────────────────────────────────────────────────────────────
 
@@ -3545,15 +3581,6 @@ socket.on("kicked", (data) => {
   );
 });
 
-socket.on("room full", () => {
-  showInfoModal(
-    "This room is full. Try again in a moment.",
-    () => {
-      window.location.href = "/index.html";
-    },
-  );
-});
-
 socket.on("room joined", (data) => {
   // Protocol gate: if the server speaks a different message version than the JS
   // we are running, a breaking deploy happened under us. Reload once (guarded
@@ -3567,6 +3594,14 @@ socket.on("room joined", (data) => {
     }
   } else {
     sessionStorage.removeItem("tkProtoReload");
+  }
+
+  // A queue promotion lands here too (the server sends a normal "room joined"
+  // right after "queue promoted") - drop the read-only banner and re-enable
+  // the chat input.
+  if (isSpectating) {
+    isSpectating = false;
+    document.getElementById("spectateBanner")?.remove();
   }
 
   currentUserId = data.userId;
@@ -3699,6 +3734,8 @@ socket.on("user left", (userId) => {
     }
   }
 });
+
+socket.on("queue update", (data) => renderQueueChip(data?.queue));
 
 socket.on("room update", (roomData) => {
   currentRoomLayout = roomData.layout || currentRoomLayout;
@@ -5137,6 +5174,8 @@ function renderSpectate(data) {
   if (isStaff()) createStaffPanelButton();
   applyRoomFlags(data);
 
+  if (data.queue !== undefined) renderQueueChip(data.queue);
+
   const invite = document.querySelector(".invite-section");
   if (invite) invite.style.display = "none";
   let banner = document.getElementById("spectateBanner");
@@ -5145,17 +5184,45 @@ function renderSpectate(data) {
     banner.id = "spectateBanner";
     document.body.appendChild(banner);
   }
-  banner.textContent = currentUserIsDev
-    ? "SPECTATING (invisible, read-only). Dev tools stay active via the Dev button."
-    : currentUserIsMod
-      ? "SPECTATING (invisible, read-only). Mod tools stay active via the Staff button."
-      : "SPECTATING (read-only). You are watching this room. Use Leave to exit.";
+  // "room queued" carries a position; plain spectating (staff, ?spectate=1)
+  // does not. Same read-only rendering either way, different framing.
+  if (data.position) {
+    banner.textContent =
+      `WAITING (#${data.position} in line, read-only). You'll join ` +
+      `automatically when a seat opens - the room is watching you watch it.`;
+  } else {
+    banner.textContent = currentUserIsDev
+      ? "SPECTATING (invisible, read-only). Dev tools stay active via the Dev button."
+      : currentUserIsMod
+        ? "SPECTATING (invisible, read-only). Mod tools stay active via the Staff button."
+        : "SPECTATING (read-only). You are watching this room. Use Leave to exit.";
+  }
 }
 
 socket.on("spectate joined", (data) => renderSpectate(data));
+socket.on("room queued", (data) => renderSpectate(data));
 socket.on("spectate ended", () => {
   isSpectating = false;
   window.location.href = "/index.html";
+});
+
+// The server already sent (or is about to send) a normal "room joined" for
+// this - this is just the heads-up so the transition doesn't feel silent.
+socket.on("queue promoted", (data) => {
+  notify(`A seat opened up in ${data?.roomName ?? "the room"} - you're in!`, "success", {
+    title: "Promoted from the queue",
+    timeout: 6000,
+  });
+});
+
+socket.on("room capacity evicted", (data) => {
+  notify(
+    `The room filled up and you'd been quiet a while, so you gave up your seat ` +
+      `in ${data?.roomName ?? "the room"}. You're back in the queue - it'll ` +
+      `open up again automatically.`,
+    "warning",
+    { title: "Seat yielded", timeout: 10000 },
+  );
 });
 
 // ── Staff events received by everyone ────────────────────────────────────────

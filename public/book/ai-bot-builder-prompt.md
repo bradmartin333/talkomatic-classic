@@ -79,7 +79,9 @@ Joining a room:
   Emit: 'join room' with { roomId: string, accessCode?: string }
   Listen: 'room joined' → { roomId, userId, username, location, roomName, roomType, users, layout, votes, currentMessages }
   currentMessages is { [userId]: "their current text buffer" } — use this to seed your message tracking.
-  Error events: 'room not found', 'room full', 'access code required', 'error'
+  If the room is full you get 'room queued' instead (same shape, plus `position`) — you're watching
+  read-only, not rejected. A normal 'room joined' follows once a seat frees ('queue promoted' fires first).
+  Error events: 'room not found', 'access code required', 'error'
 
 Leaving a room:
   Emit: 'leave room' (no payload)
@@ -160,7 +162,7 @@ Listen for:
   'connect_error'    → Error object (connection failed)
   'disconnect'       → reason string
 
-Common error codes: VALIDATION_ERROR, UNAUTHORIZED, NOT_FOUND, RATE_LIMITED, ROOM_FULL, FORBIDDEN, ROOM_NAME_EXISTS, ROOM_LIMIT_REACHED, BAD_REQUEST
+Common error codes: VALIDATION_ERROR, UNAUTHORIZED, NOT_FOUND, RATE_LIMITED, FORBIDDEN, ROOM_NAME_EXISTS, ROOM_LIMIT_REACHED, BAD_REQUEST
 
 === RATE LIMITS ===
 

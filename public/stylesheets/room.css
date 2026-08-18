@@ -140,6 +140,56 @@ html {
   align-items: flex-start;
 }
 
+/* Queue chip: sits in the navbar's middle span, between the clock and the
+   waffle menu. min-width:0 lets it shrink/ellipsis instead of forcing the
+   navbar to wrap. */
+.navbar-center {
+  justify-content: center;
+  min-width: 0;
+}
+
+.queue-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 12px;
+  background-color: var(--tk-tile);
+  border: 1px solid var(--tk-border);
+  border-radius: 14px;
+  color: var(--tk-text);
+  font-family: var(--tk-font-main);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.2s ease, max-width 0.2s ease;
+}
+
+.queue-chip:hover,
+.queue-chip[aria-expanded="true"] {
+  background-color: var(--tk-tile-hover);
+}
+
+.queue-chip i {
+  color: var(--tk-accent);
+}
+
+.queue-chip-count {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.queue-chip-names {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tk-muted);
+}
+
+/* Collapsed by default: only the count shows. Expanding reveals names. */
+.queue-chip:not([aria-expanded="true"]) .queue-chip-names {
+  display: none;
+}
+
 /* Mute Toggle Button Styles */
 .mute-toggle {
   background: none;
@@ -420,6 +470,14 @@ html {
   .chat-input {
     font-size: 12px;
   }
+
+  .queue-chip {
+    font-size: 11px;
+    padding: 5px 9px;
+  }
+  .queue-chip-names {
+    max-width: 30vw;
+  }
 }
 
 /* Mobile devices */
@@ -518,6 +576,16 @@ html {
 
   .navbar-left {
     display: none;
+  }
+
+  /* The clock is gone at this width - the queue chip drops its name list and
+     becomes just an icon + count so it never fights the waffle menu for
+     space. */
+  .queue-chip-names {
+    display: none !important;
+  }
+  .queue-chip {
+    padding: 5px 8px;
   }
 }
 

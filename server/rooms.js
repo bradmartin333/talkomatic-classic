@@ -755,6 +755,7 @@ function formatRoomStateForSocket(room, recipientSocket) {
     userCount: joinableCount,
     visibleUserCount: users.length,
     capacity: roomCapacity(room),
+    queue: queueView(room),
     locked: !!room.locked,
     slowMode: !!room.slowMode,
     spotlight: !!room.spotlight,
@@ -1095,6 +1096,7 @@ async function loadRooms() {
             );
           }
           item[1].users = [];
+          item[1].queue = [];
           item[1].lastActiveTime = Date.now();
           item[1].bannedUserIds = new Set(
             Array.isArray(item[1].bannedUserIds)
@@ -1149,6 +1151,7 @@ function ensureMainRoom() {
     type: "public",
     layout: "horizontal",
     users: [],
+    queue: [],
     accessCode: null,
     votes: {},
     muteVotes: {},
@@ -1227,6 +1230,118 @@ function isUserEvictable(user, socket) {
   const last = state.userLastActivity.get(user.id);
   if (!last) return false;
   return Date.now() - last > CONFIG.TIMING.IDLE_THRESHOLD_MS;
+}
+
+// ── Waiting Queue ───────────────────────────────────────────────────────────
+// A full room parks newcomers here instead of turning them away. Queued
+// guests watch read-only (socket.spectating, which every write handler already
+// guards on) and never enter room.users, so they cost the room nothing.
+
+function queueView(room) {
+  return (room.queue || []).map((q, i) => ({
+    userId: q.userId,
+    username: q.username,
+    position: i + 1,
+  }));
+}
+
+// Everyone in the room - occupants and watchers alike - sees the same line.
+function emitQueueUpdate(room) {
+  if (!io() || !room) return;
+  io().to(room.id).emit("queue update", { queue: queueView(room) });
+}
+
+function enqueueUser(socket, room, userId, username, location) {
+  if (!room.queue) room.queue = [];
+
+  let entry = room.queue.find((q) => q.userId === userId);
+  if (!entry) {
+    entry = { userId, username, location, queuedAt: Date.now() };
+    room.queue.push(entry);
+  } else {
+    // A reconnecting watcher keeps its place rather than going to the back.
+    entry.username = username;
+    entry.location = location;
+  }
+
+  socket.leave("lobby");
+  socket.join(room.id);
+  socket.spectating = room.id;
+  socket.roomId = room.id;
+
+  const position = room.queue.findIndex((q) => q.userId === userId) + 1;
+  socket.emit("room queued", {
+    ...spectatePayload(socket, room),
+    position,
+    queue: queueView(room),
+  });
+  emitQueueUpdate(room);
+}
+
+function dequeueUser(room, userId) {
+  if (!room?.queue?.length) return false;
+  const before = room.queue.length;
+  room.queue = room.queue.filter((q) => q.userId !== userId);
+  return room.queue.length !== before;
+}
+
+// Remove a departed watcher from every queue they might be sitting in.
+function dropFromAllQueues(userId) {
+  for (const [, room] of state.rooms) {
+    if (dequeueUser(room, userId)) emitQueueUpdate(room);
+  }
+}
+
+// Pull the head of the queue into the room. Their socket is already joined and
+// spectating, so this hands them a real seat and lets joinRoom do the rest.
+function promoteFromQueue(room) {
+  if (!room?.queue?.length) return false;
+  if (getJoinableUserCount(room) >= roomCapacity(room)) return false;
+
+  const next = room.queue[0];
+  const socket = findSocketByUserId(next.userId, room.id);
+  if (!socket || !socket.connected) {
+    // Watcher vanished without a disconnect event; drop them and try again.
+    room.queue.shift();
+    emitQueueUpdate(room);
+    return promoteFromQueue(room);
+  }
+
+  room.queue.shift();
+  socket.spectating = null;
+  socket.emit("queue promoted", { roomId: room.id, roomName: room.name });
+  joinRoom(socket, room.id, next.userId);
+  emitQueueUpdate(room);
+  return true;
+}
+
+// Nobody yields a seat unless someone is actually waiting for it. Among the
+// occupants idle past the threshold, the one present longest goes first.
+async function yieldSeatToQueue(room) {
+  if (!room?.queue?.length) return false;
+
+  const candidates = (room.users || [])
+    .map((u) => ({ user: u, socket: findSocketByUserId(u.id, room.id) }))
+    .filter(({ user, socket }) => isUserEvictable(user, socket))
+    .sort((a, b) => (a.user.joinedAt || 0) - (b.user.joinedAt || 0));
+
+  if (!candidates.length) return false;
+
+  const { user, socket } = candidates[0];
+  if (!socket) return false;
+
+  socket.emit("room capacity evicted", {
+    roomId: room.id,
+    roomName: room.name,
+  });
+  await leaveRoom(socket, user.id);
+
+  // The evicted user keeps watching from the back of the line rather than
+  // being dumped out of the room entirely.
+  if (socket.connected) {
+    enqueueUser(socket, room, user.id, user.username, user.location);
+  }
+  return true;
 }
 
 // ── Chat Processing ─────────────────────────────────────────────────────────
@@ -1459,6 +1574,9 @@ async function leaveRoom(socket, userId) {
       sendDevRoomContext(roomId);
       updateRoomSoloTracking(roomId);
 
+      // A seat just opened - hand it to whoever has been waiting longest.
+      promoteFromQueue(room);
+
       if (room.users.length === 0) startRoomDeletionTimer(roomId);
     }
 
@@ -1595,6 +1713,7 @@ function joinRoom(socket, roomId, userId) {
     }
 
     if (!room.users) room.users = [];
+    if (!room.queue) room.queue = [];
     if (!room.votes) room.votes = {};
     if (!room.muteVotes) room.muteVotes = {};
     if (!room.mutedBotIds) room.mutedBotIds = new Set();
@@ -1611,12 +1730,16 @@ function joinRoom(socket, roomId, userId) {
     const joinableUserCount = (room.users || []).filter(
       (u) => u.id !== userId && !(u.isDev && u.isVanished),
     ).length;
-    if (!isStaff && joinableUserCount >= roomCapacity(room))
-      return socket.emit(
-        "room full",
-        createErrorResponse(ERROR_CODES.ROOM_FULL, "Room is full."),
-      );
+    // A full room no longer turns people away: they wait in the queue and
+    // watch read-only until a seat frees. Because the count above excludes
+    // this user's own stale entry, someone merely reconnecting reclaims their
+    // seat instead of being sent to the back of the line.
+    if (!isStaff && joinableUserCount >= roomCapacity(room)) {
+      enqueueUser(socket, room, userId, username, location);
+      return;
+    }
 
+    dequeueUser(room, userId);
     room.users = room.users.filter((u) => u.id !== userId);
     socket.join(roomId);
 
@@ -1624,6 +1747,10 @@ function joinRoom(socket, roomId, userId) {
       id: userId,
       username,
       location,
+      // Insertion order already tracks this, but only implicitly. An explicit
+      // stamp is what decides who yields first when several occupants are
+      // equally idle.
+      joinedAt: Date.now(),
       isBot: !!socket.isBot,
       isDev: !!socket.isDev,
       isMod: !!socket.isMod,
@@ -1732,6 +1859,7 @@ function emitJoinSuccess(socket, room, userId, username, location) {
     muteVotes: filterMuteVotesForSocket(room, socket),
     mutedBotIds: Array.from(room.mutedBotIds || []),
     currentMessages: filterCurrentMessagesForSocket(room, socket),
+    queue: queueView(room),
     createdAt: createdAt,
     uptime: Date.now() - createdAt
   });
@@ -2771,6 +2899,7 @@ function registerSocketHandlers(opts) {
           type: data.type,
           layout: data.layout,
           users: [],
+          queue: [],
           accessCode: data.type === "semi-private" ? data.accessCode : null,
           votes: {},
           muteVotes: {},
@@ -2999,8 +3128,37 @@ function registerSocketHandlers(opts) {
         const userId = socket.handshake.session?.userId;
         if (userId) {
           clearUserActivity(userId);
+          dropFromAllQueues(userId);
+          socket.spectating = null;
           await leaveRoom(socket, userId);
         }
+      }),
+    );
+
+    // Re-establish a queue seat after a reconnect. A watcher is never in
+    // room.users, so the normal session-rejoin path (which replays roomId
+    // through "join room") does not cover them - the client calls this
+    // explicitly instead. Also doubles as how a full room is re-entered
+    // directly: any join that would be refused is queued by joinRoom itself,
+    // so this only needs to handle the "was already queued" case.
+    socket.on(
+      "spectate room",
+      safe(async (data) => {
+        const roomId = data?.roomId;
+        const room = roomId ? state.rooms.get(roomId) : null;
+        const userId = socket.handshake.session?.userId;
+        if (!room || !userId)
+          return socket.emit(
+            "error",
+            createErrorResponse(ERROR_CODES.NOT_FOUND, "Room not found."),
+          );
+        const { username, location } = socket.handshake.session || {};
+        const alreadyQueued = room.queue?.some((q) => q.userId === userId);
+        if (!alreadyQueued && getJoinableUserCount(room) < roomCapacity(room)) {
+          // A seat is actually free - just join normally.
+          return joinRoom(socket, roomId, userId);
+        }
+        enqueueUser(socket, room, userId, username || "Anonymous", location || "On The Web");
       }),
     );
 
@@ -3163,6 +3321,7 @@ function registerSocketHandlers(opts) {
         const location = socket.handshake.session?.location || "Unknown";
         if (userId) {
           clearUserActivity(userId);
+          dropFromAllQueues(userId);
           await leaveRoom(socket, userId);
           state.userMessageBuffers.delete(userId);
           state.devUsers.delete(userId);
@@ -3197,6 +3356,21 @@ function startCleanupIntervals() {
       console.error("Pressure cleanup error:", err);
     }
   }, CONFIG.LIMITS.PRESSURE_CLEANUP_INTERVAL);
+
+  // Seat handover (10s). Only rooms with someone waiting are considered, and
+  // only occupants who have gone quiet can be asked to step aside - a room
+  // where everyone is talking never displaces anyone, however long the line.
+  setInterval(async () => {
+    try {
+      for (const [, room] of state.rooms) {
+        if (!room.queue?.length) continue;
+        if (promoteFromQueue(room)) continue;
+        await yieldSeatToQueue(room);
+      }
+    } catch (err) {
+      console.error("Seat handover error:", err);
+    }
+  }, 10000);
 
   // Bot detection cleanup (2 min)
   setInterval(() => {
@@ -3420,6 +3594,12 @@ function startCleanupIntervals() {
         ghostCount += removed;
         affectedRooms.push(roomId);
       }
+
+      if (room.queue?.length) {
+        const beforeQ = room.queue.length;
+        room.queue = room.queue.filter((q) => activeIds.has(q.userId));
+        if (room.queue.length !== beforeQ) emitQueueUpdate(room);
+      }
     }
     for (const id of affectedRooms) {
       const r = state.rooms.get(id);
@@ -3427,6 +3607,7 @@ function startCleanupIntervals() {
         updateRoom(id);
         updateRoomSoloTracking(id);
         if (r.users.length === 0) startRoomDeletionTimer(id);
+        else promoteFromQueue(r);
       }
     }
     if (ghostCount > 0) {
