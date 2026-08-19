@@ -31,7 +31,7 @@ BOT_TOKEN=tk_your_token_here node bot.js
 
 ## Example 1: Greeter Bot
 
-A simple bot that joins a room and greets users when they arrive or leave. Demonstrates: connection, authentication, room joining, event listening, sending messages, and AFK handling.
+A simple bot that joins a room and greets users when they arrive or leave. Demonstrates: connection, authentication, room joining, event listening, sending messages, and activity heartbeats.
 
 ```javascript
 // greeter-bot.js
@@ -97,15 +97,8 @@ socket.on("user left", (userId) => {
   sendMessage(`👋 Someone just left. See you next time!`);
 });
 
-// ── AFK Handling ────────────────────────────────────────────────────────────
-
-socket.on("afk warning", () => {
-  socket.emit("afk response");
-});
-
-socket.on("afk timeout", (data) => {
-  console.log(`[!] Kicked for AFK: ${data.message}`);
-});
+// Nothing kicks this bot for being idle, and it never yields its seat to the
+// queue - bots are exempt from both. No heartbeat needed.
 
 // ── Error Handling ──────────────────────────────────────────────────────────
 
@@ -296,10 +289,8 @@ function handleCommand(cmd, args, username) {
   }
 }
 
-// ── AFK / Error / Shutdown ──────────────────────────────────────────────────
+// ── Error / Shutdown (bots never idle-kick or yield to the queue) ──────────
 
-socket.on("afk warning", () => socket.emit("afk response"));
-socket.on("afk timeout", () => process.exit(1));
 socket.on("kicked", () => {
   console.log("[!] Kicked");
   process.exit(0);
@@ -524,8 +515,6 @@ socket.on("user left", (uid) => {
   userMessages.delete(uid);
 });
 
-socket.on("afk warning", () => socket.emit("afk response"));
-socket.on("afk timeout", () => process.exit(1));
 socket.on("kicked", () => process.exit(0));
 socket.on("error", (d) => console.error("[!]", d.error?.message || d));
 socket.on("connect_error", (e) => console.error("[!]", e.message));
@@ -660,13 +649,8 @@ function startClock() {
   clockInterval = setInterval(() => updateStatus(), 60000);
 }
 
-// ── AFK / Error / Shutdown ──────────────────────────────────────────────────
+// ── Error / Shutdown (bots never idle-kick or yield to the queue) ──────────
 
-socket.on("afk warning", () => socket.emit("afk response"));
-socket.on("afk timeout", () => {
-  console.log("[!] AFK kicked — restarting");
-  process.exit(1); // let a process manager (pm2, systemd) restart
-});
 socket.on("kicked", () => {
   console.log("[!] Voted out");
   process.exit(0);
@@ -786,17 +770,6 @@ def on_user_joined(data):
 @sio.on('user left')
 def on_user_left(user_id):
     user_messages.pop(user_id, None)
-
-
-@sio.on('afk warning')
-def on_afk_warning(data):
-    sio.emit('afk response')
-
-
-@sio.on('afk timeout')
-def on_afk_timeout(data):
-    print(f"[!] AFK kicked: {data.get('message')}")
-    sys.exit(1)
 
 
 @sio.on('kicked')

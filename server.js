@@ -8,6 +8,7 @@ const socketIo = require("socket.io");
 const path = require("path");
 const fs = require("fs").promises;
 const session = require("express-session");
+const FileStore = require("session-file-store")(session);
 const cookieParser = require("cookie-parser");
 const sharedsession = require("express-socket.io-session");
 const helmet = require("helmet");
@@ -28,6 +29,7 @@ const {
   sanitizeMessage,
   wordFilter,
 } = require("./server/state");
+const { DATA_DIR } = require("./server/datadir");
 const {
   antibotMiddleware,
   enhancedRateLimit,
@@ -239,8 +241,15 @@ app.use((req, res, next) => {
 
 // ── Session ─────────────────────────────────────────────────────────────────
 // SESSION_SECRET must be set in .env for sessions to survive restarts.
-// Without it a random secret is generated on boot, which signs out every
-// user and invalidates all validated room access codes.
+// Without it a random secret is generated on boot, which invalidates every
+// existing session's cookie signature - same effect as losing the data.
+//
+// The FileStore below is what makes a stable secret actually pay off: session
+// data (userId, username, validated room access) now survives a process
+// restart/redeploy on disk (DATA_DIR/sessions), instead of living only in
+// memory. Without this store, every redeploy silently minted a new userId
+// for anyone still connected - which showed up as a duplicate ghost/live pair
+// of the same person after a reconnect-then-reload dance (CHAT-26).
 
 const SESSION_SECRET = process.env.SESSION_SECRET;
 
@@ -260,6 +269,15 @@ if (!SESSION_SECRET) {
 }
 
 const sessionMiddleware = session({
+  store: new FileStore({
+    path: path.join(DATA_DIR, "sessions"),
+    // Matches the cookie's own maxAge below (in seconds here, ms there).
+    ttl: 14 * 24 * 60 * 60,
+    retries: 1,
+    // A lookup for a session nobody has (expired, or never existed) is
+    // routine - every stale/forged cookie hits this - not worth a log line.
+    logFn: () => {},
+  }),
   secret: SESSION_SECRET || crypto.randomBytes(32).toString("hex"),
   resave: false,
   saveUninitialized: true,

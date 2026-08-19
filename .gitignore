@@ -6,6 +6,7 @@ rooms.json.tmp
 board.json
 board.json.tmp
 users.json
+sessions/
 repo-tree.html
 CLAUDE.md
 talkomatic-v4.pdf

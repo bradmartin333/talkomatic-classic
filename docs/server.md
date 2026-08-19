@@ -233,18 +233,18 @@ socket.emit("join room", {
 
 ## User Experience Features
 
-### AFK Detection
+### Idle Detection
 
-The server monitors user activity and manages AFK (Away From Keyboard) status:
+The server tracks per-user activity, but **nobody is removed for being idle**. Idle time decides only who yields a seat when a full room has people waiting in the queue:
 
 ```javascript
-CONFIG.LIMITS.MAX_AFK_TIME = 180000; // 3 minutes until AFK timeout
-CONFIG.TIMING.AFK_WARNING_TIME = 150000; // 2.5 minutes - warn before kick
+CONFIG.TIMING.IDLE_THRESHOLD_MS = 300000; // 5 minutes; env-overridable
 ```
 
-- Users inactive for 2.5 minutes receive a warning
-- After 3 minutes of inactivity, users are returned to the lobby
-- Any user activity (typing, sending messages) resets the AFK timer
+- Sending a `chat update`, or an `afk response` heartbeat, refreshes the timestamp
+- A human occupant silent past the threshold is *eligible* to yield their seat, nothing more
+- Eviction happens only when the room is full and someone is queued; the longest-present idle occupant yields and moves to the back of the queue
+- Staff and bots never yield - same exemption bots already get from solo-room closure
 
 ### Typing Indicators
 
@@ -385,31 +385,9 @@ socket.on("message", (message) => {
 });
 ```
 
-### Handling AFK Warnings
+### Holding a Seat in a Busy Room
 
-Bots should listen for and respond to AFK warnings to prevent being kicked:
-
-```javascript
-socket.on("afk warning", (data) => {
-  console.log(
-    `AFK Warning: ${data.message}, ${data.secondsRemaining}s remaining`
-  );
-
-  // Send a response to show the bot is still active
-  socket.emit("afk response", { active: true });
-
-  // Also send some activity to reset the timer
-  socket.emit("typing", { isTyping: true });
-  setTimeout(() => {
-    socket.emit("typing", { isTyping: false });
-  }, 500);
-});
-
-socket.on("afk timeout", (data) => {
-  console.log(`AFK Timeout: ${data.message}`);
-  // Handle reconnection if needed
-});
-```
+Bots are never kicked for idling, and never yield their seat to the queue - no heartbeat needed, and `room capacity evicted` never fires for a bot. A room a bot occupies has one less seat available to humans, indefinitely, so leave the room when a bot's job is done rather than leaving it idling in it.
 
 ### Best Practices for Bots
 
@@ -419,7 +397,7 @@ socket.on("afk timeout", (data) => {
 4. **Maintain persistent connections** rather than reconnecting frequently
 5. **Target 10-15 fps** for real-time display bots (plenty below the 60/sec limit)
 6. **Implement client-side rate limiting** before server-side limits are reached
-7. **Handle AFK warnings** to prevent automatic disconnection
+7. **Leave the room when done** - your bot never yields its seat on its own
 8. **Cache room and user data** to reduce unnecessary requests
 9. **Use exponential backoff** when encountering rate limits
 10. **Monitor connectivity** and implement graceful reconnection

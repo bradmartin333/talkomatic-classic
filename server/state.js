@@ -12,14 +12,12 @@ const WordFilter = require("../public/js/word-filter.js");
 const CONFIG = {
   LIMITS: {
     MAX_USERNAME_LENGTH: 15,
-    MAX_AFK_TIME: 600000,
     MAX_LOCATION_LENGTH: 20,
     MAX_ROOM_NAME_LENGTH: 25,
     MAX_MESSAGE_LENGTH: 5000,
     MAX_ROOM_CAPACITY: 10,
     BASE_MAX_ROOMS: 15,
     ROOM_SCALING_INCREMENT: 5,
-    MAX_CONNECTIONS_PER_IP: 8,
     SOCKET_MAX_REQUESTS_WINDOW: 1,
     SOCKET_MAX_REQUESTS_PER_WINDOW: 75,
     CHAT_UPDATE_RATE_LIMIT: 500,
@@ -83,7 +81,15 @@ const CONFIG = {
     // Slow mode: broadcast cadence for rooms a staffer has throttled. Keystrokes
     // are still captured; the room just sees updates less frequently.
     SLOW_MODE_BATCH_INTERVAL: 1000,
-    AFK_WARNING_TIME: 300000,
+    // How long a user must be silent before they are eligible to yield their
+    // seat to someone waiting in the queue. Nobody is removed for being idle
+    // on its own - this only matters when the room is full and someone is
+    // waiting. Overridable so tests need not wait the full five minutes.
+    // NOTE: `|| 300000` means IDLE_THRESHOLD_MS=0 is silently ignored (0 is
+    // falsy) and falls back to the default - there is no way to configure a
+    // literal zero-grace threshold this way. Use "1" for effectively-instant
+    // eviction in a test if you need that.
+    IDLE_THRESHOLD_MS: Number(process.env.IDLE_THRESHOLD_MS) || 300000,
     BOT_BLOCK_DURATION: 300000,
     BOT_TOKEN_EXPIRY: 2592000000,
     BOT_TOKEN_CLEANUP_INTERVAL: 86400000,
@@ -103,19 +109,33 @@ const CONFIG = {
   },
 };
 
+// A single IP must always be able to fill an entire room's worth of
+// connections on its own - shared NAT (office, school, family Wi-Fi) is
+// normal, and the app's own advertised room capacity should never be
+// unreachable from one network origin. Tied to MAX_ROOM_CAPACITY (rather
+// than a bare number) so the two can't quietly drift apart again the way
+// they had (8 vs. a 10-user room) - see CHAT-25. The x2 leaves headroom for
+// queue watchers, who hold a real socket too, and for a household running
+// a couple of tabs each.
+// NOTE: `|| ...` means MAX_CONNECTIONS_PER_IP=0 is silently ignored (0 is
+// falsy) and falls back to the computed default - there is no way to
+// configure a literal zero (block an IP entirely from here) this way; use
+// the IP blocklist for that instead.
+CONFIG.LIMITS.MAX_CONNECTIONS_PER_IP =
+  Number(process.env.MAX_CONNECTIONS_PER_IP) ||
+  CONFIG.LIMITS.MAX_ROOM_CAPACITY * 2;
+
 const ERROR_CODES = {
   VALIDATION_ERROR: "VALIDATION_ERROR",
   SERVER_ERROR: "SERVER_ERROR",
   UNAUTHORIZED: "UNAUTHORIZED",
   NOT_FOUND: "NOT_FOUND",
   RATE_LIMITED: "RATE_LIMITED",
-  ROOM_FULL: "ROOM_FULL",
   ACCESS_DENIED: "ACCESS_DENIED",
+  ROOM_FULL: "ROOM_FULL",
   BAD_REQUEST: "BAD_REQUEST",
   FORBIDDEN: "FORBIDDEN",
   CIRCUIT_OPEN: "CIRCUIT_OPEN",
-  AFK_WARNING: "AFK_WARNING",
-  AFK_TIMEOUT: "AFK_TIMEOUT",
   ROOM_NAME_EXISTS: "ROOM_NAME_EXISTS",
   ROOM_LIMIT_REACHED: "ROOM_LIMIT_REACHED",
   BOT_TOKEN_REQUIRED: "BOT_TOKEN_REQUIRED",
@@ -159,9 +179,9 @@ const state = {
   pendingChatUpdates: new Map(),
   batchProcessingTimers: new Map(),
 
-  // AFK
-  afkTimers: new Map(),
-  afkWarningTimers: new Map(),
+  // Idle tracking: userId -> timestamp of that user's last real activity.
+  // Drives queue-eviction eligibility, not removal on its own.
+  userLastActivity: new Map(),
 
   // Circuit breaker
   chatCircuitState: {

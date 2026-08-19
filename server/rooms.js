@@ -1,5 +1,5 @@
 // server/rooms.js
-// Room management, chat processing, AFK handling, socket events, cleanup.
+// Room management, chat processing, idle tracking, socket events, cleanup.
 // Includes anti-spam (pressure cleanup, per-IP limits), vote-kick, dev mode
 // (force-kick, vanish, hide, color), and Talkoboard stroke storage.
 
@@ -382,17 +382,22 @@ async function pressureCleanup() {
     if (roomId === MAIN_ROOM_ID) continue;
     if (room.users && room.users.length >= 2) continue;
     if (room.users && room.users.length === 1) {
+      // A lone ghost isn't "occupying" the room for solo-TTL purposes -
+      // they persist until reclaimed by a join. Skipping here also avoids
+      // findSocketByUserId returning null for them below, which would
+      // otherwise silently defeat the staff/bot exemption right after.
+      if (room.users[0].departed) continue;
       const soloSince = state.roomSoloSince.get(roomId);
       if (soloSince && now - soloSince >= ttl) {
         // Staff and bots are exempt: a dev, mod, or bot can hold a room open
-        // indefinitely, the same way staff bypass AFK and capacity. Never
+        // indefinitely, the same way staff bypass capacity. Never
         // solo-close on them.
         const soloSocket = findSocketByUserId(room.users[0].id, roomId);
         if (soloSocket && (soloSocket.isDev || soloSocket.isMod || soloSocket.isBot))
           continue;
         toDelete.push(roomId);
       }
-    } else if (!room.users || room.users.length === 0) {
+    } else if (!room.users || room.users.length === 0 || room.users.every((u) => u.departed)) {
       if (now - room.lastActiveTime > CONFIG.TIMING.ROOM_DELETION_TIMEOUT) {
         toDelete.push(roomId);
       }
@@ -407,15 +412,27 @@ async function pressureCleanup() {
 
     if (room.users && room.users.length === 1) {
       const soloUser = room.users[0];
-      const soloSocket = findSocketByUserId(soloUser.id, roomId);
-      if (soloSocket) {
-        soloSocket.emit("afk timeout", {
-          message:
-            "Your room was closed due to extended single-occupancy. " +
-            "You can create a new room anytime.",
-          redirectTo: "/",
-        });
-        await leaveRoom(soloSocket, soloUser.id);
+      if (soloUser.departed) {
+        state.userMessageBuffers.delete(soloUser.id);
+        clearUserActivity(soloUser.id);
+        state.devUsers.delete(soloUser.id);
+      } else {
+        const soloSocket = findSocketByUserId(soloUser.id, roomId);
+        if (soloSocket) {
+          soloSocket.emit("room closed", {
+            message:
+              "Your room was closed due to extended single-occupancy. " +
+              "You can create a new room anytime.",
+            redirectTo: "/",
+          });
+          await leaveRoom(soloSocket, soloUser.id);
+        }
+      }
+    } else if (room.users && room.users.length > 1 && room.users.every((u) => u.departed)) {
+      for (const ghost of room.users) {
+        state.userMessageBuffers.delete(ghost.id);
+        clearUserActivity(ghost.id);
+        state.devUsers.delete(ghost.id);
       }
     }
 
@@ -444,7 +461,10 @@ function updateRoomSoloTracking(roomId) {
     state.roomSoloSince.delete(roomId);
     return;
   }
-  if (room.users && room.users.length === 1) {
+  // A ghost isn't "occupying" the room for solo-TTL purposes - they persist
+  // until reclaimed by a join, not until a timer decides against them.
+  const realUsers = (room.users || []).filter((u) => !u.departed);
+  if (realUsers.length === 1) {
     if (!state.roomSoloSince.has(roomId)) {
       state.roomSoloSince.set(roomId, Date.now());
     }
@@ -598,6 +618,9 @@ function formatUserForSocket(user, recipientSocket) {
     deviceType: user.deviceType || "unknown",
   };
   if (user.isBot) formatted.isBot = true;
+  // Ghost panel: they left while the queue was empty, so their last text
+  // stays up (see leaveRoom's ghost branch) rendered read-only and dimmed.
+  if (user.departed) formatted.departed = true;
   // Discord avatar: validated snowflake id + CDN hash only; clients rebuild
   // the cdn.discordapp.com URL themselves.
   if (user.avatar) formatted.avatar = user.avatar;
@@ -755,6 +778,7 @@ function formatRoomStateForSocket(room, recipientSocket) {
     userCount: joinableCount,
     visibleUserCount: users.length,
     capacity: roomCapacity(room),
+    queue: queueView(room),
     locked: !!room.locked,
     slowMode: !!room.slowMode,
     spotlight: !!room.spotlight,
@@ -869,6 +893,14 @@ function emitRoomUserJoined(room, joinedUser) {
       ...visibleUser,
       roomName: room.name,
       roomType: room.type,
+      // A rejoin reclaiming a ghost's seat carries that ghost's last text
+      // along with it - the buffer already survived the departure (see
+      // leaveRoom's ghost branch); this is what lets every OTHER client's
+      // freshly-created row for them start in sync with what the rejoining
+      // user's own "room joined" currentMessages already shows, instead of
+      // sitting blank until their next keystroke. Empty for an ordinary
+      // first-time join, since nothing is buffered yet.
+      text: state.userMessageBuffers.get(joinedUser.id) || "",
     });
   }
 }
@@ -1095,6 +1127,7 @@ async function loadRooms() {
             );
           }
           item[1].users = [];
+          item[1].queue = [];
           item[1].lastActiveTime = Date.now();
           item[1].bannedUserIds = new Set(
             Array.isArray(item[1].bannedUserIds)
@@ -1149,6 +1182,7 @@ function ensureMainRoom() {
     type: "public",
     layout: "horizontal",
     users: [],
+    queue: [],
     accessCode: null,
     votes: {},
     muteVotes: {},
@@ -1168,7 +1202,14 @@ function startRoomDeletionTimer(roomId) {
   }
   const timer = setTimeout(async () => {
     const room = state.rooms.get(roomId);
-    if (room && room.users.length === 0) {
+    if (room && room.users.every((u) => u.departed)) {
+      // Evict any lingering ghosts before deleting
+      for (const ghost of room.users) {
+        state.userMessageBuffers.delete(ghost.id);
+        clearUserActivity(ghost.id);
+        state.devUsers.delete(ghost.id);
+      }
+      room.users = [];
       state.rooms.delete(roomId);
       state.roomDeletionTimers.delete(roomId);
       state.roomSoloSince.delete(roomId);
@@ -1204,54 +1245,174 @@ function updateRoom(roomId) {
   }
 }
 
-// ── AFK ─────────────────────────────────────────────────────────────────────
+// ── Idle Tracking ───────────────────────────────────────────────────────────
+// Being idle is never grounds for removal on its own. It only decides who
+// yields their seat when the room is full and someone is waiting in the queue.
 
-function clearAFKTimers(userId) {
-  if (state.afkWarningTimers.has(userId)) {
-    clearTimeout(state.afkWarningTimers.get(userId));
-    state.afkWarningTimers.delete(userId);
-  }
-  if (state.afkTimers.has(userId)) {
-    clearTimeout(state.afkTimers.get(userId));
-    state.afkTimers.delete(userId);
-  }
+function clearUserActivity(userId) {
+  state.userLastActivity.delete(userId);
 }
 
-function setupAFKTimers(socket, userId) {
-  clearAFKTimers(userId);
-  if (!socket || !socket.roomId) return;
-  if (socket.isDev || socket.isMod || socket.isBot) return; // staff and bots bypass AFK
-  if (socket.boardOpen) return; // drawing on the board counts as active
-  if (socket.pianoOpen) return; // playing the piano counts as active
-
-  state.afkWarningTimers.set(
-    userId,
-    setTimeout(() => {
-      if (socket.connected)
-        socket.emit("afk warning", {
-          message: "You have been inactive.",
-          secondsRemaining: 30,
-        });
-    }, CONFIG.TIMING.AFK_WARNING_TIME),
-  );
-  state.afkTimers.set(
-    userId,
-    setTimeout(
-      () => handleAFKTimeout(socket, userId),
-      CONFIG.LIMITS.MAX_AFK_TIME,
-    ),
-  );
+function markUserActive(userId) {
+  if (userId) state.userLastActivity.set(userId, Date.now());
 }
 
-async function handleAFKTimeout(socket, userId) {
-  if (!socket || !socket.roomId) return;
-  console.log(`AFK timeout: ${userId} in room ${socket.roomId}`);
-  socket.emit("afk timeout", {
-    message: "Removed from room due to inactivity.",
-    redirectTo: "/",
+// Staff and bots hold their seat regardless - the same exemption
+// pressureCleanup() already gives bots from solo-room closure (:387-392), so
+// a resident bot is never displaced by the queue either. A user with no
+// recorded activity is treated as active until their first stamp lands, so a
+// fresh join is never instantly evictable.
+function isUserEvictable(user, socket) {
+  if (!user) return false;
+  if (user.isDev || user.isMod || user.isBot) return false;
+  if (socket && (socket.isDev || socket.isMod || socket.isBot)) return false;
+  if (socket && (socket.boardOpen || socket.pianoOpen)) return false;
+  const last = state.userLastActivity.get(user.id);
+  if (!last) return false;
+  return Date.now() - last > CONFIG.TIMING.IDLE_THRESHOLD_MS;
+}
+
+// ── Waiting Queue ───────────────────────────────────────────────────────────
+// A full room parks newcomers here instead of turning them away. Queued
+// guests watch read-only (socket.spectating, which every write handler already
+// guards on) and never enter room.users, so they cost the room nothing.
+
+function queueView(room) {
+  return (room.queue || []).map((q, i) => ({
+    userId: q.userId,
+    username: q.username,
+    position: i + 1,
+  }));
+}
+
+// Everyone in the room - occupants and watchers alike - sees the same line.
+function emitQueueUpdate(room) {
+  if (!io() || !room) return;
+  io().to(room.id).emit("queue update", { queue: queueView(room) });
+}
+
+function enqueueUser(socket, room, userId, username, location) {
+  if (!room.queue) room.queue = [];
+
+  let entry = room.queue.find((q) => q.userId === userId);
+  if (!entry) {
+    entry = { userId, username, location, queuedAt: Date.now() };
+    room.queue.push(entry);
+  } else {
+    // A reconnecting watcher keeps its place rather than going to the back.
+    entry.username = username;
+    entry.location = location;
+  }
+
+  socket.leave("lobby");
+  socket.join(room.id);
+  socket.spectating = room.id;
+  socket.roomId = room.id;
+
+  const position = room.queue.findIndex((q) => q.userId === userId) + 1;
+  socket.emit("room queued", {
+    ...spectatePayload(socket, room),
+    position,
+    queue: queueView(room),
   });
-  await leaveRoom(socket, userId);
-  clearAFKTimers(userId);
+  emitQueueUpdate(room);
+}
+
+function dequeueUser(room, userId) {
+  if (!room?.queue?.length) return false;
+  const before = room.queue.length;
+  room.queue = room.queue.filter((q) => q.userId !== userId);
+  return room.queue.length !== before;
+}
+
+// Remove a departed watcher from every queue they might be sitting in.
+function dropFromAllQueues(userId) {
+  for (const [, room] of state.rooms) {
+    if (dequeueUser(room, userId)) emitQueueUpdate(room);
+  }
+}
+
+// Pull the head of the queue into the room. Their socket is already joined and
+// spectating, so this hands them a real seat and lets joinRoom do the rest.
+function promoteFromQueue(room) {
+  if (!room?.queue?.length) return false;
+  if (getJoinableUserCount(room) >= roomCapacity(room)) return false;
+
+  const next = room.queue[0];
+  const socket = findSocketByUserId(next.userId, room.id);
+  if (!socket || !socket.connected) {
+    // Watcher vanished without a disconnect event; drop them and try again.
+    room.queue.shift();
+    emitQueueUpdate(room);
+    return promoteFromQueue(room);
+  }
+
+  room.queue.shift();
+  socket.spectating = null;
+  socket.emit("queue promoted", { roomId: room.id, roomName: room.name });
+  joinRoom(socket, room.id, next.userId);
+  emitQueueUpdate(room);
+  return true;
+}
+
+// Nobody yields a seat unless someone is actually waiting for it. Among the
+// occupants idle past the threshold, the one present longest goes first.
+async function yieldSeatToQueue(room) {
+  if (!room?.queue?.length) return false;
+
+  const candidates = (room.users || [])
+    // Ghosts have no live socket to yield with - they're reclaimed by
+    // evictGhost() on a join instead. Shouldn't be reachable in practice
+    // (ghosts only exist while the queue is empty, and this only runs once
+    // it isn't), but the filter costs nothing and removes the doubt.
+    .filter((u) => !u.departed)
+    .map((u) => ({ user: u, socket: findSocketByUserId(u.id, room.id) }))
+    .filter(({ user, socket }) => isUserEvictable(user, socket))
+    .sort((a, b) => (a.user.joinedAt || 0) - (b.user.joinedAt || 0));
+
+  if (!candidates.length) return false;
+
+  const { user, socket } = candidates[0];
+  if (!socket) return false;
+
+  socket.emit("room capacity evicted", {
+    roomId: room.id,
+    roomName: room.name,
+  });
+  await leaveRoom(socket, user.id);
+
+  // The evicted user keeps watching from the back of the line rather than
+  // being dumped out of the room entirely.
+  if (socket.connected) {
+    enqueueUser(socket, room, user.id, user.username, user.location);
+  }
+  return true;
+}
+
+// Reclaim a ghost's seat for real - the same cleanup leaveRoom would have
+// done for them if the queue hadn't been empty when they left. Called when a
+// newcomer arrives at capacity and a ghost is the oldest thing occupying it.
+function evictGhost(room, ghost) {
+  room.users = room.users.filter((u) => u.id !== ghost.id);
+  state.userMessageBuffers.delete(ghost.id);
+  clearUserActivity(ghost.id);
+
+  if (room.votes) {
+    delete room.votes[ghost.id];
+    for (const vid in room.votes) {
+      if (room.votes[vid] === ghost.id) delete room.votes[vid];
+    }
+    emitRoomVoteUpdates(room.id);
+  }
+  if (room.muteVotes) {
+    delete room.muteVotes[ghost.id];
+    for (const vid in room.muteVotes) {
+      if (room.muteVotes[vid] === ghost.id) delete room.muteVotes[vid];
+    }
+    room.mutedBotIds?.delete(ghost.id);
+  }
+
+  emitRoomUserLeft(room.id, ghost.id, ghost);
 }
 
 // ── Chat Processing ─────────────────────────────────────────────────────────
@@ -1395,7 +1556,7 @@ async function processPendingChatUpdates(userId, socket) {
       diff: { type: "full-replace", text: msg },
     });
 
-    setupAFKTimers(socket, userId);
+    markUserActive(userId);
 
     if (pending.diffs.length > 0) {
       state.batchProcessingTimers.set(
@@ -1421,11 +1582,12 @@ async function leaveRoom(socket, userId) {
   try {
     const roomId = socket.roomId;
     if (!roomId) return;
-    clearAFKTimers(userId);
+    clearUserActivity(userId);
 
     finalizeBoardUserStroke(roomId, userId);
     pianoDropPresence(roomId, userId, true);
 
+    let ghosted = false;
     const room = state.rooms.get(roomId);
     if (room) {
       // Ownership guard. leaveRoom is keyed only by userId, but during the
@@ -1449,9 +1611,13 @@ async function leaveRoom(socket, userId) {
       }
 
       const leftUser = room.users.find((u) => u.id === userId);
-      room.users = room.users.filter((u) => u.id !== userId);
       room.lastActiveTime = Date.now();
 
+      // Outstanding votes are about active participation, not seat
+      // occupancy - a ghost's own cast vote (kick choice, bot-mute vote)
+      // must not keep counting just because their panel lingers. This runs
+      // unconditionally, ghost or real removal alike; only the room.users
+      // mutation and buffer deletion below are what actually differ.
       if (room.votes) {
         delete room.votes[userId];
         for (const vid in room.votes) {
@@ -1478,13 +1644,39 @@ async function leaveRoom(socket, userId) {
         emitRoomMuteVoteUpdates(roomId);
       }
 
-      socket.leave(roomId);
-      emitRoomUserLeft(roomId, userId, leftUser);
-      updateRoom(roomId);
-      sendDevRoomContext(roomId);
-      updateRoomSoloTracking(roomId);
+      // Nobody is waiting: leave the panel and last-typed text in place
+      // (a "ghost") instead of wiping it, so the room doesn't suddenly look
+      // emptier than it needs to. Only the room.users removal and buffer
+      // deletion are skipped here - that happens later, when the ghost is
+      // finally reclaimed (evictGhost(), on a FIFO-boot join) or when the
+      // user reconnects and un-ghosts their own seat (joinRoom's reclaim
+      // check). If the queue is non-empty, this is unchanged from before:
+      // remove and promote immediately.
+      if ((!room.queue || room.queue.length === 0) && leftUser) {
+        ghosted = true;
+        leftUser.departed = true;
+        leftUser.departedAt = Date.now();
+        socket.leave(roomId);
+        updateRoom(roomId);
+        sendDevRoomContext(roomId);
+        updateRoomSoloTracking(roomId);
+        // If every remaining occupant is now a ghost, the room is effectively
+        // empty - schedule it for deletion just as we would a truly empty room.
+        if (room.users.every((u) => u.departed)) startRoomDeletionTimer(roomId);
+      } else {
+        room.users = room.users.filter((u) => u.id !== userId);
 
-      if (room.users.length === 0) startRoomDeletionTimer(roomId);
+        socket.leave(roomId);
+        emitRoomUserLeft(roomId, userId, leftUser);
+        updateRoom(roomId);
+        sendDevRoomContext(roomId);
+        updateRoomSoloTracking(roomId);
+
+        // A seat just opened - hand it to whoever has been waiting longest.
+        promoteFromQueue(room);
+
+        if (room.users.length === 0) startRoomDeletionTimer(roomId);
+      }
     }
 
     if (socket.handshake.session) {
@@ -1495,7 +1687,11 @@ async function leaveRoom(socket, userId) {
         console.error("Session save in leaveRoom:", e),
       );
     }
-    state.userMessageBuffers.delete(userId);
+    // A ghost's buffer IS the persisted "their text" - filterCurrentMessagesForSocket
+    // reads it for every room.users entry, ghosts included, on every future
+    // join/snapshot. Only cleared for real when the ghost is finally reclaimed
+    // (evictGhost) or the user reconnects and un-ghosts their own seat.
+    if (!ghosted) state.userMessageBuffers.delete(userId);
     state.devUsers.delete(userId);
 
     socket.roomId = null;
@@ -1620,6 +1816,7 @@ function joinRoom(socket, roomId, userId) {
     }
 
     if (!room.users) room.users = [];
+    if (!room.queue) room.queue = [];
     if (!room.votes) room.votes = {};
     if (!room.muteVotes) room.muteVotes = {};
     if (!room.mutedBotIds) room.mutedBotIds = new Set();
@@ -1636,13 +1833,29 @@ function joinRoom(socket, roomId, userId) {
     const joinableUserCount = (room.users || []).filter(
       (u) => u.id !== userId && !(u.isDev && u.isVanished),
     ).length;
-    if (!isStaff && joinableUserCount >= roomCapacity(room))
-      return socket.emit(
-        "room full",
-        createErrorResponse(ERROR_CODES.ROOM_FULL, "Room is full."),
-      );
+    // A full room no longer turns people away: they wait in the queue and
+    // watch read-only until a seat frees. Because the count above excludes
+    // this user's own stale entry, someone merely reconnecting reclaims their
+    // seat instead of being sent to the back of the line - including a ghost
+    // reclaiming their own seat (their departed entry is excluded the same
+    // way, so this check never re-counts it against them).
+    if (!isStaff && joinableUserCount >= roomCapacity(room)) {
+      // Ghosts absorb arrivals first: the room only *looks* full. Evict the
+      // one that's been sitting longest and seat the newcomer in its place
+      // rather than queueing them - real queueing is the last resort, once
+      // there's truly no ghost left to reclaim.
+      const oldestGhost = (room.users || [])
+        .filter((u) => u.departed)
+        .sort((a, b) => (a.departedAt || 0) - (b.departedAt || 0))[0];
+      if (oldestGhost) {
+        evictGhost(room, oldestGhost);
+      } else {
+        enqueueUser(socket, room, userId, username, location);
+        return;
+      }
+    }
 
-    clearAFKTimers(userId);
+    dequeueUser(room, userId);
     room.users = room.users.filter((u) => u.id !== userId);
     socket.join(roomId);
 
@@ -1650,6 +1863,10 @@ function joinRoom(socket, roomId, userId) {
       id: userId,
       username,
       location,
+      // Insertion order already tracks this, but only implicitly. An explicit
+      // stamp is what decides who yields first when several occupants are
+      // equally idle.
+      joinedAt: Date.now(),
       isBot: !!socket.isBot,
       isDev: !!socket.isDev,
       isMod: !!socket.isMod,
@@ -1687,7 +1904,7 @@ function joinRoom(socket, roomId, userId) {
       }
     }
 
-    setupAFKTimers(socket, userId);
+    markUserActive(userId);
     updateRoomSoloTracking(roomId);
 
     // Session save must complete before emitting join success, so the
@@ -1758,6 +1975,7 @@ function emitJoinSuccess(socket, room, userId, username, location) {
     muteVotes: filterMuteVotesForSocket(room, socket),
     mutedBotIds: Array.from(room.mutedBotIds || []),
     currentMessages: filterCurrentMessagesForSocket(room, socket),
+    queue: queueView(room),
     createdAt: createdAt,
     uptime: Date.now() - createdAt
   });
@@ -2060,7 +2278,7 @@ function registerSocketHandlers(opts) {
         if (!socket.roomId || !socket.handshake.session?.userId) return;
         if (socket.spectating) return; // spectators are read-only
         socket.boardOpen = true;
-        clearAFKTimers(socket.handshake.session.userId);
+        markUserActive(socket.handshake.session.userId);
 
         const bs = getBoardState(socket.roomId);
         const room = state.rooms.get(socket.roomId);
@@ -2300,7 +2518,7 @@ function registerSocketHandlers(opts) {
         const userId = socket.handshake.session.userId;
         socket.boardOpen = false;
         finalizeBoardUserStroke(socket.roomId, userId);
-        setupAFKTimers(socket, userId);
+        markUserActive(userId);
         emitSubAppEvent(
           socket,
           "board user status",
@@ -2379,7 +2597,7 @@ function registerSocketHandlers(opts) {
         if (socket.spectating) return; // spectators are read-only
         const userId = socket.handshake.session.userId;
         socket.pianoOpen = true;
-        clearAFKTimers(userId);
+        markUserActive(userId);
 
         const ps = getPianoState(socket.roomId);
         ps.open.add(userId);
@@ -2419,7 +2637,7 @@ function registerSocketHandlers(opts) {
         if (!socket.roomId || !socket.handshake.session?.userId) return;
         const userId = socket.handshake.session.userId;
         socket.pianoOpen = false;
-        setupAFKTimers(socket, userId);
+        markUserActive(userId);
         // Keep mute across a close so it can't be self-cleared.
         pianoDropPresence(socket.roomId, userId, false);
       }),
@@ -2797,6 +3015,7 @@ function registerSocketHandlers(opts) {
           type: data.type,
           layout: data.layout,
           users: [],
+          queue: [],
           accessCode: data.type === "semi-private" ? data.accessCode : null,
           votes: {},
           muteVotes: {},
@@ -3024,9 +3243,38 @@ function registerSocketHandlers(opts) {
       safe(async () => {
         const userId = socket.handshake.session?.userId;
         if (userId) {
-          clearAFKTimers(userId);
+          clearUserActivity(userId);
+          dropFromAllQueues(userId);
+          socket.spectating = null;
           await leaveRoom(socket, userId);
         }
+      }),
+    );
+
+    // Re-establish a queue seat after a reconnect. A watcher is never in
+    // room.users, so the normal session-rejoin path (which replays roomId
+    // through "join room") does not cover them - the client calls this
+    // explicitly instead. Also doubles as how a full room is re-entered
+    // directly: any join that would be refused is queued by joinRoom itself,
+    // so this only needs to handle the "was already queued" case.
+    socket.on(
+      "spectate room",
+      safe(async (data) => {
+        const roomId = data?.roomId;
+        const room = roomId ? state.rooms.get(roomId) : null;
+        const userId = socket.handshake.session?.userId;
+        if (!room || !userId)
+          return socket.emit(
+            "error",
+            createErrorResponse(ERROR_CODES.NOT_FOUND, "Room not found."),
+          );
+        const { username, location } = socket.handshake.session || {};
+        const alreadyQueued = room.queue?.some((q) => q.userId === userId);
+        if (!alreadyQueued && getJoinableUserCount(room) < roomCapacity(room)) {
+          // A seat is actually free - just join normally.
+          return joinRoom(socket, roomId, userId);
+        }
+        enqueueUser(socket, room, userId, username || "Anonymous", location || "On The Web");
       }),
     );
 
@@ -3168,12 +3416,15 @@ function registerSocketHandlers(opts) {
       }),
     );
 
-    // ── AFK Response ────────────────────────────────────────────────────
+    // ── Heartbeat ───────────────────────────────────────────────────────
+    // Kept under the old "afk response" name so bots already in the wild keep
+    // working. Nothing kicks for inactivity any more; this just lets a client
+    // say "still here" so it does not yield its seat to the queue.
     socket.on(
       "afk response",
       safe(async () => {
         const userId = socket.handshake.session?.userId;
-        if (userId && socket.roomId) setupAFKTimers(socket, userId);
+        if (userId && socket.roomId) markUserActive(userId);
       }),
     );
 
@@ -3185,9 +3436,14 @@ function registerSocketHandlers(opts) {
         const username = socket.handshake.session?.username || "Unknown";
         const location = socket.handshake.session?.location || "Unknown";
         if (userId) {
-          clearAFKTimers(userId);
+          clearUserActivity(userId);
+          dropFromAllQueues(userId);
+          // leaveRoom() already deletes the buffer for every real departure -
+          // and deliberately skips it when the user ghosts, so a fresh join's
+          // currentMessages snapshot still has their last-typed text. A second
+          // unconditional delete() here (a leftover from before ghosts existed)
+          // would wipe that text out from under the ghost immediately.
           await leaveRoom(socket, userId);
-          state.userMessageBuffers.delete(userId);
           state.devUsers.delete(userId);
           if (state.typingTimeouts.has(userId)) {
             clearTimeout(state.typingTimeouts.get(userId));
@@ -3220,6 +3476,21 @@ function startCleanupIntervals() {
       console.error("Pressure cleanup error:", err);
     }
   }, CONFIG.LIMITS.PRESSURE_CLEANUP_INTERVAL);
+
+  // Seat handover (10s). Only rooms with someone waiting are considered, and
+  // only occupants who have gone quiet can be asked to step aside - a room
+  // where everyone is talking never displaces anyone, however long the line.
+  setInterval(async () => {
+    try {
+      for (const [, room] of state.rooms) {
+        if (!room.queue?.length) continue;
+        if (promoteFromQueue(room)) continue;
+        await yieldSeatToQueue(room);
+      }
+    } catch (err) {
+      console.error("Seat handover error:", err);
+    }
+  }, 10000);
 
   // Bot detection cleanup (2 min)
   setInterval(() => {
@@ -3288,8 +3559,8 @@ function startCleanupIntervals() {
         state.typingTimeouts.delete(id);
       }
     }
-    for (const id of state.afkTimers.keys()) {
-      if (!active.has(id)) clearAFKTimers(id);
+    for (const id of state.userLastActivity.keys()) {
+      if (!active.has(id)) clearUserActivity(id);
     }
   }, 300000);
 
@@ -3339,12 +3610,20 @@ function startCleanupIntervals() {
     for (const [id, room] of state.rooms) {
       if (
         id !== MAIN_ROOM_ID &&
-        (!room.users || room.users.length === 0) &&
+        (!room.users || room.users.length === 0 || room.users.every((u) => u.departed)) &&
         now - room.lastActiveTime > CONFIG.TIMING.ROOM_DELETION_TIMEOUT
       )
         toDelete.push(id);
     }
     for (const id of toDelete) {
+      const room = state.rooms.get(id);
+      if (room?.users) {
+        for (const ghost of room.users.filter((u) => u.departed)) {
+          state.userMessageBuffers.delete(ghost.id);
+          clearUserActivity(ghost.id);
+          state.devUsers.delete(ghost.id);
+        }
+      }
       state.rooms.delete(id);
       state.roomSoloSince.delete(id);
       state.roomLastChatActivity.delete(id);
@@ -3418,10 +3697,14 @@ function startCleanupIntervals() {
       if (!room.users || room.users.length === 0) continue;
       const before = room.users.length;
       room.users = room.users.filter((u) => {
+        // Departed users have no live socket by design - that's not
+        // staleness, it's the whole point of a ghost panel. Only sweep
+        // entries that never intended to be here without one.
+        if (u.departed) return true;
         if (!activeIds.has(u.id)) {
           console.log(`Ghost removed: "${u.username}" from "${room.name}"`);
           state.userMessageBuffers.delete(u.id);
-          clearAFKTimers(u.id);
+          clearUserActivity(u.id);
           state.devUsers.delete(u.id);
           finalizeBoardUserStroke(roomId, u.id);
           pianoDropPresence(roomId, u.id, true);
@@ -3443,6 +3726,12 @@ function startCleanupIntervals() {
         ghostCount += removed;
         affectedRooms.push(roomId);
       }
+
+      if (room.queue?.length) {
+        const beforeQ = room.queue.length;
+        room.queue = room.queue.filter((q) => activeIds.has(q.userId));
+        if (room.queue.length !== beforeQ) emitQueueUpdate(room);
+      }
     }
     for (const id of affectedRooms) {
       const r = state.rooms.get(id);
@@ -3450,6 +3739,7 @@ function startCleanupIntervals() {
         updateRoom(id);
         updateRoomSoloTracking(id);
         if (r.users.length === 0) startRoomDeletionTimer(id);
+        else promoteFromQueue(r);
       }
     }
     if (ghostCount > 0) {
@@ -3510,8 +3800,9 @@ function purgeAllGhostUsers() {
     const before = room.users.length;
     room.users = room.users.filter((u) => {
       if (activeIds.has(u.id)) return true; // live socket -> a real user, keep
+      if (u.departed) return true; // no socket by design - not staleness
       state.userMessageBuffers.delete(u.id);
-      clearAFKTimers(u.id);
+      clearUserActivity(u.id);
       state.devUsers.delete(u.id);
       if (room.votes) {
         delete room.votes[u.id];

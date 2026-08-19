@@ -13,7 +13,7 @@ Everything you need to build, authenticate, and run a bot on Talkomatic.
 - [Step 3: Sign In (Join the Lobby)](#step-3-sign-in-join-the-lobby)
 - [Step 4: List, Create, or Join Rooms](#step-4-list-create-or-join-rooms)
 - [Step 5: Send and Receive Messages](#step-5-send-and-receive-messages)
-- [Step 6: Stay Alive (AFK System)](#step-6-stay-alive-afk-system)
+- [Step 6: Staying in a Room](#step-6-staying-in-a-room)
 - [Step 7: Leave a Room](#step-7-leave-a-room)
 - [Socket.IO Events Reference](#socketio-events-reference)
 - [Rate Limits and Constraints](#rate-limits-and-constraints)
@@ -338,14 +338,35 @@ socket.on("room not found", () => {
   console.log("Room does not exist");
 });
 
-socket.on("room full", () => {
-  console.log("Room is full (10/10)");
+// A full room no longer rejects the join - you're queued and watch read-only
+// instead. See "Joining a Full Room" below.
+socket.on("room queued", (data) => {
+  console.log(`Room is full - watching from position ${data.position}`);
 });
 
 socket.on("access code required", () => {
   console.log("This room requires an access code");
 });
 ```
+
+### Joining a Full Room
+
+Rooms hold up to 10 users. When a room is full, `join room` does not fail — you receive `room queued` instead of `room joined` and start watching the room read-only (same shape as `room joined`, plus `position`). You're promoted automatically, with a normal `room joined`, when a seat opens: either an occupant leaves, or a human occupant who has gone quiet past the idle threshold yields their seat. Bots are exempt from yielding (see [Step 6](#step-6-staying-in-a-room)) — if your bot is queued, it's waiting behind a human-only seat, not a bot's.
+
+```javascript
+socket.on("room queued", (data) => {
+  console.log(`Watching ${data.roomName} from position ${data.position}`);
+  // data.currentMessages and data.users work exactly as in "room joined" -
+  // you can read the room, you just cannot write to it (chat update, typing,
+  // votes, etc. are all rejected while queued).
+});
+
+socket.on("queue promoted", () => {
+  console.log("A seat opened up - the next event will be a normal 'room joined'");
+});
+```
+
+Bots never yield a seat once they have one (see [Step 6](#step-6-staying-in-a-room)), so `room capacity evicted` never fires for a bot. That event, and re-entering the queue at the back, is what happens to *human* occupants who go quiet in a full room.
 
 **`room joined` payload:**
 
@@ -474,55 +495,13 @@ socket.on("room joined", (data) => {
 
 ---
 
-## Step 6: Stay Alive (AFK System)
+## Step 6: Staying in a Room
 
-The server has an AFK (away-from-keyboard) system that kicks inactive users:
+**Your bot is never removed for being idle, and it never yields its seat to the queue.** There is no AFK kick, and bots are exempt from the seat-yielding that applies to human occupants (a bot can sit silently in a full room forever without displacing anyone or being displaced) — the same exemption bots already get from solo-room closure. A bot can sit connected and silent indefinitely and nothing will happen to it.
 
-- **Warning** at **2.5 minutes** of inactivity.
-- **Kick** at **3 minutes** of inactivity.
-- The AFK timer **only resets** when:
-  1. Your bot sends a `chat update` event, OR
-  2. Your bot emits `afk response` after receiving an `afk warning`.
+This means you don't need a heartbeat and don't need to handle `room capacity evicted` — that event is for human occupants, not bots. If your bot needs to know when a room fills up (e.g. to log it), `queue update` reports the current line.
 
-**Typing indicators, `get rooms`, and all other events do NOT reset the AFK timer.** This is intentional to prevent bots from staying alive without actually participating.
-
-### Option A: Respond to AFK Warnings (Recommended)
-
-```javascript
-socket.on("afk warning", (data) => {
-  console.log(
-    `AFK warning: ${data.message} (${data.secondsRemaining}s remaining)`,
-  );
-  // Send afk response to reset the timer
-  socket.emit("afk response");
-});
-
-socket.on("afk timeout", (data) => {
-  console.log(`Kicked for inactivity: ${data.message}`);
-  // Optionally rejoin the room or exit
-});
-```
-
-### Option B: Periodic Chat Updates
-
-If your bot is actively chatting, the AFK timer resets automatically on every `chat update`. If your bot is mostly idle but needs to stay in a room, you can send a periodic no-op update:
-
-```javascript
-let keepAliveInterval;
-
-function startKeepAlive(socket) {
-  // Send a keep-alive chat update every 2 minutes
-  keepAliveInterval = setInterval(() => {
-    socket.emit("chat update", {
-      diff: { type: "full-replace", text: "🤖 Bot is listening..." },
-    });
-  }, 120000); // 120 seconds
-}
-
-function stopKeepAlive() {
-  if (keepAliveInterval) clearInterval(keepAliveInterval);
-}
-```
+**Note for room design:** because your bot never yields, a room your bot occupies always has one fewer seat available to humans than its stated capacity. If you're running several bots, keep that in mind.
 
 ---
 
@@ -590,7 +569,7 @@ socket.on("bot muted", ({ muted }) => {
 | `typing`              | `{ isTyping: boolean }`                     | Send typing indicator                     |
 | `vote`                | `{ targetUserId: string }`                  | Vote to kick a user (toggle)              |
 | `vote mute`           | `{ targetUserId: string }`                  | Vote to mute a bot (toggle, bots only)    |
-| `afk response`        | _(none)_                                    | Respond to AFK warning to stay alive      |
+| `afk response`        | _(none)_                                    | "Still here" heartbeat; refreshes activity |
 | `get room state`      | `roomId: string`                            | Request current state of a room           |
 
 ### Events Your Bot Receives (Server → Client)
@@ -601,21 +580,22 @@ socket.on("bot muted", ({ muted }) => {
 | `initial rooms`        | `[room, ...]`                                                                                       | Room list (response to `get rooms`)    |
 | `lobby update`         | `[room, ...]`                                                                                       | Live room list updates while in lobby  |
 | `room created`         | `roomId: string`                                                                                    | Your room was created successfully     |
-| `room joined`          | `{ roomId, userId, username, location, roomName, roomType, users, layout, votes, muteVotes, mutedBotIds, currentMessages }` | You successfully joined a room |
+| `room joined`          | `{ roomId, userId, username, location, roomName, roomType, users, layout, votes, muteVotes, mutedBotIds, currentMessages, queue }` | You successfully joined a room |
+| `room queued`          | same shape as `room joined`, plus `position: number`                                               | Room is full; you're watching read-only from position N |
+| `queue promoted`       | `{ roomId, roomName }`                                                                              | A seat opened; a normal `room joined` follows |
 | `room not found`       | error object                                                                                        | Room does not exist                    |
-| `room full`            | error object                                                                                        | Room is at capacity (10 users)         |
 | `access code required` | _(none)_                                                                                            | Semi-private room needs an access code |
 | `user joined`          | `{ id, username, location, roomName, roomType }`                                                    | New user entered your room             |
 | `user left`            | `userId: string`                                                                                    | User left your room                    |
-| `room update`          | `{ id, name, type, layout, users, votes, muteVotes, mutedBotIds }`                                  | Room state changed                     |
+| `room update`          | `{ id, name, type, layout, users, votes, muteVotes, mutedBotIds, queue }`                            | Room state changed                     |
+| `queue update`         | `{ queue: [{ userId, username, position }] }`                                                       | The waiting line changed               |
 | `chat update`          | `{ userId, username, diff }`                                                                        | Another user's message changed         |
 | `update votes`         | `{ [voterId]: targetUserId }`                                                                       | Vote counts changed                    |
 | `update mute votes`    | `{ muteVotes: { [voterId]: targetUserId }, mutedBotIds: string[] }`                                 | Bot-mute vote counts/state changed     |
 | `user typing`          | `{ userId, username, isTyping }`                                                                    | Another user's typing status           |
 | `kicked`               | _(none)_                                                                                            | You were voted out of the room         |
 | `bot muted`            | `{ muted: boolean }`                                                                                 | Your bot was muted/unmuted by vote     |
-| `afk warning`          | `{ message, secondsRemaining }`                                                                     | You will be kicked for inactivity soon |
-| `afk timeout`          | `{ message, redirectTo }`                                                                           | You were kicked for inactivity         |
+| `room closed`          | `{ message, redirectTo }`                                                                           | The room you were in was closed        |
 | `error`                | `{ error: { code, message } }`                                                                      | Server error                           |
 | `validation_error`     | `{ [field]: "error message" }`                                                                      | Input validation failed                |
 | `room state`           | room object                                                                                         | Response to `get room state`           |
@@ -658,8 +638,8 @@ socket.on("bot muted", ({ muted }) => {
 | ------------------- | ------------- |
 | Username max length | 15 characters |
 | Location max length | 20 characters |
-| AFK warning         | 2.5 minutes   |
-| AFK kick            | 3 minutes     |
+| Idle threshold       | 5 minutes (humans only - bots are exempt) |
+| Room capacity        | 10 users      |
 
 ### Bot Token Limits
 
@@ -708,7 +688,6 @@ socket.on("disconnect", (reason) => {
 | `UNAUTHORIZED`       | Not signed in                                      |
 | `NOT_FOUND`          | Room not found                                     |
 | `RATE_LIMITED`       | Too many requests                                  |
-| `ROOM_FULL`          | Room is at capacity                                |
 | `FORBIDDEN`          | Action not allowed (banned, already in room, etc.) |
 | `ROOM_NAME_EXISTS`   | Room name already taken                            |
 | `ROOM_LIMIT_REACHED` | Server room limit hit                              |
@@ -749,9 +728,9 @@ socket.on("connect", () => {
 });
 ```
 
-### 3. Always Handle AFK
+### 3. Be Mindful of the Seat You Hold
 
-If your bot sits idle in a room without sending `chat update` events, it will be kicked in 3 minutes. Either listen for `afk warning` and respond with `afk response`, or send periodic chat updates.
+Your bot is never kicked for being idle, and it never yields to the queue the way a quiet human does. That's convenient, but it also means a room with your bot in it has one less seat available to actual people, indefinitely. If you're running a bot mainly for testing, leave the room when you're done rather than leaving it occupying a seat.
 
 ### 4. Respect Rate Limits
 

@@ -85,13 +85,10 @@
     UNAUTHORIZED: "Unauthorized",
     NOT_FOUND: "Not Found",
     RATE_LIMITED: "Rate Limited",
-    ROOM_FULL: "Room Full",
     ACCESS_DENIED: "Access Denied",
     BAD_REQUEST: "Bad Request",
     FORBIDDEN: "Forbidden",
     CIRCUIT_OPEN: "Circuit Open",
-    AFK_WARNING: "AFK Warning",
-    AFK_TIMEOUT: "AFK Timeout",
   };
 
   window.showErrorModal = function (message, title) {

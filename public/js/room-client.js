@@ -86,13 +86,10 @@ const ERROR_CODES = {
   UNAUTHORIZED: "Unauthorized",
   NOT_FOUND: "Not Found",
   RATE_LIMITED: "Rate Limited",
-  ROOM_FULL: "Room Full",
   ACCESS_DENIED: "Access Denied",
   BAD_REQUEST: "Bad Request",
   FORBIDDEN: "Forbidden",
   CIRCUIT_OPEN: "Circuit Open",
-  AFK_WARNING: "AFK Warning",
-  AFK_TIMEOUT: "AFK Timeout",
 };
 
 // ── 2. WORD FILTER ──────────────────────────────────────────────────────────
@@ -2857,6 +2854,7 @@ function createUserRow(user, container) {
   const row = document.createElement("div");
   row.classList.add("chat-row");
   if (user.id === currentUserId) row.classList.add("current-user");
+  if (user.departed) row.classList.add("departed");
   row.dataset.userId = user.id;
   row.dataset.username = user.username || "";
 
@@ -2918,6 +2916,15 @@ function createUserRow(user, container) {
   nameEl.className = "ui-name";
   nameEl.textContent = user.username;
   info.appendChild(nameEl);
+
+  // Ghost: they left while the queue was empty, so their panel/text lingers
+  // instead of disappearing. Marked, not disguised as still-present.
+  if (user.departed) {
+    const leftLabel = document.createElement("span");
+    leftLabel.className = "departed-label";
+    leftLabel.textContent = "left";
+    info.appendChild(leftLabel);
+  }
 
   // Vote-to-mute a bot: status label to the left of the vote button, both
   // shown only on bot rows (bots are any socket authenticated via a bot
@@ -3240,7 +3247,44 @@ function updateRoomInfo(data) {
   if (typeEl && roomType) {
     typeEl.textContent = `${getRoomTypeDisplay(roomType) || "Public"} room`;
   }
+
+  if (data.queue !== undefined) renderQueueChip(data.queue);
 }
+
+// ── Queue Chip (navbar, between the clock and the waffle menu) ─────────────
+// Names are server-supplied usernames rendered via textContent - never trust
+// them as markup.
+let queueChipExpanded = false;
+function renderQueueChip(queue) {
+  const chip = document.getElementById("queueChip");
+  if (!chip) return;
+  const list = Array.isArray(queue) ? queue : [];
+
+  if (list.length === 0) {
+    chip.hidden = true;
+    queueChipExpanded = false;
+    chip.setAttribute("aria-expanded", "false");
+    return;
+  }
+
+  chip.hidden = false;
+  const countEl = chip.querySelector(".queue-chip-count");
+  const namesEl = chip.querySelector(".queue-chip-names");
+  if (countEl)
+    countEl.textContent = `${list.length} waiting`;
+  if (namesEl) namesEl.textContent = list.map((q) => q.username).join(", ");
+  chip.setAttribute("aria-expanded", String(queueChipExpanded));
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const chip = document.getElementById("queueChip");
+  if (chip) {
+    chip.addEventListener("click", () => {
+      queueChipExpanded = !queueChipExpanded;
+      chip.setAttribute("aria-expanded", String(queueChipExpanded));
+    });
+  }
+});
 
 // ── 14. LAYOUT ──────────────────────────────────────────────────────────────
 
@@ -3334,7 +3378,7 @@ function adjustLayout() {
     ? "horizontal"
     : userLayoutPreference || currentRoomLayout;
 
-  // Reset styles that only the crowd grid sets, so the <=5 layouts below are
+  // Reset styles that only the crowd grid sets, so the <=4 layouts below are
   // never affected by a previous larger headcount.
   container.style.flexWrap = "";
   container.style.alignContent = "";
@@ -3342,10 +3386,10 @@ function adjustLayout() {
   container.style.overflowY = "";
   rows.forEach((row) => (row.style.flex = ""));
 
-  if (rows.length > 5) {
+  if (rows.length > 4) {
     // Crowd mode: balanced grid (columns x rows) that fills the room. Column
     // count follows the layout preference and the available width; it only
-    // scrolls if cells would otherwise get too short. The <=5 cases are
+    // scrolls if cells would otherwise get too short. The <=4 cases are
     // left exactly as they were.
     container.style.flexDirection = "row";
     container.style.flexWrap = "wrap";
@@ -3454,15 +3498,15 @@ function adjustLayout() {
   refreshLayoutToggle();
 }
 
-// The layout toggle only makes sense on desktop in a small room. Past 5 users
+// The layout toggle only makes sense on desktop in a small room. Past 4 users
 // the room switches to the crowd grid, so the toggle is removed; it comes back
-// the moment the room drops to 5 or fewer. Also keeps the icon and tooltip in
+// the moment the room drops to 4 or fewer. Also keeps the icon and tooltip in
 // sync with whichever layout is actually on screen.
 function refreshLayoutToggle() {
   const btn = document.getElementById("layoutToggle");
   if (!btn) return;
   const userCount = document.querySelectorAll(".chat-row").length;
-  const show = !isMobile() && userCount > 0 && userCount <= 5;
+  const show = !isMobile() && userCount > 0 && userCount <= 4;
   btn.style.display = show ? "flex" : "none";
   if (!show) return;
   const horizontal =
@@ -3547,15 +3591,6 @@ socket.on("kicked", (data) => {
   );
 });
 
-socket.on("room full", () => {
-  showInfoModal(
-    "This room is full. Try again in a moment.",
-    () => {
-      window.location.href = "/index.html";
-    },
-  );
-});
-
 socket.on("room joined", (data) => {
   // Protocol gate: if the server speaks a different message version than the JS
   // we are running, a breaking deploy happened under us. Reload once (guarded
@@ -3569,6 +3604,14 @@ socket.on("room joined", (data) => {
     }
   } else {
     sessionStorage.removeItem("tkProtoReload");
+  }
+
+  // A queue promotion lands here too (the server sends a normal "room joined"
+  // right after "queue promoted") - drop the read-only banner and re-enable
+  // the chat input.
+  if (isSpectating) {
+    isSpectating = false;
+    document.getElementById("spectateBanner")?.remove();
   }
 
   currentUserId = data.userId;
@@ -3665,26 +3708,41 @@ socket.on("room not found", () => {
 });
 
 socket.on("user joined", (data) => {
-  if (!document.querySelector(`.chat-row[data-user-id="${data.id}"]`)) {
-    const c = document.querySelector(".chat-container");
-    if (c) {
-      createUserRow(data, c);
-      adjustLayout();
-      updateRoomInfo(data);
-      if (notificationsEnabled && document.hidden) showTabDot();
+  const c = document.querySelector(".chat-container");
+  if (!c) return;
 
-      // A new join can cross the voting threshold
-      updateVotesUI(currentVotes);
+  // A row can already exist here if an earlier "user left" for this same
+  // userId never arrived (dropped over the network, a transport hiccup) -
+  // rebuilding unconditionally, rather than no-op'ing when one's found,
+  // guarantees a rejoin always shows blank instead of getting stuck with
+  // whatever stale text that missed removal left behind.
+  const existingRow = document.querySelector(
+    `.chat-row[data-user-id="${data.id}"]`,
+  );
+  if (existingRow) existingRow.remove();
 
-      // Confetti only on the dev's own screen
-      if (data.isDev && !data.isHidden && currentUserIsDev) {
-        triggerDevConfetti();
-      }
-    }
-    // No explicit refocus here: adjustLayout() already restores focus to the
-    // chat input only when it was active, so a join never steals focus from a
-    // dev's open modal (or pops the mobile keyboard when you're not typing).
+  const row = createUserRow(data, c);
+  // A ghost's last text survives its rejoin (server-side buffer never got
+  // cleared - see leaveRoom's ghost branch), and our own "room joined" already
+  // shows it via currentMessages. Apply it here too so every OTHER client's
+  // freshly-built row for them starts in sync instead of sitting blank.
+  if (data.text) {
+    renderOtherUserMessage(row.querySelector(".chat-input"), data.text);
   }
+  adjustLayout();
+  updateRoomInfo(data);
+  if (notificationsEnabled && document.hidden) showTabDot();
+
+  // A new join can cross the voting threshold
+  updateVotesUI(currentVotes);
+
+  // Confetti only on the dev's own screen
+  if (data.isDev && !data.isHidden && currentUserIsDev) {
+    triggerDevConfetti();
+  }
+  // No explicit refocus here: adjustLayout() already restores focus to the
+  // chat input only when it was active, so a join never steals focus from a
+  // dev's open modal (or pops the mobile keyboard when you're not typing).
 });
 
 socket.on("user left", (userId) => {
@@ -3701,6 +3759,8 @@ socket.on("user left", (userId) => {
     }
   }
 });
+
+socket.on("queue update", (data) => renderQueueChip(data?.queue));
 
 socket.on("room update", (roomData) => {
   currentRoomLayout = roomData.layout || currentRoomLayout;
@@ -3750,6 +3810,25 @@ socket.on("room update", (roomData) => {
       applyDevAppearanceToRow(row, u);
       applyPanelStyleToRow(row, u);
       syncUserRowNote(row, u);
+
+      // Ghost toggle: a fresh departure marks an existing row without
+      // recreating it; a reconnect reclaiming their own seat un-marks it the
+      // same way.
+      const wasDeparted = row.classList.contains("departed");
+      const isDeparted = !!u.departed;
+      if (wasDeparted !== isDeparted) {
+        row.classList.toggle("departed", isDeparted);
+        const info = row.querySelector(".user-info");
+        const existingLabel = info?.querySelector(".departed-label");
+        if (isDeparted && info && !existingLabel) {
+          const leftLabel = document.createElement("span");
+          leftLabel.className = "departed-label";
+          leftLabel.textContent = "left";
+          info.appendChild(leftLabel);
+        } else if (!isDeparted && existingLabel) {
+          existingLabel.remove();
+        }
+      }
     });
   }
 
@@ -3812,8 +3891,8 @@ socket.on("access code required", () => {
   );
 });
 
-socket.on("afk timeout", (data) => {
-  showInfoModal(data.message ?? "Removed from room due to inactivity.", () => {
+socket.on("room closed", (data) => {
+  showInfoModal(data.message ?? "This room was closed.", () => {
     window.location.href = data.redirectTo ?? "/";
   });
 });
@@ -3957,8 +4036,7 @@ async function joinRoom(roomId, accessCode = null) {
 // On reconnect (an idle/backgrounded tab that dropped, or a server restart)
 // get the user back into their room with no manual step. Without this we become
 // a ghost: still in the room on our own screen, but gone for everyone else, and
-// our typing reaches no one. Staff notice this most because they are never
-// AFK-redirected out of a room. Spectators re-spectate.
+// our typing reaches no one. Spectators re-spectate.
 //
 // A plain network blip keeps the server's session, so a bare rejoin works and
 // semi-private access stays valid via the session. A server restart wipes the
@@ -4076,7 +4154,7 @@ window.addEventListener("load", () => {
   }
   notifyToggleButton.addEventListener("click", toggleNotifications);
 
-  // Layout toggle (desktop, client-side view preference). Shown only at <=5
+  // Layout toggle (desktop, client-side view preference). Shown only at <=4
   // users; refreshLayoutToggle() handles when it appears/disappears.
   const layoutBtn = document.getElementById("layoutToggle");
   if (layoutBtn) layoutBtn.addEventListener("click", toggleRoomLayout);
@@ -5140,6 +5218,8 @@ function renderSpectate(data) {
   if (isStaff()) createStaffPanelButton();
   applyRoomFlags(data);
 
+  if (data.queue !== undefined) renderQueueChip(data.queue);
+
   const invite = document.querySelector(".invite-section");
   if (invite) invite.style.display = "none";
   let banner = document.getElementById("spectateBanner");
@@ -5148,17 +5228,45 @@ function renderSpectate(data) {
     banner.id = "spectateBanner";
     document.body.appendChild(banner);
   }
-  banner.textContent = currentUserIsDev
-    ? "SPECTATING (invisible, read-only). Dev tools stay active via the Dev button."
-    : currentUserIsMod
-      ? "SPECTATING (invisible, read-only). Mod tools stay active via the Staff button."
-      : "SPECTATING (read-only). You are watching this room. Use Leave to exit.";
+  // "room queued" carries a position; plain spectating (staff, ?spectate=1)
+  // does not. Same read-only rendering either way, different framing.
+  if (data.position) {
+    banner.textContent =
+      `WAITING (#${data.position} in line, read-only). You'll join ` +
+      `automatically when a seat opens - the room is watching you watch it.`;
+  } else {
+    banner.textContent = currentUserIsDev
+      ? "SPECTATING (invisible, read-only). Dev tools stay active via the Dev button."
+      : currentUserIsMod
+        ? "SPECTATING (invisible, read-only). Mod tools stay active via the Staff button."
+        : "SPECTATING (read-only). You are watching this room. Use Leave to exit.";
+  }
 }
 
 socket.on("spectate joined", (data) => renderSpectate(data));
+socket.on("room queued", (data) => renderSpectate(data));
 socket.on("spectate ended", () => {
   isSpectating = false;
   window.location.href = "/index.html";
+});
+
+// The server already sent (or is about to send) a normal "room joined" for
+// this - this is just the heads-up so the transition doesn't feel silent.
+socket.on("queue promoted", (data) => {
+  notify(`A seat opened up in ${data?.roomName ?? "the room"} - you're in!`, "success", {
+    title: "Promoted from the queue",
+    timeout: 6000,
+  });
+});
+
+socket.on("room capacity evicted", (data) => {
+  notify(
+    `The room filled up and you'd been quiet a while, so you gave up your seat ` +
+      `in ${data?.roomName ?? "the room"}. You're back in the queue - it'll ` +
+      `open up again automatically.`,
+    "warning",
+    { title: "Seat yielded", timeout: 10000 },
+  );
 });
 
 // ── Staff events received by everyone ────────────────────────────────────────
