@@ -370,7 +370,13 @@ function getPlainText(element) {
         t += "\n";
       } else if (node.nodeName === "DIV") {
         if (node.previousSibling) t += "\n";
-        for (const child of node.childNodes) t += extract(child);
+        // An empty line is represented as <div><br></div>; the "\n" above
+        // already accounts for it, so don't also count the placeholder <br>.
+        const isEmptyLinePlaceholder =
+          node.childNodes.length === 1 && node.firstChild.nodeName === "BR";
+        if (!isEmptyLinePlaceholder) {
+          for (const child of node.childNodes) t += extract(child);
+        }
       } else {
         for (const child of node.childNodes) t += extract(child);
       }
@@ -2748,6 +2754,7 @@ function applyPanelStyleToRow(row, user) {
     "--tk-row-border": style && style.border,
     "--tk-row-chat-bg": style && style.bg,
     "--tk-row-chat-text": style && style.text,
+    "--tk-row-chat-bg-inv": style && style.text ? invertHsv(style.text) : null,
   };
   for (const [prop, val] of Object.entries(vars)) {
     if (val) row.style.setProperty(prop, val);
@@ -3328,8 +3335,8 @@ function injectStyles() {
     .link-warning-visit { background:#ff9800; color:#000; border:none; padding:10px 18px; border-radius:6px; cursor:pointer; font-weight:bold; }
     .link-warning-visit:hover { background:#ffb74d; }
     /* Markdown-lite: code (colors match desk.js .dk-code-in/.dk-code-bl) */
-    .chat-code-inline { font-family:"Courier New",monospace; font-size:14px; background:#000; border:1px solid #333; border-radius:3px; padding:0 4px; color:#ffb454; word-break:break-word; }
-    .chat-code-block { display:block; font-family:"Courier New",monospace; font-size:14px; background:#000; border:1px solid #333; border-radius:5px; padding:8px 10px; margin:4px 0; color:#ededed; white-space:pre-wrap; word-break:break-word; max-height:180px; overflow:auto; }
+    .chat-code-inline { font-family:"Courier New",monospace; font-size:14px; background:var(--tk-row-chat-bg-inv,var(--tk-chat-bg-inv,#000)); border:1px solid var(--tk-row-border,var(--tk-border,#333)); border-radius:3px; padding:0 4px; color:var(--tk-row-chat-text,var(--tk-chat-text,#ffb454)); word-break:break-word; }
+    .chat-code-block { display:block; font-family:"Courier New",monospace; font-size:14px; background:var(--tk-row-chat-bg-inv,var(--tk-chat-bg-inv,#000)); border:1px solid var(--tk-row-border,var(--tk-border,#333)); border-radius:5px; padding:8px 10px; margin:4px 0; color:var(--tk-row-chat-text,var(--tk-chat-text,#ededed)); white-space:pre-wrap; word-break:break-word; max-height:180px; overflow:auto; }
     /* Image-link thumbnails */
     .chat-img-thumb { display:block; max-width:100%; max-height:96px; width:auto; height:auto; object-fit:contain; border-radius:4px; border:1px solid #616161; margin-top:4px; }
 
@@ -3340,6 +3347,81 @@ function injectStyles() {
     }
   `;
   document.head.appendChild(style);
+
+  refreshCodeBgToken();
+  new MutationObserver(refreshCodeBgToken).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["style"],
+  });
+}
+
+function hexToRgb(hex) {
+  const clean = hex.replace("#", "");
+  const full =
+    clean.length === 3
+      ? clean.split("").map((c) => c + c).join("")
+      : clean;
+  const n = parseInt(full, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function rgbToHex([r, g, b]) {
+  return (
+    "#" +
+    [r, g, b]
+      .map((n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0"))
+      .join("")
+  );
+}
+
+// Inverts a hex color in HSV space (hue +180, saturation and value
+// flipped) so a derived color reliably contrasts with the source instead
+// of being an unrelated fixed value.
+function invertHsv(hex) {
+  try {
+    const [r, g, b] = hexToRgb(hex).map((n) => n / 255);
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const d = max - min;
+    let h = 0;
+    if (d !== 0) {
+      if (max === r) h = ((g - b) / d) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60;
+      if (h < 0) h += 360;
+    }
+    const s = max === 0 ? 0 : d / max;
+    const v = max;
+    const ih = (h + 180) % 360;
+    const is = 1 - s;
+    const iv = 1 - v;
+    const c = iv * is;
+    const x = c * (1 - Math.abs(((ih / 60) % 2) - 1));
+    const m = iv - c;
+    let rgb;
+    if (ih < 60) rgb = [c, x, 0];
+    else if (ih < 120) rgb = [x, c, 0];
+    else if (ih < 180) rgb = [0, c, x];
+    else if (ih < 240) rgb = [0, x, c];
+    else if (ih < 300) rgb = [x, 0, c];
+    else rgb = [c, 0, x];
+    return rgbToHex(rgb.map((n) => (n + m) * 255));
+  } catch {
+    return null;
+  }
+}
+
+// Chat code has no dedicated background token - it derives one from the
+// HSV-inverted chat text color so it always contrasts with whatever the
+// room theme sets, instead of following an unrelated/fixed color.
+function refreshCodeBgToken() {
+  const root = document.documentElement;
+  const text = getComputedStyle(root).getPropertyValue("--tk-chat-text").trim() || "#ffa500";
+  const inv = invertHsv(text);
+  if (inv && root.style.getPropertyValue("--tk-chat-bg-inv") !== inv) {
+    root.style.setProperty("--tk-chat-bg-inv", inv);
+  }
 }
 
 function isMobile() {
