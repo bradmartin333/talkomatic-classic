@@ -1415,6 +1415,88 @@ function evictGhost(room, ghost) {
   emitRoomUserLeft(room.id, ghost.id, ghost);
 }
 
+// ── Operator Tools ──────────────────────────────────────────────────────────
+// Backing for tools/admin.js. Seats are addressed by user id, never by name:
+// a ghost and the fresh session of the same person share a username but never
+// an id, and that collision is the usual reason an operator needs this at all.
+
+// Every seat the server believes is occupied, ghost or live. `live` reflects
+// whether a connected socket currently claims that id, which is what separates
+// a real occupant from a leftover panel.
+function adminListUsers() {
+  const liveIds = new Set();
+  for (const [, s] of io()?.sockets.sockets || []) {
+    const uid = s.handshake?.session?.userId;
+    if (uid && s.connected) liveIds.add(uid);
+  }
+  const out = [];
+  for (const [roomId, room] of state.rooms) {
+    out.push({
+      roomId,
+      roomName: room.name,
+      capacity: roomCapacity(room),
+      users: (room.users || []).map((u) => ({
+        id: u.id,
+        username: u.username,
+        live: liveIds.has(u.id),
+        ghost: !!u.departed,
+        isBot: !!u.isBot,
+        joinedAt: u.joinedAt || null,
+        departedAt: u.departedAt || null,
+      })),
+    });
+  }
+  return out;
+}
+
+// Free one seat by id. evictGhost does the seat teardown for both kinds - it
+// is only named for ghosts because that was its first caller - and the seat is
+// released BEFORE any socket is cut so the disconnect that follows cannot
+// re-ghost the user it just removed: leaveRoom's ghost branch needs to find a
+// matching entry in room.users, and by then there is none. Leaving socket
+// .roomId intact keeps that disconnect on its normal path, so a waiting queue
+// still gets promoted into the seat.
+function adminKickUser(userId, { roomId = null } = {}) {
+  const seats = [];
+  for (const [rid, room] of state.rooms) {
+    if (roomId && rid !== roomId) continue;
+    const user = (room.users || []).find((u) => u.id === userId);
+    if (!user) continue;
+
+    evictGhost(room, user);
+    seats.push({
+      roomId: rid,
+      roomName: room.name,
+      username: user.username,
+      wasGhost: !!user.departed,
+    });
+
+    updateRoom(rid);
+    sendDevRoomContext(rid);
+    updateRoomSoloTracking(rid);
+    if (room.users.length === 0) startRoomDeletionTimer(rid);
+  }
+
+  let disconnected = 0;
+  for (const [, s] of io()?.sockets.sockets || []) {
+    if (s.handshake?.session?.userId !== userId) continue;
+    if (roomId && s.roomId !== roomId) continue;
+    try {
+      s.emit("kicked", { message: "You were removed by an operator." });
+      s.disconnect(true);
+      disconnected++;
+    } catch (_) {
+      // Already gone: the seat teardown above is what actually mattered.
+    }
+  }
+
+  if (seats.length) {
+    updateLobby();
+    debouncedSaveRooms();
+  }
+  return { userId, seats, disconnected };
+}
+
 // ── Chat Processing ─────────────────────────────────────────────────────────
 
 function checkChatCircuit() {
@@ -3862,6 +3944,8 @@ module.exports = {
   startRoomDeletionTimer,
   leaveRoom,
   joinRoom,
+  adminListUsers,
+  adminKickUser,
   roomCapacity,
   ensureMainRoom,
   MAIN_ROOM_ID,
