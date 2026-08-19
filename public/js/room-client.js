@@ -269,56 +269,82 @@ modalInput.addEventListener("keydown", (e) => {
 });
 
 // ── 4. TAB NOTIFICATIONS ────────────────────────────────────────────────────
-// No OS-level toasts here (that needs a permission dialog) — just a small red
-// dot drawn onto the tab favicon while you're away, cleared the moment you
-// come back. notificationsEnabled is the user's opt-in for all of it.
+// The favicon is always a solid square instead of the site logo, so its
+// color alone communicates state: black while you're looking at the tab,
+// sliding blue -> purple -> red as activity piles up while you're away.
+// notificationsEnabled is the user's opt-in for the color accumulating at all.
 
 const notifyToggleButton = document.getElementById("notifyToggle");
 const notifyIcon = document.getElementById("notifyIcon");
 let notificationsEnabled = true;
 
 const faviconLink = document.querySelector('link[rel="icon"]');
-const originalFaviconHref = faviconLink ? faviconLink.href : null;
-let tabDotShown = false;
+const FAVICON_SIZE = 32;
+const ACTIVITY_STEP = 0.03; // per keystroke - chat here is live-typed, no "send"
+let activityHeat = 0; // 0 (cold/blue) .. 1 (hot/red); only rises while the tab is hidden
 
-function showTabDot() {
-  if (tabDotShown || !faviconLink || !originalFaviconHref) return;
-  tabDotShown = true;
+function hsvToHex(h, s, v) {
+  h = ((h % 360) + 360) % 360;
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  let rgb;
+  if (h < 60) rgb = [c, x, 0];
+  else if (h < 120) rgb = [x, c, 0];
+  else if (h < 180) rgb = [0, c, x];
+  else if (h < 240) rgb = [0, x, c];
+  else if (h < 300) rgb = [x, 0, c];
+  else rgb = [c, 0, x];
+  return rgbToHex(rgb.map((n) => (n + m) * 255));
+}
 
-  const img = new Image();
-  img.onload = () => {
+function heatToHex(heat) {
+  const hue = 240 + Math.max(0, Math.min(1, heat)) * 120; // blue -> purple -> red
+  return hsvToHex(hue, 0.75, 1);
+}
+
+function drawFaviconSquare(hex) {
+  if (!faviconLink) return;
+
+  if (!drawFaviconSquare._canvas) {
     const canvas = document.createElement("canvas");
-    canvas.width = img.width;
-    canvas.height = img.height;
+    canvas.width = FAVICON_SIZE;
+    canvas.height = FAVICON_SIZE;
     const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      tabDotShown = false;
-      return;
-    }
-    ctx.drawImage(img, 0, 0);
-    const r = img.width * 0.28;
-    ctx.beginPath();
-    ctx.arc(img.width - r, r, r, 0, Math.PI * 2);
-    ctx.fillStyle = "#ff3b30";
-    ctx.fill();
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = img.width * 0.06;
-    ctx.stroke();
-    faviconLink.href = canvas.toDataURL("image/png");
-  };
-  img.onerror = () => {
-    tabDotShown = false;
-  };
-  img.src = originalFaviconHref;
+    if (!ctx) return;
+    drawFaviconSquare._canvas = canvas;
+    drawFaviconSquare._ctx = ctx;
+  }
+
+  const ctx = drawFaviconSquare._ctx;
+  ctx.fillStyle = hex;
+  ctx.fillRect(0, 0, FAVICON_SIZE, FAVICON_SIZE);
+  faviconLink.href = drawFaviconSquare._canvas.toDataURL("image/png");
 }
-function clearTabDot() {
-  if (!tabDotShown || !faviconLink) return;
-  faviconLink.href = originalFaviconHref;
-  tabDotShown = false;
+
+function updateFavicon() {
+  const showHeat = document.hidden && activityHeat > 0;
+  drawFaviconSquare(showHeat ? heatToHex(activityHeat) : "#000000");
 }
+
+function bumpActivity(amount) {
+  if (!notificationsEnabled || !document.hidden) return;
+  activityHeat = Math.min(1, activityHeat + amount);
+  updateFavicon();
+}
+
+function resetActivity() {
+  activityHeat = 0;
+  updateFavicon();
+}
+
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) clearTabDot();
+  if (document.hidden) updateFavicon();
+  else resetActivity();
 });
+window.addEventListener("focus", resetActivity);
+
+updateFavicon();
 
 function toggleNotifications() {
   notificationsEnabled = !notificationsEnabled;
@@ -331,7 +357,7 @@ function toggleNotifications() {
 socket.on("room mention", (data) => {
   const by = (data && data.by) || "Someone";
   if (window.toastr) toastr.info(by + " mentioned you");
-  if (notificationsEnabled) showTabDot();
+  bumpActivity(0.4);
   // Blink it into the tab title for anyone looking at another window.
   if (document.hidden) {
     const original = document.title;
@@ -2069,7 +2095,7 @@ function displayChatMessage(data) {
       renderOtherUserMessage(chatDiv, newText);
     }
   } else {
-    if (notificationsEnabled && document.hidden) showTabDot();
+    bumpActivity(ACTIVITY_STEP);
     renderOtherUserMessage(chatDiv, newText);
   }
 }
@@ -3813,7 +3839,7 @@ socket.on("user joined", (data) => {
   }
   adjustLayout();
   updateRoomInfo(data);
-  if (notificationsEnabled && document.hidden) showTabDot();
+  bumpActivity(0.15);
 
   // A new join can cross the voting threshold
   updateVotesUI(currentVotes);
@@ -3833,7 +3859,7 @@ socket.on("user left", (userId) => {
     if (row) {
       row.remove();
       adjustLayout();
-      if (notificationsEnabled && document.hidden) showTabDot();
+      bumpActivity(0.15);
 
       // Dropping below the voting minimum must clean up vote UI immediately
       adjustVoteButtonVisibility();
