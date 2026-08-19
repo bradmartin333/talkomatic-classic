@@ -280,8 +280,23 @@ let notificationsEnabled = true;
 
 const faviconLink = document.querySelector('link[rel="icon"]');
 const FAVICON_SIZE = 32;
-const ACTIVITY_STEP = 0.15; // per completed message
+const ACTIVITY_STEP = 0.05; // per completed message, so 20 of them reach full red
 let activityHeat = 0; // 0 (cold/blue) .. 1 (hot/red); only rises while the tab is hidden
+
+// Served by sendPage from CONFIG.VERSIONS.APP, so the version shown in the
+// navbar and the version stamped onto stored preferences are the same string
+// and neither is baked into this bundle.
+const APP_VERSION =
+  document.querySelector('meta[name="tk-version"]')?.content || "0.0.0";
+
+// Stored preferences carry the app version they were written under, and any
+// stamped with a different one is discarded on load. That resets the opt-out
+// on every version bump: the tab-dot feature that shipped before this one
+// wrote the same key, so anyone who silenced the dot was silently opted out of
+// the color too, with no hint the feature had changed. The bell still turns it
+// back off, and that choice sticks until the next bump.
+const NOTIFY_PREF_KEY = "notificationsEnabled";
+const NOTIFY_PREF_VERSION_KEY = "notificationsEnabledVersion";
 
 // Chat here is live-typed with no explicit "send", so a message only counts
 // as "completed" once its sender pauses - each diff restarts this timer per
@@ -374,7 +389,38 @@ updateFavicon();
 
 function toggleNotifications() {
   notificationsEnabled = !notificationsEnabled;
-  localStorage.setItem("notificationsEnabled", JSON.stringify(notificationsEnabled));
+  try {
+    localStorage.setItem(NOTIFY_PREF_KEY, JSON.stringify(notificationsEnabled));
+    localStorage.setItem(NOTIFY_PREF_VERSION_KEY, APP_VERSION);
+  } catch (_) {
+    // Storage blocked (private window, quota): the toggle still holds for this
+    // session, it just won't be remembered on the next load.
+  }
+  updateNotifyIcon();
+}
+
+// Reads the saved opt-out, discarding one written against an older schema so
+// the reset above can take effect. Every storage access is guarded: this runs
+// early in the load handler, and an uncaught throw here would take the rest of
+// that handler (layout toggle, name button, viewport wiring) down with it.
+function loadNotifyPreference() {
+  let saved = null;
+  try {
+    if (localStorage.getItem(NOTIFY_PREF_VERSION_KEY) === APP_VERSION) {
+      saved = localStorage.getItem(NOTIFY_PREF_KEY);
+    } else {
+      localStorage.removeItem(NOTIFY_PREF_KEY);
+      localStorage.setItem(NOTIFY_PREF_VERSION_KEY, APP_VERSION);
+    }
+  } catch (_) {
+    return; // storage unavailable: keep the default
+  }
+  if (saved === null) return; // never set, or just reset - default stays ON
+  try {
+    notificationsEnabled = JSON.parse(saved) === true;
+  } catch (_) {
+    notificationsEnabled = true;
+  }
   updateNotifyIcon();
 }
 
@@ -3685,6 +3731,11 @@ function handleViewportChange() {
 // ── 15. DATE/TIME ────────────────────────────────────────────────────────────
 
 const dateTimeElement = document.querySelector("#dateTime");
+
+// Static for the life of the page - set once here rather than on the clock's
+// once-a-second tick.
+const appVersionElement = document.querySelector("#appVersion");
+if (appVersionElement) appVersionElement.textContent = "v" + APP_VERSION;
 function updateTimeLabels() {
   const now = new Date();
   dateTimeElement.querySelector(".date").textContent = now.toLocaleDateString(
@@ -4281,11 +4332,7 @@ window.addEventListener("load", () => {
   initializeAppDirectory();
 
   // Tab notifications
-  const savedNotify = localStorage.getItem("notificationsEnabled");
-  if (savedNotify !== null) {
-    notificationsEnabled = JSON.parse(savedNotify);
-    updateNotifyIcon();
-  }
+  loadNotifyPreference();
   notifyToggleButton.addEventListener("click", toggleNotifications);
 
   // Layout toggle (desktop, client-side view preference). Shown only at <=4

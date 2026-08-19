@@ -101,6 +101,10 @@ const CONFIG = {
   VERSIONS: {
     API: "v1",
     SERVER: "5.5.0",
+    // User-facing app version, shown next to the navbar clock. It also stamps
+    // stored client preferences (see loadNotifyPreference in room-client.js),
+    // so bumping it deliberately resets those preferences to their defaults.
+    APP: "0.0.1",
     // Socket message-shape version. Restarts are invisible while this matches
     // the client's baked-in copy; bump it ONLY when a client<->server payload
     // shape changes, which makes still-open clients reload once to pick up the

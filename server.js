@@ -575,7 +575,12 @@ function sendPage(req, res, file) {
       // that it is running old code after an update and reload itself.
       out = out.replace(
         /<head(\s[^>]*)?>/i,
-        (m) => m + `\n    <meta name="tk-build" content="${BUILD_ID}" />`,
+        (m) =>
+          m +
+          `\n    <meta name="tk-build" content="${BUILD_ID}" />` +
+          // One source of truth for the version the client displays and stamps
+          // its stored preferences with - no copy baked into the client bundle.
+          `\n    <meta name="tk-version" content="${CONFIG.VERSIONS.APP}" />`,
       );
       res.type("html").send(out);
     })

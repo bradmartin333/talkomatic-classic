@@ -140,6 +140,25 @@ html {
   align-items: flex-start;
 }
 
+/* The version rides on the clock's line rather than taking a third row: the
+   navbar is only as tall as this block, and mobile already shrinks it twice.
+   It sits LEFT of the clock so it keeps a fixed origin - the time is
+   proportional text that reflows every tick (digit widths differ, and the hour
+   gains a character at 10), which would shove anything to its right around. */
+.date-time .time-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.date-time .app-version {
+  font-size: 10px;
+  opacity: 0.65;
+}
+/* Fixed-width digits so the clock does not wobble within its own box either. */
+.date-time .time {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Queue chip: sits in the navbar's middle span, between the clock and the
    waffle menu. min-width:0 lets it shrink/ellipsis instead of forcing the
    navbar to wrap. */
