@@ -316,7 +316,8 @@ function drawFaviconSquare(hex) {
 }
 
 function updateFavicon() {
-  drawFaviconSquare(document.hidden ? heatToHex(activityHeat) : "#000000");
+  const showHeat = document.hidden && activityHeat > 0;
+  drawFaviconSquare(showHeat ? heatToHex(activityHeat) : "#000000");
 }
 
 function bumpActivity(amount) {
