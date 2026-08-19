@@ -305,14 +305,21 @@ function heatToHex(heat) {
 
 function drawFaviconSquare(hex) {
   if (!faviconLink) return;
-  const canvas = document.createElement("canvas");
-  canvas.width = FAVICON_SIZE;
-  canvas.height = FAVICON_SIZE;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
+
+  if (!drawFaviconSquare._canvas) {
+    const canvas = document.createElement("canvas");
+    canvas.width = FAVICON_SIZE;
+    canvas.height = FAVICON_SIZE;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    drawFaviconSquare._canvas = canvas;
+    drawFaviconSquare._ctx = ctx;
+  }
+
+  const ctx = drawFaviconSquare._ctx;
   ctx.fillStyle = hex;
   ctx.fillRect(0, 0, FAVICON_SIZE, FAVICON_SIZE);
-  faviconLink.href = canvas.toDataURL("image/png");
+  faviconLink.href = drawFaviconSquare._canvas.toDataURL("image/png");
 }
 
 function updateFavicon() {
