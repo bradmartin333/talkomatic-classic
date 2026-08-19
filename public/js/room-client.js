@@ -3334,8 +3334,8 @@ function injectStyles() {
     .link-warning-visit { background:#ff9800; color:#000; border:none; padding:10px 18px; border-radius:6px; cursor:pointer; font-weight:bold; }
     .link-warning-visit:hover { background:#ffb74d; }
     /* Markdown-lite: code (colors match desk.js .dk-code-in/.dk-code-bl) */
-    .chat-code-inline { font-family:"Courier New",monospace; font-size:14px; background:var(--tk-card,#000); border:1px solid var(--tk-border,#333); border-radius:3px; padding:0 4px; color:var(--tk-accent,#ffb454); word-break:break-word; }
-    .chat-code-block { display:block; font-family:"Courier New",monospace; font-size:14px; background:var(--tk-card,#000); border:1px solid var(--tk-border,#333); border-radius:5px; padding:8px 10px; margin:4px 0; color:var(--tk-text,#ededed); white-space:pre-wrap; word-break:break-word; max-height:180px; overflow:auto; }
+    .chat-code-inline { font-family:"Courier New",monospace; font-size:14px; background:var(--tk-row-chat-bg,var(--tk-chat-bg,#000)); border:1px solid var(--tk-row-border,var(--tk-border,#333)); border-radius:3px; padding:0 4px; color:var(--tk-row-chat-text,var(--tk-chat-text,#ffb454)); word-break:break-word; }
+    .chat-code-block { display:block; font-family:"Courier New",monospace; font-size:14px; background:var(--tk-row-chat-bg,var(--tk-chat-bg,#000)); border:1px solid var(--tk-row-border,var(--tk-border,#333)); border-radius:5px; padding:8px 10px; margin:4px 0; color:var(--tk-row-chat-text,var(--tk-chat-text,#ededed)); white-space:pre-wrap; word-break:break-word; max-height:180px; overflow:auto; }
     /* Image-link thumbnails */
     .chat-img-thumb { display:block; max-width:100%; max-height:96px; width:auto; height:auto; object-fit:contain; border-radius:4px; border:1px solid #616161; margin-top:4px; }
 
