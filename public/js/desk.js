@@ -4935,9 +4935,9 @@
 .dk-b{font-weight:bold;color: #fff;}
 .dk-i{font-style:italic;}
 .dk-s{text-decoration:line-through;color: #8d8d8d;}
-.dk-code-in{font-family:"Courier New",monospace;font-size:12px;background: var(--tk-card,#000);border:1px solid var(--tk-border,#333);
+.dk-code-in{font-family:"Courier New",monospace;font-size:12px;background: #000;border:1px solid var(--tk-border,#333);
   border-radius:3px;padding:0 4px;color: var(--tk-accent,#ffb454);word-break:break-word;}
-.dk-code-bl{font-family:"Courier New",monospace;font-size:12px;background: var(--tk-card,#000);border:1px solid var(--tk-border,#333);
+.dk-code-bl{font-family:"Courier New",monospace;font-size:12px;background: #000;border:1px solid var(--tk-border,#333);
   border-radius:5px;padding:8px 10px;margin:0;color: var(--tk-text,#ededed);white-space:pre-wrap;word-break:break-word;
   max-height:260px;overflow:auto;}
 .dk-ul{margin:0;padding-left:18px;display:block;}
