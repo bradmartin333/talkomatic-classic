@@ -370,7 +370,13 @@ function getPlainText(element) {
         t += "\n";
       } else if (node.nodeName === "DIV") {
         if (node.previousSibling) t += "\n";
-        for (const child of node.childNodes) t += extract(child);
+        // An empty line is represented as <div><br></div>; the "\n" above
+        // already accounts for it, so don't also count the placeholder <br>.
+        const isEmptyLinePlaceholder =
+          node.childNodes.length === 1 && node.firstChild.nodeName === "BR";
+        if (!isEmptyLinePlaceholder) {
+          for (const child of node.childNodes) t += extract(child);
+        }
       } else {
         for (const child of node.childNodes) t += extract(child);
       }
