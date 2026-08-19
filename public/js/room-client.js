@@ -280,8 +280,34 @@ let notificationsEnabled = true;
 
 const faviconLink = document.querySelector('link[rel="icon"]');
 const FAVICON_SIZE = 32;
-const ACTIVITY_STEP = 0.03; // per keystroke - chat here is live-typed, no "send"
+const ACTIVITY_STEP = 0.15; // per completed message
 let activityHeat = 0; // 0 (cold/blue) .. 1 (hot/red); only rises while the tab is hidden
+
+// Chat here is live-typed with no explicit "send", so a message only counts
+// as "completed" once its sender pauses - each diff restarts this timer per
+// user, and the bump fires when a batch of diffs stops arriving.
+const MESSAGE_COMPLETE_DEBOUNCE_MS = 1500;
+const pendingMessageTimers = new Map(); // userId -> timeout id
+
+function noteMessageActivity(userId) {
+  const existing = pendingMessageTimers.get(userId);
+  if (existing) clearTimeout(existing);
+  pendingMessageTimers.set(
+    userId,
+    setTimeout(() => {
+      pendingMessageTimers.delete(userId);
+      bumpActivity(ACTIVITY_STEP);
+    }, MESSAGE_COMPLETE_DEBOUNCE_MS),
+  );
+}
+
+function cancelMessageActivity(userId) {
+  const existing = pendingMessageTimers.get(userId);
+  if (existing) {
+    clearTimeout(existing);
+    pendingMessageTimers.delete(userId);
+  }
+}
 
 function hsvToHex(h, s, v) {
   h = ((h % 360) + 360) % 360;
@@ -2095,7 +2121,7 @@ function displayChatMessage(data) {
       renderOtherUserMessage(chatDiv, newText);
     }
   } else {
-    bumpActivity(ACTIVITY_STEP);
+    noteMessageActivity(data.userId);
     renderOtherUserMessage(chatDiv, newText);
   }
 }
@@ -3855,11 +3881,11 @@ socket.on("user joined", (data) => {
 
 socket.on("user left", (userId) => {
   if (userId !== currentUserId) {
+    cancelMessageActivity(userId);
     const row = document.querySelector(`.chat-row[data-user-id="${userId}"]`);
     if (row) {
       row.remove();
       adjustLayout();
-      bumpActivity(0.15);
 
       // Dropping below the voting minimum must clean up vote UI immediately
       adjustVoteButtonVisibility();
