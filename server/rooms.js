@@ -397,7 +397,7 @@ async function pressureCleanup() {
           continue;
         toDelete.push(roomId);
       }
-    } else if (!room.users || room.users.length === 0) {
+    } else if (!room.users || room.users.length === 0 || room.users.every((u) => u.departed)) {
       if (now - room.lastActiveTime > CONFIG.TIMING.ROOM_DELETION_TIMEOUT) {
         toDelete.push(roomId);
       }
@@ -412,15 +412,27 @@ async function pressureCleanup() {
 
     if (room.users && room.users.length === 1) {
       const soloUser = room.users[0];
-      const soloSocket = findSocketByUserId(soloUser.id, roomId);
-      if (soloSocket) {
-        soloSocket.emit("room closed", {
-          message:
-            "Your room was closed due to extended single-occupancy. " +
-            "You can create a new room anytime.",
-          redirectTo: "/",
-        });
-        await leaveRoom(soloSocket, soloUser.id);
+      if (soloUser.departed) {
+        state.userMessageBuffers.delete(soloUser.id);
+        clearUserActivity(soloUser.id);
+        state.devUsers.delete(soloUser.id);
+      } else {
+        const soloSocket = findSocketByUserId(soloUser.id, roomId);
+        if (soloSocket) {
+          soloSocket.emit("room closed", {
+            message:
+              "Your room was closed due to extended single-occupancy. " +
+              "You can create a new room anytime.",
+            redirectTo: "/",
+          });
+          await leaveRoom(soloSocket, soloUser.id);
+        }
+      }
+    } else if (room.users && room.users.length > 1 && room.users.every((u) => u.departed)) {
+      for (const ghost of room.users) {
+        state.userMessageBuffers.delete(ghost.id);
+        clearUserActivity(ghost.id);
+        state.devUsers.delete(ghost.id);
       }
     }
 
@@ -1190,7 +1202,14 @@ function startRoomDeletionTimer(roomId) {
   }
   const timer = setTimeout(async () => {
     const room = state.rooms.get(roomId);
-    if (room && room.users.length === 0) {
+    if (room && room.users.every((u) => u.departed)) {
+      // Evict any lingering ghosts before deleting
+      for (const ghost of room.users) {
+        state.userMessageBuffers.delete(ghost.id);
+        clearUserActivity(ghost.id);
+        state.devUsers.delete(ghost.id);
+      }
+      room.users = [];
       state.rooms.delete(roomId);
       state.roomDeletionTimers.delete(roomId);
       state.roomSoloSince.delete(roomId);
@@ -1641,6 +1660,9 @@ async function leaveRoom(socket, userId) {
         updateRoom(roomId);
         sendDevRoomContext(roomId);
         updateRoomSoloTracking(roomId);
+        // If every remaining occupant is now a ghost, the room is effectively
+        // empty - schedule it for deletion just as we would a truly empty room.
+        if (room.users.every((u) => u.departed)) startRoomDeletionTimer(roomId);
       } else {
         room.users = room.users.filter((u) => u.id !== userId);
 
@@ -3588,12 +3610,20 @@ function startCleanupIntervals() {
     for (const [id, room] of state.rooms) {
       if (
         id !== MAIN_ROOM_ID &&
-        (!room.users || room.users.length === 0) &&
+        (!room.users || room.users.length === 0 || room.users.every((u) => u.departed)) &&
         now - room.lastActiveTime > CONFIG.TIMING.ROOM_DELETION_TIMEOUT
       )
         toDelete.push(id);
     }
     for (const id of toDelete) {
+      const room = state.rooms.get(id);
+      if (room?.users) {
+        for (const ghost of room.users.filter((u) => u.departed)) {
+          state.userMessageBuffers.delete(ghost.id);
+          clearUserActivity(ghost.id);
+          state.devUsers.delete(ghost.id);
+        }
+      }
       state.rooms.delete(id);
       state.roomSoloSince.delete(id);
       state.roomLastChatActivity.delete(id);
