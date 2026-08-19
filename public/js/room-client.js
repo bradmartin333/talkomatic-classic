@@ -280,7 +280,7 @@ let notificationsEnabled = true;
 
 const faviconLink = document.querySelector('link[rel="icon"]');
 const FAVICON_SIZE = 32;
-const ACTIVITY_STEP = 0.15; // per completed message
+const ACTIVITY_STEP = 0.05; // per completed message
 let activityHeat = 0; // 0 (cold/blue) .. 1 (hot/red); only rises while the tab is hidden
 
 // Chat here is live-typed with no explicit "send", so a message only counts
