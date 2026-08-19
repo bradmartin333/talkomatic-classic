@@ -6,9 +6,14 @@
  * calls only answer loopback connections (see operatorOnly in server.js), so
  * shell access to the container is the credential and there is no key to pass.
  *
- *   docker compose exec talkomatic node tools/admin.js list
- *   docker compose exec talkomatic node tools/admin.js kick <userId>
- *   docker compose exec talkomatic node tools/admin.js kick <userId> --room <roomId>
+ *   docker compose exec talkomatic npm run admin list
+ *   docker compose exec talkomatic npm run admin kick <userId>
+ *   docker compose exec talkomatic npm run admin -- kick <userId> --room <roomId>
+ *
+ * Note the -- before any flag: npm consumes flags like --room itself and
+ * forwards only their value, which parseKickArgs below rejects rather than
+ * misreading as an unscoped kick. `node tools/admin.js <args>` needs no
+ * separator, and is what the npm script runs.
  *
  * Seats are addressed by id, never by name: a ghost and its owner's fresh
  * session show the same username but different ids, and telling those two
@@ -46,7 +51,7 @@ function request(method, path, body) {
             return reject(
               new Error(
                 "Endpoint refused the connection as non-local. Run this inside\n" +
-                  "the container: docker compose exec talkomatic node tools/admin.js ...",
+                  "the container: docker compose exec talkomatic npm run admin ...",
               ),
             );
           }
@@ -118,7 +123,7 @@ async function list() {
   }
   console.log(
     `\n${seats} seat(s), ${ghosts} ghost(s). ` +
-      `Kick one with: node tools/admin.js kick <id>`,
+      `Kick one with: npm run admin kick <id>`,
   );
 }
 
@@ -126,7 +131,7 @@ async function kick(userId, roomId) {
   const result = await request("POST", "/operator/kick", { userId, roomId });
   if (!result.seats.length && !result.disconnected) {
     console.log(`No seat or socket found for ${userId}. Nothing to do.`);
-    console.log("Run `list` to see current ids.");
+    console.log("Run `npm run admin list` to see current ids.");
     return;
   }
   for (const seat of result.seats) {
@@ -144,8 +149,12 @@ function usage() {
   console.log(
     [
       "Usage (run inside the container):",
-      "  node tools/admin.js list",
-      "  node tools/admin.js kick <userId> [--room <roomId>]",
+      "  npm run admin list",
+      "  npm run admin kick <userId>",
+      "  npm run admin -- kick <userId> --room <roomId>",
+      "",
+      "  The -- is required whenever you pass a flag: without it npm keeps",
+      "  the flag for itself and the tool never sees it.",
       "",
       "  list   show every occupied seat with its user id, marking ghosts",
       "  kick   free a seat by id; ghosts are evicted, live users disconnected",
@@ -153,18 +162,54 @@ function usage() {
   );
 }
 
+// Strict on purpose. `npm run admin kick <id> --room <rid>` does NOT reach us
+// intact: npm consumes --room as one of its own options and forwards only its
+// value, as a bare positional. Parsed loosely, that silently becomes an
+// unscoped kick - the flag meant to NARROW the blast radius quietly widens it
+// to every room. So an unexpected positional is an error, not something to
+// shrug off, and the message points at the -- separator that fixes it.
+function parseKickArgs(rest) {
+  const positional = [];
+  let roomId = null;
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    if (arg === "--room") {
+      roomId = rest[++i] || null;
+      if (!roomId) return { error: "--room needs a room id." };
+      continue;
+    }
+    if (arg.startsWith("--room=")) {
+      roomId = arg.slice("--room=".length) || null;
+      if (!roomId) return { error: "--room needs a room id." };
+      continue;
+    }
+    if (arg.startsWith("--")) return { error: `Unknown option ${arg}.` };
+    positional.push(arg);
+  }
+  if (positional.length === 0) return { error: "kick needs a user id." };
+  if (positional.length > 1) {
+    return {
+      error:
+        `Expected one user id, got ${positional.length}: ${positional.join(", ")}\n` +
+        "If you ran this through npm, put -- before the arguments so npm\n" +
+        "forwards flags instead of swallowing them:\n" +
+        "  npm run admin -- kick <userId> --room <roomId>",
+    };
+  }
+  return { userId: positional[0], roomId };
+}
+
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === "list") return list();
   if (cmd === "kick") {
-    const userId = rest.find((a) => !a.startsWith("--"));
-    if (!userId) {
+    const { userId, roomId, error } = parseKickArgs(rest);
+    if (error) {
+      console.error(error + "\n");
       usage();
       process.exitCode = 1;
       return;
     }
-    const roomFlag = rest.indexOf("--room");
-    const roomId = roomFlag !== -1 ? rest[roomFlag + 1] : null;
     return kick(userId, roomId);
   }
   usage();

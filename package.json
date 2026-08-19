@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "simulate": "node tools/simulate-users.js"
+    "simulate": "node tools/simulate-users.js",
+    "admin": "node tools/admin.js"
   },
   "engines": {
     "node": ">=18"
