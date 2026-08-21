@@ -3080,7 +3080,8 @@ function createUserRow(user, container) {
   if (user.departed) {
     const leftLabel = document.createElement("span");
     leftLabel.className = "departed-label";
-    leftLabel.textContent = "left";
+    leftLabel.dataset.departedAt = user.departedAt || Date.now();
+    leftLabel.textContent = formatAwayLabel(leftLabel.dataset.departedAt);
     info.appendChild(leftLabel);
   }
 
@@ -3801,6 +3802,23 @@ function updateTimeLabels() {
   if (uptimeEl) {
     uptimeEl.textContent = currentRoomCreatedAt > 0 ? msToTime(Date.now() - currentRoomCreatedAt) : "";
   }
+
+  document.querySelectorAll(".departed-label").forEach((el) => {
+    const departedAt = Number(el.dataset.departedAt);
+    if (departedAt) el.textContent = formatAwayLabel(departedAt);
+  });
+}
+
+// Ghost rows show how long a user has been away instead of a static "left"
+// label - starts at 1 hour (no minute-level granularity) and switches to
+// whole days once the wait passes 24 hours.
+function formatAwayLabel(departedAt) {
+  const hours = Math.max(1, Math.floor((Date.now() - departedAt) / (1000 * 60 * 60)));
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    return `away ${days} day${days === 1 ? "" : "s"}`;
+  }
+  return `away ${hours} hour${hours === 1 ? "" : "s"}`;
 }
 
 function msToTime(duration) {
@@ -4061,7 +4079,8 @@ socket.on("room update", (roomData) => {
         if (isDeparted && info && !existingLabel) {
           const leftLabel = document.createElement("span");
           leftLabel.className = "departed-label";
-          leftLabel.textContent = "left";
+          leftLabel.dataset.departedAt = u.departedAt || Date.now();
+          leftLabel.textContent = formatAwayLabel(leftLabel.dataset.departedAt);
           info.appendChild(leftLabel);
         } else if (!isDeparted && existingLabel) {
           existingLabel.remove();
