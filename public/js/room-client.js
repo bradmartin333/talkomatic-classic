@@ -282,7 +282,7 @@ let notificationsEnabled = true;
 
 const faviconLink = document.querySelector('link[rel="icon"]');
 const FAVICON_SIZE = 32;
-const ACTIVITY_STEP = 0.05; // per completed message, so 20 of them reach max heat
+const ACTIVITY_STEP = 0.025; // per completed message, so 40 of them reach max heat
 let activityHeat = 0; // 0 (asleep) .. 1 (max mood emoji); only rises while the tab is hidden
 
 // Served by sendPage from CONFIG.VERSIONS.APP, so the version shown in the
