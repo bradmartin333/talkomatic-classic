@@ -144,36 +144,28 @@ const helmetMiddleware = helmet({
       scriptSrc: [
         "'self'",
         (req, res) => `'nonce-${res.locals.nonce}'`,
-        "https://cdnjs.cloudflare.com",
         "https://classic.talkomatic.co",
-        "https://unpkg.com",
         "https://static.cloudflareinsights.com",
       ],
       scriptSrcElem: [
         "'self'",
         (req, res) => `'nonce-${res.locals.nonce}'`,
-        "https://cdnjs.cloudflare.com",
         "https://classic.talkomatic.co",
-        "https://unpkg.com",
         "https://static.cloudflareinsights.com",
       ],
-      styleSrc: [
-        "'self'",
-        "'unsafe-inline'",
-        "https://cdnjs.cloudflare.com",
-        "https://fonts.googleapis.com",
-      ],
+      // fonts.googleapis.com stays allowed: theme-engine.js loads whatever
+      // Google Font family a community theme picks, at runtime - that can't
+      // be vendored ahead of time like the fixed libraries below.
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       styleSrcElem: [
         "'self'",
         "'unsafe-inline'",
-        "https://cdnjs.cloudflare.com",
         "https://fonts.googleapis.com",
       ],
       imgSrc: ["'self'", "data:", "https:", "blob:"],
       fontSrc: [
         "'self'",
         "https://fonts.gstatic.com",
-        "https://cdnjs.cloudflare.com",
         "https://classic.talkomatic.co",
       ],
       connectSrc: [
