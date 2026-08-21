@@ -329,9 +329,9 @@ function cancelMessageActivity(userId) {
 }
 
 // Ascending heat tiers, each a small pool of thematically-related emoji.
-// pickTierEmoji rolls a random one from whichever pool activityHeat falls
-// into, so the favicon stays varied instead of showing one fixed glyph per
-// level - the point is for this to read as a fun touch, not a literal gauge.
+// pickTierEmoji rolls one random emoji per tier and holds onto it - so the
+// favicon stays varied across separate away periods without flickering
+// between glyphs on every redraw while heat sits inside the same tier.
 const EMOJI_TIERS = [
   { max: 0, emojis: ["😴", "💤", "🌙", "🛌"] },
   { max: 0.25, emojis: ["👀", "🙂", "☕", "🌤️"] },
@@ -340,11 +340,18 @@ const EMOJI_TIERS = [
   { max: 1, emojis: ["🔥", "🚨", "💥", "🎆"] },
 ];
 
+let currentTierIndex = -1;
+let currentTierEmoji = null;
+
 function pickTierEmoji(heat) {
-  const tier =
-    EMOJI_TIERS.find((t) => heat <= t.max) ||
-    EMOJI_TIERS[EMOJI_TIERS.length - 1];
-  return tier.emojis[Math.floor(Math.random() * tier.emojis.length)];
+  const tierIndex = EMOJI_TIERS.findIndex((t) => heat <= t.max);
+  const resolvedIndex = tierIndex === -1 ? EMOJI_TIERS.length - 1 : tierIndex;
+  if (resolvedIndex !== currentTierIndex) {
+    const tier = EMOJI_TIERS[resolvedIndex];
+    currentTierIndex = resolvedIndex;
+    currentTierEmoji = tier.emojis[Math.floor(Math.random() * tier.emojis.length)];
+  }
+  return currentTierEmoji;
 }
 
 function getFaviconCanvas() {
@@ -398,6 +405,7 @@ function bumpActivity(amount) {
 
 function resetActivity() {
   activityHeat = 0;
+  currentTierIndex = -1;
   updateFavicon();
 }
 
