@@ -269,10 +269,12 @@ modalInput.addEventListener("keydown", (e) => {
 });
 
 // ── 4. TAB NOTIFICATIONS ────────────────────────────────────────────────────
-// The favicon is always a solid square instead of the site logo, so its
-// color alone communicates state: black while you're looking at the tab,
-// sliding blue -> purple -> red as activity piles up while you're away.
-// notificationsEnabled is the user's opt-in for the color accumulating at all.
+// The favicon is always a solid black square while you're looking at the
+// tab. The moment it's hidden, it switches to a mood emoji reflecting
+// activityHeat - 😴 at rest, escalating through busier/louder emoji as
+// activity piles up while you're away. Each tier has a small pool of emoji
+// so the same heat level doesn't always draw the identical glyph.
+// notificationsEnabled is the user's opt-in for the heat accumulating at all.
 
 const notifyToggleButton = document.getElementById("notifyToggle");
 const notifyIcon = document.getElementById("notifyIcon");
@@ -280,8 +282,8 @@ let notificationsEnabled = true;
 
 const faviconLink = document.querySelector('link[rel="icon"]');
 const FAVICON_SIZE = 32;
-const ACTIVITY_STEP = 0.05; // per completed message, so 20 of them reach full red
-let activityHeat = 0; // 0 (cold/blue) .. 1 (hot/red); only rises while the tab is hidden
+const ACTIVITY_STEP = 0.05; // per completed message, so 20 of them reach max heat
+let activityHeat = 0; // 0 (asleep) .. 1 (max mood emoji); only rises while the tab is hidden
 
 // Served by sendPage from CONFIG.VERSIONS.APP, so the version shown in the
 // navbar and the version stamped onto stored preferences are the same string
@@ -326,48 +328,66 @@ function cancelMessageActivity(userId) {
   }
 }
 
-function hsvToHex(h, s, v) {
-  h = ((h % 360) + 360) % 360;
-  const c = v * s;
-  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-  const m = v - c;
-  let rgb;
-  if (h < 60) rgb = [c, x, 0];
-  else if (h < 120) rgb = [x, c, 0];
-  else if (h < 180) rgb = [0, c, x];
-  else if (h < 240) rgb = [0, x, c];
-  else if (h < 300) rgb = [x, 0, c];
-  else rgb = [c, 0, x];
-  return rgbToHex(rgb.map((n) => (n + m) * 255));
+// Ascending heat tiers, each a small pool of thematically-related emoji.
+// pickTierEmoji rolls a random one from whichever pool activityHeat falls
+// into, so the favicon stays varied instead of showing one fixed glyph per
+// level - the point is for this to read as a fun touch, not a literal gauge.
+const EMOJI_TIERS = [
+  { max: 0, emojis: ["😴", "💤", "🌙", "🛌"] },
+  { max: 0.25, emojis: ["👀", "🙂", "☕", "🌤️"] },
+  { max: 0.5, emojis: ["😮", "💬", "📈", "🐝"] },
+  { max: 0.75, emojis: ["😲", "🌶️", "⚡", "🎉"] },
+  { max: 1, emojis: ["🔥", "🚨", "💥", "🎆"] },
+];
+
+function pickTierEmoji(heat) {
+  const tier =
+    EMOJI_TIERS.find((t) => heat <= t.max) ||
+    EMOJI_TIERS[EMOJI_TIERS.length - 1];
+  return tier.emojis[Math.floor(Math.random() * tier.emojis.length)];
 }
 
-function heatToHex(heat) {
-  const hue = 240 + Math.max(0, Math.min(1, heat)) * 120; // blue -> purple -> red
-  return hsvToHex(hue, 0.75, 1);
-}
-
-function drawFaviconSquare(hex) {
-  if (!faviconLink) return;
-
-  if (!drawFaviconSquare._canvas) {
+function getFaviconCanvas() {
+  if (!getFaviconCanvas._canvas) {
     const canvas = document.createElement("canvas");
     canvas.width = FAVICON_SIZE;
     canvas.height = FAVICON_SIZE;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    drawFaviconSquare._canvas = canvas;
-    drawFaviconSquare._ctx = ctx;
+    if (!ctx) return null;
+    getFaviconCanvas._canvas = canvas;
+    getFaviconCanvas._ctx = ctx;
   }
+  return { canvas: getFaviconCanvas._canvas, ctx: getFaviconCanvas._ctx };
+}
 
-  const ctx = drawFaviconSquare._ctx;
+function drawFaviconColor(hex) {
+  if (!faviconLink) return;
+  const cached = getFaviconCanvas();
+  if (!cached) return;
+  const { canvas, ctx } = cached;
+  ctx.clearRect(0, 0, FAVICON_SIZE, FAVICON_SIZE);
   ctx.fillStyle = hex;
   ctx.fillRect(0, 0, FAVICON_SIZE, FAVICON_SIZE);
-  faviconLink.href = drawFaviconSquare._canvas.toDataURL("image/png");
+  faviconLink.href = canvas.toDataURL("image/png");
+}
+
+function drawFaviconEmoji(emoji) {
+  if (!faviconLink) return;
+  const cached = getFaviconCanvas();
+  if (!cached) return;
+  const { canvas, ctx } = cached;
+  ctx.clearRect(0, 0, FAVICON_SIZE, FAVICON_SIZE);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font =
+    '26px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  ctx.fillText(emoji, FAVICON_SIZE / 2, FAVICON_SIZE / 2 + 2);
+  faviconLink.href = canvas.toDataURL("image/png");
 }
 
 function updateFavicon() {
-  const showHeat = document.hidden && activityHeat > 0;
-  drawFaviconSquare(showHeat ? heatToHex(activityHeat) : "#000000");
+  if (document.hidden) drawFaviconEmoji(pickTierEmoji(activityHeat));
+  else drawFaviconColor("#000000");
 }
 
 function bumpActivity(amount) {
