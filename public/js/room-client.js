@@ -4157,6 +4157,10 @@ socket.on("room closed", (data) => {
 
 socket.on("error", (error) => {
   console.log(error);
+  if (error?.error?.code === "USERNAME_TAKEN") {
+    repromptForName(error.error.message);
+    return;
+  }
   showErrorModal(
     (error.error.replaceDefaultText ? "" : "An error occurred: ") +
     error.error.message,
@@ -4205,11 +4209,18 @@ const nameEntryInput = document.getElementById("nameEntryInput");
 const nameEntryError = document.getElementById("nameEntryError");
 const nameEntryConfirmBtn = document.getElementById("nameEntryConfirmBtn");
 
-function askForName(existingName) {
+function askForName(existingName, errorMessage) {
   return new Promise((resolve) => {
     nameEntryInput.value = existingName || "";
-    nameEntryError.style.display = "none";
-    nameEntryError.textContent = "";
+    // A reason carries over from a server refusal (a taken name), so the modal
+    // reopens already explaining itself instead of looking like a fresh ask.
+    if (errorMessage) {
+      nameEntryError.textContent = errorMessage;
+      nameEntryError.style.display = "block";
+    } else {
+      nameEntryError.style.display = "none";
+      nameEntryError.textContent = "";
+    }
     nameEntryModal.classList.add("show");
     document.body.style.overflow = "hidden";
     nameEntryInput.focus();
@@ -4233,6 +4244,18 @@ function askForName(existingName) {
     nameEntryConfirmBtn.addEventListener("click", submit);
     nameEntryInput.addEventListener("keydown", onKeydown);
   });
+}
+
+// The server refused the name we announced - it is already taken in the room.
+// Ask again with the reason inline, then reload so the join sequence runs fresh
+// with the new name, the same path "Change name" below uses. Without this a
+// refusal left an OK modal on a page with no way forward (CHAT-35).
+async function repromptForName(reason) {
+  const current =
+    currentUsername || localStorage.getItem("talkomaticUsername") || "";
+  const typed = await askForName(current, reason);
+  localStorage.setItem("talkomaticUsername", typed);
+  window.location.reload();
 }
 
 // "Change name" button: reopens the same overlay pre-filled, then reloads so
