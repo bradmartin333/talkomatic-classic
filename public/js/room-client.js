@@ -333,11 +333,11 @@ function cancelMessageActivity(userId) {
 // favicon stays varied across separate away periods without flickering
 // between glyphs on every redraw while heat sits inside the same tier.
 const EMOJI_TIERS = [
-  { max: 0, emojis: ["😴", "💤", "🌙", "🛌"] },
-  { max: 0.25, emojis: ["👀", "🙂", "☕", "🌤️"] },
-  { max: 0.5, emojis: ["😮", "💬", "📈", "🐝"] },
-  { max: 0.75, emojis: ["😲", "🌶️", "⚡", "🎉"] },
-  { max: 1, emojis: ["🔥", "🚨", "💥", "🎆"] },
+  { max: 0, emojis: ["😴", "💤", "🌙"] },
+  { max: 0.25, emojis: ["👀", "🙂", "✌️"] },
+  { max: 0.5, emojis: ["💬", "📈", "🐝"] },
+  { max: 0.75, emojis: ["🌶️", "⚡", "🎉"] },
+  { max: 1, emojis: ["🔥", "🚨", "💥"] },
 ];
 
 let currentTierIndex = -1;
