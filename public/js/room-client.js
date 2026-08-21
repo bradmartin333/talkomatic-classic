@@ -3810,10 +3810,11 @@ function updateTimeLabels() {
 }
 
 // Ghost rows show how long a user has been away instead of a static "left"
-// label - starts at 1 hour (no minute-level granularity) and switches to
+// label - bare "away" for the first hour, then hour counts, switching to
 // whole days once the wait passes 24 hours.
 function formatAwayLabel(departedAt) {
-  const hours = Math.max(1, Math.floor((Date.now() - departedAt) / (1000 * 60 * 60)));
+  const hours = Math.floor((Date.now() - departedAt) / (1000 * 60 * 60));
+  if (hours <= 0) return "away";
   if (hours >= 24) {
     const days = Math.floor(hours / 24);
     return `away ${days} day${days === 1 ? "" : "s"}`;
