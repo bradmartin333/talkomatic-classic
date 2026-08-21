@@ -343,10 +343,10 @@ function cancelMessageActivity(userId) {
 // tier and holds onto it so the favicon stays varied across separate away
 // periods without flickering between glyphs while the count sits in one tier.
 const EMOJI_TIERS = [
-  { minCount: 1, emojis: ["👀", "🙂", "☕", "🌤️"] },
-  { minCount: 5, emojis: ["😮", "💬", "📈", "🐝"] },
-  { minCount: 22, emojis: ["😲", "🌶️", "⚡", "🎉"] },
-  { minCount: ACTIVITY_MAX_COUNT, emojis: ["🔥", "🚨", "💥", "🎆"] },
+  { minCount: 1, emojis: ["👀", "🙂", "✌️"] },
+  { minCount: 5, emojis: ["💬", "📈", "🐝"] },
+  { minCount: 22, emojis: ["🌶️", "⚡", "🎉"] },
+  { minCount: ACTIVITY_MAX_COUNT, emojis: ["🔥", "🚨", "💥"] },
 ];
 
 let currentTierIndex = -1;
