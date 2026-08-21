@@ -317,8 +317,9 @@ html {
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 12px;
+  font-weight: 600;
   background: var(--tk-border);
-  color: var(--tk-muted);
+  color: var(--tk-text);
 }
 
 /* Styling for the user information above chat messages */

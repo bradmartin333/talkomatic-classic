@@ -620,7 +620,10 @@ function formatUserForSocket(user, recipientSocket) {
   if (user.isBot) formatted.isBot = true;
   // Ghost panel: they left while the queue was empty, so their last text
   // stays up (see leaveRoom's ghost branch) rendered read-only and dimmed.
-  if (user.departed) formatted.departed = true;
+  if (user.departed) {
+    formatted.departed = true;
+    formatted.departedAt = user.departedAt || null;
+  }
   // Discord avatar: validated snowflake id + CDN hash only; clients rebuild
   // the cdn.discordapp.com URL themselves.
   if (user.avatar) formatted.avatar = user.avatar;
