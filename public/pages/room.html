@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#000000" />
-    <title>Chat Room - Talkomatic</title>
+    <title>chatroom</title>
     <link
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
@@ -263,8 +263,24 @@
         <div class="navbar-section navbar-left">
           <div id="dateTime" class="date-time">
             <span class="date"></span>
-            <span class="time"></span>
+            <span class="time-row">
+              <span class="app-version" id="appVersion"></span>
+              <span class="time"></span>
+            </span>
           </div>
+        </div>
+        <div class="navbar-section navbar-center">
+          <button
+            id="queueChip"
+            class="queue-chip"
+            type="button"
+            aria-expanded="false"
+            hidden
+          >
+            <i class="fas fa-hourglass-half"></i>
+            <span class="queue-chip-count"></span>
+            <span class="queue-chip-names"></span>
+          </button>
         </div>
         <div class="navbar-section navbar-right">
           <button id="notifyToggle" class="mute-toggle" aria-label="Notifications On">

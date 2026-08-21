@@ -79,7 +79,9 @@ Joining a room:
   Emit: 'join room' with { roomId: string, accessCode?: string }
   Listen: 'room joined' → { roomId, userId, username, location, roomName, roomType, users, layout, votes, currentMessages }
   currentMessages is { [userId]: "their current text buffer" } — use this to seed your message tracking.
-  Error events: 'room not found', 'room full', 'access code required', 'error'
+  If the room is full you get 'room queued' instead (same shape, plus `position`) — you're watching
+  read-only, not rejected. A normal 'room joined' follows once a seat frees ('queue promoted' fires first).
+  Error events: 'room not found', 'access code required', 'error'
 
 Leaving a room:
   Emit: 'leave room' (no payload)
@@ -131,22 +133,18 @@ Listen for these while inside a room:
   'update votes' → { [voterId]: targetUserId }                      — vote counts changed
   'kicked'      → (no payload)                                      — bot was voted out
 
-=== AFK SYSTEM (CRITICAL) ===
+=== IDLE AND ROOM CAPACITY ===
 
-The server kicks inactive users:
-  - Warning at 2.5 minutes of inactivity.
-  - Kick at 3 minutes of inactivity.
-  - The timer ONLY resets when: (a) the bot sends a 'chat update' event, OR (b) the bot emits 'afk response'.
+Bots are NEVER kicked for being idle, and NEVER yield their seat to the queue
+(same exemption bots already get from solo-room closure). A bot may sit silent
+in a room forever without being displaced. No heartbeat needed, and you will
+never receive 'room capacity evicted' - that event is for human occupants only.
 
-EVERY bot MUST handle AFK. Two options:
-
-Option A (recommended for idle bots):
-  socket.on('afk warning', () => socket.emit('afk response'));
-
-Option B (for active bots):
-  Send a 'chat update' at least once every 2 minutes. Any chat update resets the timer.
-
-Always listen for 'afk timeout' → { message, redirectTo } which means the bot was kicked.
+Rooms hold 10 users. When full, a joining bot gets 'room queued' instead of
+'room joined' (same payload, plus `position`) and watches read-only until a
+human occupant leaves or yields. Because your bot never yields once seated, a
+room your bot occupies has one less seat available to humans, indefinitely -
+leave the room when you're done rather than idling in it forever.
 
 === ERROR HANDLING ===
 
@@ -156,7 +154,7 @@ Listen for:
   'connect_error'    → Error object (connection failed)
   'disconnect'       → reason string
 
-Common error codes: VALIDATION_ERROR, UNAUTHORIZED, NOT_FOUND, RATE_LIMITED, ROOM_FULL, FORBIDDEN, ROOM_NAME_EXISTS, ROOM_LIMIT_REACHED, BAD_REQUEST
+Common error codes: VALIDATION_ERROR, UNAUTHORIZED, NOT_FOUND, RATE_LIMITED, FORBIDDEN, ROOM_NAME_EXISTS, ROOM_LIMIT_REACHED, BAD_REQUEST
 
 === RATE LIMITS ===
 
@@ -180,8 +178,8 @@ Common error codes: VALIDATION_ERROR, UNAUTHORIZED, NOT_FOUND, RATE_LIMITED, ROO
 
 1. The bot token MUST be read from an environment variable (BOT_TOKEN), never hardcoded.
 2. Always pass the token in `auth: { token }` when creating the Socket.IO connection.
-3. Always handle 'afk warning' by emitting 'afk response'.
-4. Always handle 'error', 'connect_error', 'kicked', and 'afk timeout'.
+3. No heartbeat needed - bots are exempt from idle-eviction, so no 'afk response' loop is required.
+4. Always handle 'error', 'connect_error', and 'kicked'.
 5. Always listen for 'signin status' to confirm successful sign-in before doing anything.
 6. Always clean up on SIGINT/SIGTERM (leave room, disconnect).
 7. Track other users' messages using a Map and apply diffs correctly.

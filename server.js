@@ -8,6 +8,7 @@ const socketIo = require("socket.io");
 const path = require("path");
 const fs = require("fs").promises;
 const session = require("express-session");
+const FileStore = require("session-file-store")(session);
 const cookieParser = require("cookie-parser");
 const sharedsession = require("express-socket.io-session");
 const helmet = require("helmet");
@@ -28,6 +29,7 @@ const {
   sanitizeMessage,
   wordFilter,
 } = require("./server/state");
+const { DATA_DIR } = require("./server/datadir");
 const {
   antibotMiddleware,
   enhancedRateLimit,
@@ -210,6 +212,10 @@ app.use(
           url,
         ) ||
         url.startsWith("/socket.io/") ||
+        // Operator tooling is loopback-only (see operatorOnly). Nobody outside
+        // the container can spend this budget, and an operator must never be
+        // rate-limited out of kicking someone mid-incident.
+        url.startsWith("/operator/") ||
         // The ban screen polls ban-status every 20s as its ONLY channel to learn
         // it has been unbanned (its socket stays refused while blocked). It must
         // never eat the rate budget: if it 429s, the banned user can't detect an
@@ -239,8 +245,15 @@ app.use((req, res, next) => {
 
 // ── Session ─────────────────────────────────────────────────────────────────
 // SESSION_SECRET must be set in .env for sessions to survive restarts.
-// Without it a random secret is generated on boot, which signs out every
-// user and invalidates all validated room access codes.
+// Without it a random secret is generated on boot, which invalidates every
+// existing session's cookie signature - same effect as losing the data.
+//
+// The FileStore below is what makes a stable secret actually pay off: session
+// data (userId, username, validated room access) now survives a process
+// restart/redeploy on disk (DATA_DIR/sessions), instead of living only in
+// memory. Without this store, every redeploy silently minted a new userId
+// for anyone still connected - which showed up as a duplicate ghost/live pair
+// of the same person after a reconnect-then-reload dance (CHAT-26).
 
 const SESSION_SECRET = process.env.SESSION_SECRET;
 
@@ -260,6 +273,15 @@ if (!SESSION_SECRET) {
 }
 
 const sessionMiddleware = session({
+  store: new FileStore({
+    path: path.join(DATA_DIR, "sessions"),
+    // Matches the cookie's own maxAge below (in seconds here, ms there).
+    ttl: 14 * 24 * 60 * 60,
+    retries: 1,
+    // A lookup for a session nobody has (expired, or never existed) is
+    // routine - every stale/forged cookie hits this - not worth a log line.
+    logFn: () => {},
+  }),
   secret: SESSION_SECRET || crypto.randomBytes(32).toString("hex"),
   resave: false,
   saveUninitialized: true,
@@ -557,7 +579,12 @@ function sendPage(req, res, file) {
       // that it is running old code after an update and reload itself.
       out = out.replace(
         /<head(\s[^>]*)?>/i,
-        (m) => m + `\n    <meta name="tk-build" content="${BUILD_ID}" />`,
+        (m) =>
+          m +
+          `\n    <meta name="tk-build" content="${BUILD_ID}" />` +
+          // One source of truth for the version the client displays and stamps
+          // its stored preferences with - no copy baked into the client bundle.
+          `\n    <meta name="tk-version" content="${CONFIG.VERSIONS.APP}" />`,
       );
       res.type("html").send(out);
     })
@@ -573,6 +600,41 @@ for (const page of PAGES) {
 // page collects a name itself (localStorage, or a prompt on first visit) so
 // index.html's sign-in form is no longer the front door.
 app.get("/", (req, res) => res.redirect("/room.html"));
+
+// ── Operator Routes ─────────────────────────────────────────────────────────
+// Backing for tools/admin.js (see its header for usage). Reachable only from
+// inside the container, so shell access to the container IS the credential and
+// there is no key to store or rotate.
+//
+// The gate reads the raw TCP peer address, which is the one thing a remote
+// caller cannot forge: X-Forwarded-For and friends are just headers anyone may
+// send, but the socket's peer is whoever actually opened the connection. A
+// reverse proxy fronting this app connects from its own address, never
+// loopback, so nothing arriving over the public listener can pass.
+function operatorOnly(req, res, next) {
+  const peer = req.socket.remoteAddress || "";
+  const isLoopback =
+    peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
+  // 404 rather than 403: an outsider should not learn the route exists.
+  if (!isLoopback) return res.status(404).end();
+  next();
+}
+
+// Every occupied seat, with the id needed to target one. Ghost and live users
+// with the same username are distinguished by `ghost` and `live`.
+app.get("/operator/users", operatorOnly, (req, res) => {
+  res.json({ rooms: rooms.adminListUsers() });
+});
+
+// Free a seat by user id. Optional roomId scopes it to a single room; without
+// one, the id is removed from every room holding it.
+app.post("/operator/kick", operatorOnly, (req, res) => {
+  const userId = req.body?.userId;
+  if (typeof userId !== "string" || !userId.trim())
+    return res.status(400).json({ error: "userId is required" });
+  const roomId = typeof req.body?.roomId === "string" ? req.body.roomId : null;
+  res.json(rooms.adminKickUser(userId.trim(), { roomId }));
+});
 
 // ── API Routes ──────────────────────────────────────────────────────────────
 

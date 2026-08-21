@@ -86,13 +86,10 @@ const ERROR_CODES = {
   UNAUTHORIZED: "Unauthorized",
   NOT_FOUND: "Not Found",
   RATE_LIMITED: "Rate Limited",
-  ROOM_FULL: "Room Full",
   ACCESS_DENIED: "Access Denied",
   BAD_REQUEST: "Bad Request",
   FORBIDDEN: "Forbidden",
   CIRCUIT_OPEN: "Circuit Open",
-  AFK_WARNING: "AFK Warning",
-  AFK_TIMEOUT: "AFK Timeout",
 };
 
 // ── 2. WORD FILTER ──────────────────────────────────────────────────────────
@@ -272,60 +269,211 @@ modalInput.addEventListener("keydown", (e) => {
 });
 
 // ── 4. TAB NOTIFICATIONS ────────────────────────────────────────────────────
-// No OS-level toasts here (that needs a permission dialog) — just a small red
-// dot drawn onto the tab favicon while you're away, cleared the moment you
-// come back. notificationsEnabled is the user's opt-in for all of it.
+// The favicon is a solid black square while you're looking at the tab, and
+// stays black even while hidden until something actually happens. The first
+// bit of activity while away switches it to a mood emoji, escalating through
+// busier/louder emoji as activityCount piles up. Each tier has a small pool
+// of emoji so the same level doesn't always draw the identical glyph.
+// notificationsEnabled is the user's opt-in for the count accumulating at all.
 
 const notifyToggleButton = document.getElementById("notifyToggle");
 const notifyIcon = document.getElementById("notifyIcon");
 let notificationsEnabled = true;
 
 const faviconLink = document.querySelector('link[rel="icon"]');
-const originalFaviconHref = faviconLink ? faviconLink.href : null;
-let tabDotShown = false;
+const FAVICON_SIZE = 32;
 
-function showTabDot() {
-  if (tabDotShown || !faviconLink || !originalFaviconHref) return;
-  tabDotShown = true;
+// activityCount is a raw tally of message-equivalent units (see the per-event
+// weights below), capped at ACTIVITY_MAX_COUNT - the tier table below reads
+// straight off of it (see EMOJI_TIERS' minCount).
+let activityCount = 0;
+const ACTIVITY_MAX_COUNT = 100; // message-equivalents needed to reach the top tier
 
-  const img = new Image();
-  img.onload = () => {
-    const canvas = document.createElement("canvas");
-    canvas.width = img.width;
-    canvas.height = img.height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      tabDotShown = false;
-      return;
+// Served by sendPage from CONFIG.VERSIONS.APP, so the version shown in the
+// navbar and the version stamped onto stored preferences are the same string
+// and neither is baked into this bundle.
+const APP_VERSION =
+  document.querySelector('meta[name="tk-version"]')?.content || "0.0.0";
+
+// One stamp for all versioned preferences, not one per preference: storage
+// records the app version its prefs were written under, and anything listed
+// below is discarded when that version moves. This resets the opt-out on every
+// version bump - the tab-dot feature that shipped before this one wrote the
+// same key, so anyone who silenced the dot was silently opted out of the color
+// too, with no hint the feature had changed. The bell still turns it back off,
+// and that choice sticks until the next bump.
+const STORED_VERSION_KEY = "appVersion";
+const NOTIFY_PREF_KEY = "notificationsEnabled";
+const VERSIONED_PREF_KEYS = [NOTIFY_PREF_KEY];
+
+// Chat here is live-typed with no explicit "send", so a message only counts
+// as "completed" once its sender pauses - each diff restarts this timer per
+// user, and the bump fires when a batch of diffs stops arriving.
+const MESSAGE_COMPLETE_DEBOUNCE_MS = 1500;
+const pendingMessageTimers = new Map(); // userId -> timeout id
+
+// Per-event weights, in message-equivalents, feeding activityCount.
+const MESSAGE_ACTIVITY_UNITS = 1;
+const JOIN_ACTIVITY_UNITS = 3;
+const MENTION_ACTIVITY_UNITS = 8;
+
+function noteMessageActivity(userId) {
+  const existing = pendingMessageTimers.get(userId);
+  if (existing) clearTimeout(existing);
+  pendingMessageTimers.set(
+    userId,
+    setTimeout(() => {
+      pendingMessageTimers.delete(userId);
+      bumpActivity(MESSAGE_ACTIVITY_UNITS);
+    }, MESSAGE_COMPLETE_DEBOUNCE_MS),
+  );
+}
+
+function cancelMessageActivity(userId) {
+  const existing = pendingMessageTimers.get(userId);
+  if (existing) {
+    clearTimeout(existing);
+    pendingMessageTimers.delete(userId);
+  }
+}
+
+// Ascending activity-count tiers, log-spaced (~4.6x per step) so max only
+// arrives at ACTIVITY_MAX_COUNT messages, not partway through. Each tier is
+// a small pool of thematically-related emoji; pickTierEmoji rolls one per
+// tier and holds onto it so the favicon stays varied across separate away
+// periods without flickering between glyphs while the count sits in one tier.
+const EMOJI_TIERS = [
+  { minCount: 1, emojis: ["👀", "🙂", "✌️"] },
+  { minCount: 5, emojis: ["💬", "📈", "🐝"] },
+  { minCount: 22, emojis: ["🌶️", "⚡", "🎉"] },
+  { minCount: ACTIVITY_MAX_COUNT, emojis: ["🔥", "🚨", "💥"] },
+];
+
+let currentTierIndex = -1;
+let currentTierEmoji = null;
+
+function pickTierEmoji(count) {
+  let resolvedIndex = 0;
+  for (let i = EMOJI_TIERS.length - 1; i >= 0; i--) {
+    if (count >= EMOJI_TIERS[i].minCount) {
+      resolvedIndex = i;
+      break;
     }
-    ctx.drawImage(img, 0, 0);
-    const r = img.width * 0.28;
-    ctx.beginPath();
-    ctx.arc(img.width - r, r, r, 0, Math.PI * 2);
-    ctx.fillStyle = "#ff3b30";
-    ctx.fill();
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = img.width * 0.06;
-    ctx.stroke();
-    faviconLink.href = canvas.toDataURL("image/png");
-  };
-  img.onerror = () => {
-    tabDotShown = false;
-  };
-  img.src = originalFaviconHref;
+  }
+  if (resolvedIndex !== currentTierIndex) {
+    currentTierIndex = resolvedIndex;
+    const tier = EMOJI_TIERS[resolvedIndex];
+    currentTierEmoji = tier.emojis[Math.floor(Math.random() * tier.emojis.length)];
+  }
+  return currentTierEmoji;
 }
-function clearTabDot() {
-  if (!tabDotShown || !faviconLink) return;
-  faviconLink.href = originalFaviconHref;
-  tabDotShown = false;
+
+function getFaviconCanvas() {
+  if (!getFaviconCanvas._canvas) {
+    const canvas = document.createElement("canvas");
+    canvas.width = FAVICON_SIZE;
+    canvas.height = FAVICON_SIZE;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    getFaviconCanvas._canvas = canvas;
+    getFaviconCanvas._ctx = ctx;
+  }
+  return { canvas: getFaviconCanvas._canvas, ctx: getFaviconCanvas._ctx };
 }
+
+function drawFaviconColor(hex) {
+  if (!faviconLink) return;
+  const cached = getFaviconCanvas();
+  if (!cached) return;
+  const { canvas, ctx } = cached;
+  ctx.clearRect(0, 0, FAVICON_SIZE, FAVICON_SIZE);
+  ctx.fillStyle = hex;
+  ctx.fillRect(0, 0, FAVICON_SIZE, FAVICON_SIZE);
+  faviconLink.href = canvas.toDataURL("image/png");
+}
+
+function drawFaviconEmoji(emoji) {
+  if (!faviconLink) return;
+  const cached = getFaviconCanvas();
+  if (!cached) return;
+  const { canvas, ctx } = cached;
+  ctx.clearRect(0, 0, FAVICON_SIZE, FAVICON_SIZE);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font =
+    '26px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  ctx.fillText(emoji, FAVICON_SIZE / 2, FAVICON_SIZE / 2 + 2);
+  faviconLink.href = canvas.toDataURL("image/png");
+}
+
+function updateFavicon() {
+  if (document.hidden && activityCount > 0)
+    drawFaviconEmoji(pickTierEmoji(activityCount));
+  else drawFaviconColor("#000000");
+}
+
+function bumpActivity(amount) {
+  if (!notificationsEnabled || !document.hidden) return;
+  activityCount = Math.min(ACTIVITY_MAX_COUNT, activityCount + amount);
+  updateFavicon();
+}
+
+function resetActivity() {
+  activityCount = 0;
+  currentTierIndex = -1;
+  updateFavicon();
+}
+
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) clearTabDot();
+  if (document.hidden) updateFavicon();
+  else resetActivity();
 });
+window.addEventListener("focus", resetActivity);
+
+updateFavicon();
 
 function toggleNotifications() {
   notificationsEnabled = !notificationsEnabled;
-  localStorage.setItem("notificationsEnabled", JSON.stringify(notificationsEnabled));
+  try {
+    localStorage.setItem(NOTIFY_PREF_KEY, JSON.stringify(notificationsEnabled));
+  } catch (_) {
+    // Storage blocked (private window, quota): the toggle still holds for this
+    // session, it just won't be remembered on the next load.
+  }
+  updateNotifyIcon();
+}
+
+// Drops every versioned preference when the stored stamp doesn't match this
+// build, then re-stamps. Deliberately the ONLY writer of the stamp: if each
+// preference's own loader wrote it, the first one to run would mark storage
+// current and every later loader would skip a reset it was owed.
+//
+// Called once at load, before any preference is read. Storage access is
+// guarded because this runs early in the load handler, where an uncaught throw
+// would take the rest of it (layout toggle, name button, viewport) down too.
+function migrateStoredPrefs() {
+  try {
+    if (localStorage.getItem(STORED_VERSION_KEY) === APP_VERSION) return;
+    for (const key of VERSIONED_PREF_KEYS) localStorage.removeItem(key);
+    localStorage.setItem(STORED_VERSION_KEY, APP_VERSION);
+  } catch (_) {
+    // Storage unavailable: every preference just falls back to its default.
+  }
+}
+
+function loadNotifyPreference() {
+  let saved = null;
+  try {
+    saved = localStorage.getItem(NOTIFY_PREF_KEY);
+  } catch (_) {
+    return; // storage unavailable: keep the default
+  }
+  if (saved === null) return; // never set, or just reset - default stays ON
+  try {
+    notificationsEnabled = JSON.parse(saved) === true;
+  } catch (_) {
+    notificationsEnabled = true;
+  }
   updateNotifyIcon();
 }
 
@@ -334,7 +482,7 @@ function toggleNotifications() {
 socket.on("room mention", (data) => {
   const by = (data && data.by) || "Someone";
   if (window.toastr) toastr.info(by + " mentioned you");
-  if (notificationsEnabled) showTabDot();
+  bumpActivity(MENTION_ACTIVITY_UNITS);
   // Blink it into the tab title for anyone looking at another window.
   if (document.hidden) {
     const original = document.title;
@@ -373,7 +521,13 @@ function getPlainText(element) {
         t += "\n";
       } else if (node.nodeName === "DIV") {
         if (node.previousSibling) t += "\n";
-        for (const child of node.childNodes) t += extract(child);
+        // An empty line is represented as <div><br></div>; the "\n" above
+        // already accounts for it, so don't also count the placeholder <br>.
+        const isEmptyLinePlaceholder =
+          node.childNodes.length === 1 && node.firstChild.nodeName === "BR";
+        if (!isEmptyLinePlaceholder) {
+          for (const child of node.childNodes) t += extract(child);
+        }
       } else {
         for (const child of node.childNodes) t += extract(child);
       }
@@ -2066,7 +2220,7 @@ function displayChatMessage(data) {
       renderOtherUserMessage(chatDiv, newText);
     }
   } else {
-    if (notificationsEnabled && document.hidden) showTabDot();
+    noteMessageActivity(data.userId);
     renderOtherUserMessage(chatDiv, newText);
   }
 }
@@ -2751,6 +2905,7 @@ function applyPanelStyleToRow(row, user) {
     "--tk-row-border": style && style.border,
     "--tk-row-chat-bg": style && style.bg,
     "--tk-row-chat-text": style && style.text,
+    "--tk-row-chat-bg-inv": style && style.text ? invertHsv(style.text) : null,
   };
   for (const [prop, val] of Object.entries(vars)) {
     if (val) row.style.setProperty(prop, val);
@@ -2857,6 +3012,7 @@ function createUserRow(user, container) {
   const row = document.createElement("div");
   row.classList.add("chat-row");
   if (user.id === currentUserId) row.classList.add("current-user");
+  if (user.departed) row.classList.add("departed");
   row.dataset.userId = user.id;
   row.dataset.username = user.username || "";
 
@@ -2918,6 +3074,16 @@ function createUserRow(user, container) {
   nameEl.className = "ui-name";
   nameEl.textContent = user.username;
   info.appendChild(nameEl);
+
+  // Ghost: they left while the queue was empty, so their panel/text lingers
+  // instead of disappearing. Marked, not disguised as still-present.
+  if (user.departed) {
+    const leftLabel = document.createElement("span");
+    leftLabel.className = "departed-label";
+    leftLabel.dataset.departedAt = user.departedAt || Date.now();
+    leftLabel.textContent = formatAwayLabel(leftLabel.dataset.departedAt);
+    info.appendChild(leftLabel);
+  }
 
   // Vote-to-mute a bot: status label to the left of the vote button, both
   // shown only on bot rows (bots are any socket authenticated via a bot
@@ -3240,7 +3406,44 @@ function updateRoomInfo(data) {
   if (typeEl && roomType) {
     typeEl.textContent = `${getRoomTypeDisplay(roomType) || "Public"} room`;
   }
+
+  if (data.queue !== undefined) renderQueueChip(data.queue);
 }
+
+// ── Queue Chip (navbar, between the clock and the waffle menu) ─────────────
+// Names are server-supplied usernames rendered via textContent - never trust
+// them as markup.
+let queueChipExpanded = false;
+function renderQueueChip(queue) {
+  const chip = document.getElementById("queueChip");
+  if (!chip) return;
+  const list = Array.isArray(queue) ? queue : [];
+
+  if (list.length === 0) {
+    chip.hidden = true;
+    queueChipExpanded = false;
+    chip.setAttribute("aria-expanded", "false");
+    return;
+  }
+
+  chip.hidden = false;
+  const countEl = chip.querySelector(".queue-chip-count");
+  const namesEl = chip.querySelector(".queue-chip-names");
+  if (countEl)
+    countEl.textContent = `${list.length} waiting`;
+  if (namesEl) namesEl.textContent = list.map((q) => q.username).join(", ");
+  chip.setAttribute("aria-expanded", String(queueChipExpanded));
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const chip = document.getElementById("queueChip");
+  if (chip) {
+    chip.addEventListener("click", () => {
+      queueChipExpanded = !queueChipExpanded;
+      chip.setAttribute("aria-expanded", String(queueChipExpanded));
+    });
+  }
+});
 
 // ── 14. LAYOUT ──────────────────────────────────────────────────────────────
 
@@ -3284,8 +3487,8 @@ function injectStyles() {
     .link-warning-visit { background:#ff9800; color:#000; border:none; padding:10px 18px; border-radius:6px; cursor:pointer; font-weight:bold; }
     .link-warning-visit:hover { background:#ffb74d; }
     /* Markdown-lite: code (colors match desk.js .dk-code-in/.dk-code-bl) */
-    .chat-code-inline { font-family:"Courier New",monospace; font-size:14px; background:#000; border:1px solid #333; border-radius:3px; padding:0 4px; color:#ffb454; word-break:break-word; }
-    .chat-code-block { display:block; font-family:"Courier New",monospace; font-size:14px; background:#000; border:1px solid #333; border-radius:5px; padding:8px 10px; margin:4px 0; color:#ededed; white-space:pre-wrap; word-break:break-word; max-height:180px; overflow:auto; }
+    .chat-code-inline { font-family:"Courier New",monospace; font-size:14px; background:var(--tk-row-chat-bg-inv,var(--tk-chat-bg-inv,#000)); border:1px solid var(--tk-row-border,var(--tk-border,#333)); border-radius:3px; padding:0 4px; color:var(--tk-row-chat-text,var(--tk-chat-text,#ffb454)); word-break:break-word; }
+    .chat-code-block { display:block; font-family:"Courier New",monospace; font-size:14px; background:var(--tk-row-chat-bg-inv,var(--tk-chat-bg-inv,#000)); border:1px solid var(--tk-row-border,var(--tk-border,#333)); border-radius:5px; padding:8px 10px; margin:4px 0; color:var(--tk-row-chat-text,var(--tk-chat-text,#ededed)); white-space:pre-wrap; word-break:break-word; max-height:180px; overflow:auto; }
     /* Image-link thumbnails */
     .chat-img-thumb { display:block; max-width:100%; max-height:96px; width:auto; height:auto; object-fit:contain; border-radius:4px; border:1px solid #616161; margin-top:4px; }
 
@@ -3296,6 +3499,81 @@ function injectStyles() {
     }
   `;
   document.head.appendChild(style);
+
+  refreshCodeBgToken();
+  new MutationObserver(refreshCodeBgToken).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["style"],
+  });
+}
+
+function hexToRgb(hex) {
+  const clean = hex.replace("#", "");
+  const full =
+    clean.length === 3
+      ? clean.split("").map((c) => c + c).join("")
+      : clean;
+  const n = parseInt(full, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function rgbToHex([r, g, b]) {
+  return (
+    "#" +
+    [r, g, b]
+      .map((n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0"))
+      .join("")
+  );
+}
+
+// Inverts a hex color in HSV space (hue +180, saturation and value
+// flipped) so a derived color reliably contrasts with the source instead
+// of being an unrelated fixed value.
+function invertHsv(hex) {
+  try {
+    const [r, g, b] = hexToRgb(hex).map((n) => n / 255);
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const d = max - min;
+    let h = 0;
+    if (d !== 0) {
+      if (max === r) h = ((g - b) / d) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60;
+      if (h < 0) h += 360;
+    }
+    const s = max === 0 ? 0 : d / max;
+    const v = max;
+    const ih = (h + 180) % 360;
+    const is = 1 - s;
+    const iv = 1 - v;
+    const c = iv * is;
+    const x = c * (1 - Math.abs(((ih / 60) % 2) - 1));
+    const m = iv - c;
+    let rgb;
+    if (ih < 60) rgb = [c, x, 0];
+    else if (ih < 120) rgb = [x, c, 0];
+    else if (ih < 180) rgb = [0, c, x];
+    else if (ih < 240) rgb = [0, x, c];
+    else if (ih < 300) rgb = [x, 0, c];
+    else rgb = [c, 0, x];
+    return rgbToHex(rgb.map((n) => (n + m) * 255));
+  } catch {
+    return null;
+  }
+}
+
+// Chat code has no dedicated background token - it derives one from the
+// HSV-inverted chat text color so it always contrasts with whatever the
+// room theme sets, instead of following an unrelated/fixed color.
+function refreshCodeBgToken() {
+  const root = document.documentElement;
+  const text = getComputedStyle(root).getPropertyValue("--tk-chat-text").trim() || "#ffa500";
+  const inv = invertHsv(text);
+  if (inv && root.style.getPropertyValue("--tk-chat-bg-inv") !== inv) {
+    root.style.setProperty("--tk-chat-bg-inv", inv);
+  }
 }
 
 function isMobile() {
@@ -3334,7 +3612,7 @@ function adjustLayout() {
     ? "horizontal"
     : userLayoutPreference || currentRoomLayout;
 
-  // Reset styles that only the crowd grid sets, so the <=5 layouts below are
+  // Reset styles that only the crowd grid sets, so the <=4 layouts below are
   // never affected by a previous larger headcount.
   container.style.flexWrap = "";
   container.style.alignContent = "";
@@ -3342,10 +3620,10 @@ function adjustLayout() {
   container.style.overflowY = "";
   rows.forEach((row) => (row.style.flex = ""));
 
-  if (rows.length > 5) {
+  if (rows.length > 4) {
     // Crowd mode: balanced grid (columns x rows) that fills the room. Column
     // count follows the layout preference and the available width; it only
-    // scrolls if cells would otherwise get too short. The <=5 cases are
+    // scrolls if cells would otherwise get too short. The <=4 cases are
     // left exactly as they were.
     container.style.flexDirection = "row";
     container.style.flexWrap = "wrap";
@@ -3454,15 +3732,15 @@ function adjustLayout() {
   refreshLayoutToggle();
 }
 
-// The layout toggle only makes sense on desktop in a small room. Past 5 users
+// The layout toggle only makes sense on desktop in a small room. Past 4 users
 // the room switches to the crowd grid, so the toggle is removed; it comes back
-// the moment the room drops to 5 or fewer. Also keeps the icon and tooltip in
+// the moment the room drops to 4 or fewer. Also keeps the icon and tooltip in
 // sync with whichever layout is actually on screen.
 function refreshLayoutToggle() {
   const btn = document.getElementById("layoutToggle");
   if (!btn) return;
   const userCount = document.querySelectorAll(".chat-row").length;
-  const show = !isMobile() && userCount > 0 && userCount <= 5;
+  const show = !isMobile() && userCount > 0 && userCount <= 4;
   btn.style.display = show ? "flex" : "none";
   if (!show) return;
   const horizontal =
@@ -3507,6 +3785,11 @@ function handleViewportChange() {
 // ── 15. DATE/TIME ────────────────────────────────────────────────────────────
 
 const dateTimeElement = document.querySelector("#dateTime");
+
+// Static for the life of the page - set once here rather than on the clock's
+// once-a-second tick.
+const appVersionElement = document.querySelector("#appVersion");
+if (appVersionElement) appVersionElement.textContent = "v" + APP_VERSION;
 function updateTimeLabels() {
   const now = new Date();
   dateTimeElement.querySelector(".date").textContent = now.toLocaleDateString(
@@ -3519,6 +3802,24 @@ function updateTimeLabels() {
   if (uptimeEl) {
     uptimeEl.textContent = currentRoomCreatedAt > 0 ? msToTime(Date.now() - currentRoomCreatedAt) : "";
   }
+
+  document.querySelectorAll(".departed-label").forEach((el) => {
+    const departedAt = Number(el.dataset.departedAt);
+    if (departedAt) el.textContent = formatAwayLabel(departedAt);
+  });
+}
+
+// Ghost rows show how long a user has been away instead of a static "left"
+// label - bare "away" for the first hour, then hour counts, switching to
+// whole days once the wait passes 24 hours.
+function formatAwayLabel(departedAt) {
+  const hours = Math.floor((Date.now() - departedAt) / (1000 * 60 * 60));
+  if (hours <= 0) return "away";
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    return `away ${days} day${days === 1 ? "" : "s"}`;
+  }
+  return `away ${hours} hour${hours === 1 ? "" : "s"}`;
 }
 
 function msToTime(duration) {
@@ -3547,15 +3848,6 @@ socket.on("kicked", (data) => {
   );
 });
 
-socket.on("room full", () => {
-  showInfoModal(
-    "This room is full. Try again in a moment.",
-    () => {
-      window.location.href = "/index.html";
-    },
-  );
-});
-
 socket.on("room joined", (data) => {
   // Protocol gate: if the server speaks a different message version than the JS
   // we are running, a breaking deploy happened under us. Reload once (guarded
@@ -3569,6 +3861,14 @@ socket.on("room joined", (data) => {
     }
   } else {
     sessionStorage.removeItem("tkProtoReload");
+  }
+
+  // A queue promotion lands here too (the server sends a normal "room joined"
+  // right after "queue promoted") - drop the read-only banner and re-enable
+  // the chat input.
+  if (isSpectating) {
+    isSpectating = false;
+    document.getElementById("spectateBanner")?.remove();
   }
 
   currentUserId = data.userId;
@@ -3665,35 +3965,50 @@ socket.on("room not found", () => {
 });
 
 socket.on("user joined", (data) => {
-  if (!document.querySelector(`.chat-row[data-user-id="${data.id}"]`)) {
-    const c = document.querySelector(".chat-container");
-    if (c) {
-      createUserRow(data, c);
-      adjustLayout();
-      updateRoomInfo(data);
-      if (notificationsEnabled && document.hidden) showTabDot();
+  const c = document.querySelector(".chat-container");
+  if (!c) return;
 
-      // A new join can cross the voting threshold
-      updateVotesUI(currentVotes);
+  // A row can already exist here if an earlier "user left" for this same
+  // userId never arrived (dropped over the network, a transport hiccup) -
+  // rebuilding unconditionally, rather than no-op'ing when one's found,
+  // guarantees a rejoin always shows blank instead of getting stuck with
+  // whatever stale text that missed removal left behind.
+  const existingRow = document.querySelector(
+    `.chat-row[data-user-id="${data.id}"]`,
+  );
+  if (existingRow) existingRow.remove();
 
-      // Confetti only on the dev's own screen
-      if (data.isDev && !data.isHidden && currentUserIsDev) {
-        triggerDevConfetti();
-      }
-    }
-    // No explicit refocus here: adjustLayout() already restores focus to the
-    // chat input only when it was active, so a join never steals focus from a
-    // dev's open modal (or pops the mobile keyboard when you're not typing).
+  const row = createUserRow(data, c);
+  // A ghost's last text survives its rejoin (server-side buffer never got
+  // cleared - see leaveRoom's ghost branch), and our own "room joined" already
+  // shows it via currentMessages. Apply it here too so every OTHER client's
+  // freshly-built row for them starts in sync instead of sitting blank.
+  if (data.text) {
+    renderOtherUserMessage(row.querySelector(".chat-input"), data.text);
   }
+  adjustLayout();
+  updateRoomInfo(data);
+  bumpActivity(JOIN_ACTIVITY_UNITS);
+
+  // A new join can cross the voting threshold
+  updateVotesUI(currentVotes);
+
+  // Confetti only on the dev's own screen
+  if (data.isDev && !data.isHidden && currentUserIsDev) {
+    triggerDevConfetti();
+  }
+  // No explicit refocus here: adjustLayout() already restores focus to the
+  // chat input only when it was active, so a join never steals focus from a
+  // dev's open modal (or pops the mobile keyboard when you're not typing).
 });
 
 socket.on("user left", (userId) => {
   if (userId !== currentUserId) {
+    cancelMessageActivity(userId);
     const row = document.querySelector(`.chat-row[data-user-id="${userId}"]`);
     if (row) {
       row.remove();
       adjustLayout();
-      if (notificationsEnabled && document.hidden) showTabDot();
 
       // Dropping below the voting minimum must clean up vote UI immediately
       adjustVoteButtonVisibility();
@@ -3701,6 +4016,8 @@ socket.on("user left", (userId) => {
     }
   }
 });
+
+socket.on("queue update", (data) => renderQueueChip(data?.queue));
 
 socket.on("room update", (roomData) => {
   currentRoomLayout = roomData.layout || currentRoomLayout;
@@ -3750,6 +4067,26 @@ socket.on("room update", (roomData) => {
       applyDevAppearanceToRow(row, u);
       applyPanelStyleToRow(row, u);
       syncUserRowNote(row, u);
+
+      // Ghost toggle: a fresh departure marks an existing row without
+      // recreating it; a reconnect reclaiming their own seat un-marks it the
+      // same way.
+      const wasDeparted = row.classList.contains("departed");
+      const isDeparted = !!u.departed;
+      if (wasDeparted !== isDeparted) {
+        row.classList.toggle("departed", isDeparted);
+        const info = row.querySelector(".user-info");
+        const existingLabel = info?.querySelector(".departed-label");
+        if (isDeparted && info && !existingLabel) {
+          const leftLabel = document.createElement("span");
+          leftLabel.className = "departed-label";
+          leftLabel.dataset.departedAt = u.departedAt || Date.now();
+          leftLabel.textContent = formatAwayLabel(leftLabel.dataset.departedAt);
+          info.appendChild(leftLabel);
+        } else if (!isDeparted && existingLabel) {
+          existingLabel.remove();
+        }
+      }
     });
   }
 
@@ -3812,8 +4149,8 @@ socket.on("access code required", () => {
   );
 });
 
-socket.on("afk timeout", (data) => {
-  showInfoModal(data.message ?? "Removed from room due to inactivity.", () => {
+socket.on("room closed", (data) => {
+  showInfoModal(data.message ?? "This room was closed.", () => {
     window.location.href = data.redirectTo ?? "/";
   });
 });
@@ -3957,8 +4294,7 @@ async function joinRoom(roomId, accessCode = null) {
 // On reconnect (an idle/backgrounded tab that dropped, or a server restart)
 // get the user back into their room with no manual step. Without this we become
 // a ghost: still in the room on our own screen, but gone for everyone else, and
-// our typing reaches no one. Staff notice this most because they are never
-// AFK-redirected out of a room. Spectators re-spectate.
+// our typing reaches no one. Spectators re-spectate.
 //
 // A plain network blip keeps the server's session, so a bare rejoin works and
 // semi-private access stays valid via the session. A server restart wipes the
@@ -4068,15 +4404,13 @@ window.addEventListener("load", () => {
   adjustLayout();
   initializeAppDirectory();
 
-  // Tab notifications
-  const savedNotify = localStorage.getItem("notificationsEnabled");
-  if (savedNotify !== null) {
-    notificationsEnabled = JSON.parse(savedNotify);
-    updateNotifyIcon();
-  }
+  // Tab notifications. Migration first: it decides what any loader below is
+  // still allowed to read.
+  migrateStoredPrefs();
+  loadNotifyPreference();
   notifyToggleButton.addEventListener("click", toggleNotifications);
 
-  // Layout toggle (desktop, client-side view preference). Shown only at <=5
+  // Layout toggle (desktop, client-side view preference). Shown only at <=4
   // users; refreshLayoutToggle() handles when it appears/disappears.
   const layoutBtn = document.getElementById("layoutToggle");
   if (layoutBtn) layoutBtn.addEventListener("click", toggleRoomLayout);
@@ -5140,6 +5474,8 @@ function renderSpectate(data) {
   if (isStaff()) createStaffPanelButton();
   applyRoomFlags(data);
 
+  if (data.queue !== undefined) renderQueueChip(data.queue);
+
   const invite = document.querySelector(".invite-section");
   if (invite) invite.style.display = "none";
   let banner = document.getElementById("spectateBanner");
@@ -5148,17 +5484,45 @@ function renderSpectate(data) {
     banner.id = "spectateBanner";
     document.body.appendChild(banner);
   }
-  banner.textContent = currentUserIsDev
-    ? "SPECTATING (invisible, read-only). Dev tools stay active via the Dev button."
-    : currentUserIsMod
-      ? "SPECTATING (invisible, read-only). Mod tools stay active via the Staff button."
-      : "SPECTATING (read-only). You are watching this room. Use Leave to exit.";
+  // "room queued" carries a position; plain spectating (staff, ?spectate=1)
+  // does not. Same read-only rendering either way, different framing.
+  if (data.position) {
+    banner.textContent =
+      `WAITING (#${data.position} in line, read-only). You'll join ` +
+      `automatically when a seat opens - the room is watching you watch it.`;
+  } else {
+    banner.textContent = currentUserIsDev
+      ? "SPECTATING (invisible, read-only). Dev tools stay active via the Dev button."
+      : currentUserIsMod
+        ? "SPECTATING (invisible, read-only). Mod tools stay active via the Staff button."
+        : "SPECTATING (read-only). You are watching this room. Use Leave to exit.";
+  }
 }
 
 socket.on("spectate joined", (data) => renderSpectate(data));
+socket.on("room queued", (data) => renderSpectate(data));
 socket.on("spectate ended", () => {
   isSpectating = false;
   window.location.href = "/index.html";
+});
+
+// The server already sent (or is about to send) a normal "room joined" for
+// this - this is just the heads-up so the transition doesn't feel silent.
+socket.on("queue promoted", (data) => {
+  notify(`A seat opened up in ${data?.roomName ?? "the room"} - you're in!`, "success", {
+    title: "Promoted from the queue",
+    timeout: 6000,
+  });
+});
+
+socket.on("room capacity evicted", (data) => {
+  notify(
+    `The room filled up and you'd been quiet a while, so you gave up your seat ` +
+      `in ${data?.roomName ?? "the room"}. You're back in the queue - it'll ` +
+      `open up again automatically.`,
+    "warning",
+    { title: "Seat yielded", timeout: 10000 },
+  );
 });
 
 // ── Staff events received by everyone ────────────────────────────────────────

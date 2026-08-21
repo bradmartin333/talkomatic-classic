@@ -140,6 +140,83 @@ html {
   align-items: flex-start;
 }
 
+/* The version rides on the clock's line rather than taking a third row: the
+   navbar is only as tall as this block, and mobile already shrinks it twice.
+   It sits LEFT of the clock so it keeps a fixed origin - the time is
+   proportional text that reflows every tick (digit widths differ, and the hour
+   gains a character at 10), which would shove anything to its right around. */
+.date-time .time-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.date-time .app-version {
+  font-size: 10px;
+  opacity: 0.65;
+}
+/* Fixed-width digits so the clock does not wobble within its own box either. */
+.date-time .time {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Queue chip: sits in the navbar's middle span, between the clock and the
+   waffle menu. min-width:0 lets it shrink/ellipsis instead of forcing the
+   navbar to wrap. */
+.navbar-center {
+  justify-content: center;
+  min-width: 0;
+}
+
+.queue-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 12px;
+  background-color: var(--tk-tile);
+  border: 1px solid var(--tk-border);
+  border-radius: 14px;
+  color: var(--tk-text);
+  font-family: var(--tk-font-main);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.2s ease, max-width 0.2s ease;
+}
+
+.queue-chip:hover,
+.queue-chip[aria-expanded="true"] {
+  background-color: var(--tk-tile-hover);
+}
+
+/* .queue-chip's own `display: flex` above has the same specificity as the
+   browser default `[hidden] { display: none }` and comes later in the
+   cascade, so it would otherwise win and show the chip with an empty queue.
+   The extra attribute selector here outranks both. */
+.queue-chip[hidden] {
+  display: none;
+}
+
+.queue-chip i {
+  color: var(--tk-accent);
+}
+
+.queue-chip-count {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.queue-chip-names {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tk-muted);
+}
+
+/* Collapsed by default: only the count shows. Expanding reveals names. */
+.queue-chip:not([aria-expanded="true"]) .queue-chip-names {
+  display: none;
+}
+
 /* Mute Toggle Button Styles */
 .mute-toggle {
   background: none;
@@ -221,6 +298,28 @@ html {
 
 .chat-row.bot-muted .chat-input-wrapper {
   overflow: hidden;
+}
+
+/* Ghost panel: someone left while the queue was empty, so their panel and
+   last-typed text linger read-only rather than disappearing. Dimmed (not
+   collapsed, unlike .bot-muted) so the lingering text stays legible - the
+   point is filling the room, not hiding what was said. */
+.chat-row.departed {
+  opacity: 0.6;
+}
+
+.chat-row.departed .chat-input {
+  cursor: default;
+}
+
+.departed-label {
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--tk-border);
+  color: var(--tk-text);
 }
 
 /* Styling for the user information above chat messages */
@@ -420,6 +519,14 @@ html {
   .chat-input {
     font-size: 12px;
   }
+
+  .queue-chip {
+    font-size: 11px;
+    padding: 5px 9px;
+  }
+  .queue-chip-names {
+    max-width: 30vw;
+  }
 }
 
 /* Mobile devices */
@@ -518,6 +625,16 @@ html {
 
   .navbar-left {
     display: none;
+  }
+
+  /* The clock is gone at this width - the queue chip drops its name list and
+     becomes just an icon + count so it never fights the waffle menu for
+     space. */
+  .queue-chip-names {
+    display: none !important;
+  }
+  .queue-chip {
+    padding: 5px 8px;
   }
 }
 
