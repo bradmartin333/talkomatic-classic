@@ -104,7 +104,7 @@ const CONFIG = {
     // User-facing app version, shown next to the navbar clock. It also stamps
     // stored client preferences (see loadNotifyPreference in room-client.js),
     // so bumping it deliberately resets those preferences to their defaults.
-    APP: "0.0.2",
+    APP: "0.0.3",
     // Socket message-shape version. Restarts are invisible while this matches
     // the client's baked-in copy; bump it ONLY when a client<->server payload
     // shape changes, which makes still-open clients reload once to pick up the
@@ -142,6 +142,7 @@ const ERROR_CODES = {
   CIRCUIT_OPEN: "CIRCUIT_OPEN",
   ROOM_NAME_EXISTS: "ROOM_NAME_EXISTS",
   ROOM_LIMIT_REACHED: "ROOM_LIMIT_REACHED",
+  USERNAME_TAKEN: "USERNAME_TAKEN",
   BOT_TOKEN_REQUIRED: "BOT_TOKEN_REQUIRED",
   INVALID_BOT_TOKEN: "INVALID_BOT_TOKEN",
   TOKEN_NOT_ALLOWED_IN_BROWSER: "TOKEN_NOT_ALLOWED_IN_BROWSER",

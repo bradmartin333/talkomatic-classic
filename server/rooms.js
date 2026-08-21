@@ -327,6 +327,55 @@ function getUsernameLocationRoomsCount(username, location, excludeUserId) {
   return 0;
 }
 
+// The identity joinRoom falls back to when a session carries no name of its
+// own (a restart wipes session data while the signed cookie survives). Two of
+// these can legitimately coexist - a lost session is not the user's doing, and
+// refusing the second one would strand them - so the uniqueness rule below
+// steps aside for exactly this pair. Anyone who picks a name gets a real one.
+function isAnonymousIdentity(username, location) {
+  return username === "Anonymous" && location === "On The Web";
+}
+
+// True when someone OTHER than excludeUserId already answers to this name in
+// this room. "Already answers to" deliberately spans every occupant the room
+// can put on screen, because each of them draws a named panel or chip:
+//
+//   - live and idle users, and bots (all plain room.users entries)
+//   - departed ghosts, whose panel keeps their name and last-typed text until
+//     someone reclaims the seat - an away user can hold a name for hours, and
+//     CHAT-35 asks for no duplicates across active, idle and away alike
+//   - watchers in room.queue, whose names show in the navbar queue chip
+//
+// Excluding excludeUserId is what makes returning cost nothing: a reconnect,
+// a rename, and a ghost reclaiming its own seat all match on userId, so a user
+// is never blocked by their own entry.
+//
+// Compared through normalize() (trim + lowercase), the same way reserved names
+// are, so "Brad", "brad" and "brad " cannot sit in one room together.
+function isUsernameTakenInRoom(room, username, excludeUserId) {
+  const target = normalize(username);
+  if (!target) return false;
+  for (const u of room?.users || []) {
+    if (u.id === excludeUserId) continue;
+    if (normalize(u.username) === target) return true;
+  }
+  for (const q of room?.queue || []) {
+    if (q.userId === excludeUserId) continue;
+    if (normalize(q.username) === target) return true;
+  }
+  return false;
+}
+
+// The same test across every room, for the paths that settle on a name before
+// a room is picked ("join lobby"). One reachable room is the norm here, but
+// scoping by room keeps the rule honest if more become reachable again.
+function isUsernameTaken(username, excludeUserId) {
+  for (const [, room] of state.rooms) {
+    if (isUsernameTakenInRoom(room, username, excludeUserId)) return true;
+  }
+  return false;
+}
+
 function getUserCurrentRoom(userId) {
   for (const [roomId, room] of state.rooms) {
     if (room.users && room.users.some((u) => u.id === userId)) return roomId;
@@ -1871,7 +1920,7 @@ function joinRoom(socket, roomId, userId) {
     // Staff sit in as many rooms at once as they have tabs open: watching three
     // rooms is the job, and being bounced out of one to look at another was the
     // main reason moderators spectated instead of joining.
-    const isAnon = username === "Anonymous" && location === "On The Web";
+    const isAnon = isAnonymousIdentity(username, location);
     if (!isAnon && !isStaff) {
       const curRoom = getUserCurrentRoom(userId);
       if (curRoom && curRoom !== roomId) {
@@ -1905,6 +1954,24 @@ function joinRoom(socket, roomId, userId) {
     if (!room.votes) room.votes = {};
     if (!room.muteVotes) room.muteVotes = {};
     if (!room.mutedBotIds) room.mutedBotIds = new Set();
+
+    // The authoritative half of the no-duplicates rule (CHAT-35). "join lobby"
+    // rejects earlier for a better prompt, but this is the check that holds:
+    // it runs in the same synchronous stretch as the room.users push below, so
+    // two joins racing for one name cannot both pass it. Staff are not exempt -
+    // two identical names are exactly as confusing whoever is wearing them, and
+    // since the test is per-room it still lets a staffer sit in several rooms.
+    if (!isAnon && isUsernameTakenInRoom(room, username, userId)) {
+      return socket.emit(
+        "error",
+        createErrorResponse(
+          ERROR_CODES.USERNAME_TAKEN,
+          `The name "${username}" is already taken in this room. Please choose another.`,
+          null,
+          true,
+        ),
+      );
+    }
 
     // Staff bypass room capacity (can always enter a full room to handle a
     // report); normal users check the visible count.
@@ -2311,6 +2378,25 @@ function registerSocketHandlers(opts) {
               "Session not available.",
             ),
           );
+        // No two people answer to the same name (CHAT-35). Checked here so the
+        // browser hears about it while the name prompt is still the thing on
+        // screen; joinRoom re-checks, and that is the check that actually
+        // guarantees it (see the note there).
+        if (
+          !isAnonymousIdentity(username, location) &&
+          isUsernameTaken(username, userId)
+        ) {
+          return socket.emit(
+            "error",
+            createErrorResponse(
+              ERROR_CODES.USERNAME_TAKEN,
+              `The name "${username}" is already taken. Please choose another.`,
+              null,
+              true,
+            ),
+          );
+        }
+
         Object.assign(socket.handshake.session, {
           username,
           location,
@@ -3168,7 +3254,7 @@ function registerSocketHandlers(opts) {
         // Early copy of the one-room-at-a-time rule, so a normal user is turned
         // away before any of the join work happens. Staff are exempt here for
         // the same reason as in joinRoom: watching several rooms is the job.
-        const isAnon = username === "Anonymous" && location === "On The Web";
+        const isAnon = isAnonymousIdentity(username, location);
         if (!isAnon && !socket.isDev && !socket.isMod) {
           const cur = getUserCurrentRoom(userId);
           if (cur && cur !== data.roomId) {
@@ -3359,7 +3445,26 @@ function registerSocketHandlers(opts) {
           // A seat is actually free - just join normally.
           return joinRoom(socket, roomId, userId);
         }
-        enqueueUser(socket, room, userId, username || "Anonymous", location || "On The Web");
+        // A watcher's name shows in the queue chip, and this path reaches
+        // enqueueUser without passing through joinRoom, so it needs the name
+        // check of its own (CHAT-35).
+        const queueName = username || "Anonymous";
+        const queueLoc = location || "On The Web";
+        if (
+          !isAnonymousIdentity(queueName, queueLoc) &&
+          isUsernameTakenInRoom(room, queueName, userId)
+        ) {
+          return socket.emit(
+            "error",
+            createErrorResponse(
+              ERROR_CODES.USERNAME_TAKEN,
+              `The name "${queueName}" is already taken in this room. Please choose another.`,
+              null,
+              true,
+            ),
+          );
+        }
+        enqueueUser(socket, room, userId, queueName, queueLoc);
       }),
     );
 

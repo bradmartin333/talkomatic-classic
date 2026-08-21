@@ -317,9 +317,8 @@ html {
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 12px;
-  font-weight: 600;
-  background: var(--tk-border);
-  color: var(--tk-text);
+  background: #333;
+  color: #ccc;
 }
 
 /* Styling for the user information above chat messages */
@@ -568,7 +567,8 @@ html {
     font-size: 11px;
     padding: 3px 6px;
   }
-  .user-info .mute-status-label {
+  .user-info .mute-status-label,
+  .user-info .departed-label {
     margin-left: 5px;
     padding: 1px 5px;
     font-size: 10px;
