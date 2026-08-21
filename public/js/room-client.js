@@ -269,12 +269,12 @@ modalInput.addEventListener("keydown", (e) => {
 });
 
 // ── 4. TAB NOTIFICATIONS ────────────────────────────────────────────────────
-// The favicon is always a solid black square while you're looking at the
-// tab. The moment it's hidden, it switches to a mood emoji reflecting
-// activityHeat - 😴 at rest, escalating through busier/louder emoji as
-// activity piles up while you're away. Each tier has a small pool of emoji
-// so the same heat level doesn't always draw the identical glyph.
-// notificationsEnabled is the user's opt-in for the heat accumulating at all.
+// The favicon is a solid black square while you're looking at the tab, and
+// stays black even while hidden until something actually happens. The first
+// bit of activity while away switches it to a mood emoji, escalating through
+// busier/louder emoji as activityCount piles up. Each tier has a small pool
+// of emoji so the same level doesn't always draw the identical glyph.
+// notificationsEnabled is the user's opt-in for the count accumulating at all.
 
 const notifyToggleButton = document.getElementById("notifyToggle");
 const notifyIcon = document.getElementById("notifyIcon");
@@ -282,8 +282,12 @@ let notificationsEnabled = true;
 
 const faviconLink = document.querySelector('link[rel="icon"]');
 const FAVICON_SIZE = 32;
-const ACTIVITY_STEP = 0.025; // per completed message, so 40 of them reach max heat
-let activityHeat = 0; // 0 (asleep) .. 1 (max mood emoji); only rises while the tab is hidden
+
+// activityCount is a raw tally of message-equivalent units (see the per-event
+// weights below), capped at ACTIVITY_MAX_COUNT - the tier table below reads
+// straight off of it (see EMOJI_TIERS' minCount).
+let activityCount = 0;
+const ACTIVITY_MAX_COUNT = 100; // message-equivalents needed to reach the top tier
 
 // Served by sendPage from CONFIG.VERSIONS.APP, so the version shown in the
 // navbar and the version stamped onto stored preferences are the same string
@@ -308,6 +312,11 @@ const VERSIONED_PREF_KEYS = [NOTIFY_PREF_KEY];
 const MESSAGE_COMPLETE_DEBOUNCE_MS = 1500;
 const pendingMessageTimers = new Map(); // userId -> timeout id
 
+// Per-event weights, in message-equivalents, feeding activityCount.
+const MESSAGE_ACTIVITY_UNITS = 1;
+const JOIN_ACTIVITY_UNITS = 3;
+const MENTION_ACTIVITY_UNITS = 8;
+
 function noteMessageActivity(userId) {
   const existing = pendingMessageTimers.get(userId);
   if (existing) clearTimeout(existing);
@@ -315,7 +324,7 @@ function noteMessageActivity(userId) {
     userId,
     setTimeout(() => {
       pendingMessageTimers.delete(userId);
-      bumpActivity(ACTIVITY_STEP);
+      bumpActivity(MESSAGE_ACTIVITY_UNITS);
     }, MESSAGE_COMPLETE_DEBOUNCE_MS),
   );
 }
@@ -328,27 +337,32 @@ function cancelMessageActivity(userId) {
   }
 }
 
-// Ascending heat tiers, each a small pool of thematically-related emoji.
-// pickTierEmoji rolls one random emoji per tier and holds onto it - so the
-// favicon stays varied across separate away periods without flickering
-// between glyphs on every redraw while heat sits inside the same tier.
+// Ascending activity-count tiers, log-spaced (~4.6x per step) so max only
+// arrives at ACTIVITY_MAX_COUNT messages, not partway through. Each tier is
+// a small pool of thematically-related emoji; pickTierEmoji rolls one per
+// tier and holds onto it so the favicon stays varied across separate away
+// periods without flickering between glyphs while the count sits in one tier.
 const EMOJI_TIERS = [
-  { max: 0, emojis: ["😴", "💤", "🌙"] },
-  { max: 0.25, emojis: ["👀", "🙂", "✌️"] },
-  { max: 0.5, emojis: ["💬", "📈", "🐝"] },
-  { max: 0.75, emojis: ["🌶️", "⚡", "🎉"] },
-  { max: 1, emojis: ["🔥", "🚨", "💥"] },
+  { minCount: 1, emojis: ["👀", "🙂", "☕", "🌤️"] },
+  { minCount: 5, emojis: ["😮", "💬", "📈", "🐝"] },
+  { minCount: 22, emojis: ["😲", "🌶️", "⚡", "🎉"] },
+  { minCount: ACTIVITY_MAX_COUNT, emojis: ["🔥", "🚨", "💥", "🎆"] },
 ];
 
 let currentTierIndex = -1;
 let currentTierEmoji = null;
 
-function pickTierEmoji(heat) {
-  const tierIndex = EMOJI_TIERS.findIndex((t) => heat <= t.max);
-  const resolvedIndex = tierIndex === -1 ? EMOJI_TIERS.length - 1 : tierIndex;
+function pickTierEmoji(count) {
+  let resolvedIndex = 0;
+  for (let i = EMOJI_TIERS.length - 1; i >= 0; i--) {
+    if (count >= EMOJI_TIERS[i].minCount) {
+      resolvedIndex = i;
+      break;
+    }
+  }
   if (resolvedIndex !== currentTierIndex) {
-    const tier = EMOJI_TIERS[resolvedIndex];
     currentTierIndex = resolvedIndex;
+    const tier = EMOJI_TIERS[resolvedIndex];
     currentTierEmoji = tier.emojis[Math.floor(Math.random() * tier.emojis.length)];
   }
   return currentTierEmoji;
@@ -393,18 +407,19 @@ function drawFaviconEmoji(emoji) {
 }
 
 function updateFavicon() {
-  if (document.hidden) drawFaviconEmoji(pickTierEmoji(activityHeat));
+  if (document.hidden && activityCount > 0)
+    drawFaviconEmoji(pickTierEmoji(activityCount));
   else drawFaviconColor("#000000");
 }
 
 function bumpActivity(amount) {
   if (!notificationsEnabled || !document.hidden) return;
-  activityHeat = Math.min(1, activityHeat + amount);
+  activityCount = Math.min(ACTIVITY_MAX_COUNT, activityCount + amount);
   updateFavicon();
 }
 
 function resetActivity() {
-  activityHeat = 0;
+  activityCount = 0;
   currentTierIndex = -1;
   updateFavicon();
 }
@@ -467,7 +482,7 @@ function loadNotifyPreference() {
 socket.on("room mention", (data) => {
   const by = (data && data.by) || "Someone";
   if (window.toastr) toastr.info(by + " mentioned you");
-  bumpActivity(0.4);
+  bumpActivity(MENTION_ACTIVITY_UNITS);
   // Blink it into the tab title for anyone looking at another window.
   if (document.hidden) {
     const original = document.title;
@@ -3954,7 +3969,7 @@ socket.on("user joined", (data) => {
   }
   adjustLayout();
   updateRoomInfo(data);
-  bumpActivity(0.15);
+  bumpActivity(JOIN_ACTIVITY_UNITS);
 
   // A new join can cross the voting threshold
   updateVotesUI(currentVotes);
