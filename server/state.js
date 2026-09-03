@@ -93,6 +93,13 @@ const CONFIG = {
     BOT_BLOCK_DURATION: 300000,
     BOT_TOKEN_EXPIRY: 2592000000,
     BOT_TOKEN_CLEANUP_INTERVAL: 86400000,
+    // How long a departed user's ghost panel (and the name reservation that
+    // comes with it) survives unreclaimed before the ghost sweep releases it.
+    // Without this, a ghost whose owner's session identity didn't carry over
+    // on reconnect (CHAT-44) blocks that name forever - the sweep otherwise
+    // never touches departed entries, and FIFO eviction only kicks in once
+    // the room is at capacity.
+    GHOST_TTL_MS: Number(process.env.GHOST_TTL_MS) || 30 * 60 * 1000,
   },
 
   // Usernames that only validate when the connection carries a dev or mod key,
@@ -104,7 +111,7 @@ const CONFIG = {
     // User-facing app version, shown next to the navbar clock. It also stamps
     // stored client preferences (see loadNotifyPreference in room-client.js),
     // so bumping it deliberately resets those preferences to their defaults.
-    APP: "0.0.3",
+    APP: "0.0.4",
     // Socket message-shape version. Restarts are invisible while this matches
     // the client's baked-in copy; bump it ONLY when a client<->server payload
     // shape changes, which makes still-open clients reload once to pick up the
