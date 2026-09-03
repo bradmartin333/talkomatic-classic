@@ -1782,11 +1782,24 @@ async function leaveRoom(socket, userId) {
       // (a "ghost") instead of wiping it, so the room doesn't suddenly look
       // emptier than it needs to. Only the room.users removal and buffer
       // deletion are skipped here - that happens later, when the ghost is
-      // finally reclaimed (evictGhost(), on a FIFO-boot join) or when the
-      // user reconnects and un-ghosts their own seat (joinRoom's reclaim
-      // check). If the queue is non-empty, this is unchanged from before:
-      // remove and promote immediately.
-      if ((!room.queue || room.queue.length === 0) && leftUser) {
+      // finally reclaimed (evictGhost(), on a FIFO-boot join, or by the TTL
+      // sweep) or when the user reconnects and un-ghosts their own seat
+      // (joinRoom's reclaim check). If the queue is non-empty, this is
+      // unchanged from before: remove and promote immediately.
+      //
+      // Anonymous departures are excluded from ghosting entirely (CHAT-44):
+      // isAnonymousIdentity() already exempts them from the no-duplicates
+      // rule, so a ghost here reserves nothing worth reserving, and unlike a
+      // named ghost it can never actually be reclaimed by a future reconnect
+      // - there's nothing but userId (exactly what a lost session loses) to
+      // match it back to the same person. Ghosting it anyway just leaves an
+      // unreclaimable panel behind every time a session can't recover its
+      // identity, which is what let repeated reloads pile up indefinitely.
+      if (
+        (!room.queue || room.queue.length === 0) &&
+        leftUser &&
+        !isAnonymousIdentity(leftUser.username, leftUser.location)
+      ) {
         ghosted = true;
         leftUser.departed = true;
         leftUser.departedAt = Date.now();
@@ -3886,11 +3899,19 @@ function startCleanupIntervals() {
     for (const [roomId, room] of state.rooms) {
       if (!room.users || room.users.length === 0) continue;
       const before = room.users.length;
+      const expiredGhosts = [];
       room.users = room.users.filter((u) => {
         // Departed users have no live socket by design - that's not
         // staleness, it's the whole point of a ghost panel. Only sweep
-        // entries that never intended to be here without one.
-        if (u.departed) return true;
+        // entries that never intended to be here without one; a ghost past
+        // GHOST_TTL_MS is handled separately below via evictGhost, so its
+        // name reservation and buffers actually let go (CHAT-44).
+        if (u.departed) {
+          if (Date.now() - (u.departedAt || 0) >= CONFIG.TIMING.GHOST_TTL_MS) {
+            expiredGhosts.push(u);
+          }
+          return true;
+        }
         if (!activeIds.has(u.id)) {
           console.log(`Ghost removed: "${u.username}" from "${room.name}"`);
           state.userMessageBuffers.delete(u.id);
@@ -3911,6 +3932,10 @@ function startCleanupIntervals() {
         }
         return true;
       });
+      for (const ghost of expiredGhosts) {
+        console.log(`Ghost expired: "${ghost.username}" from "${room.name}"`);
+        evictGhost(room, ghost);
+      }
       const removed = before - room.users.length;
       if (removed > 0) {
         ghostCount += removed;
