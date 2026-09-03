@@ -343,7 +343,10 @@ function isAnonymousIdentity(username, location) {
 //   - live and idle users, and bots (all plain room.users entries)
 //   - departed ghosts, whose panel keeps their name and last-typed text until
 //     someone reclaims the seat - an away user can hold a name for hours, and
-//     CHAT-35 asks for no duplicates across active, idle and away alike
+//     CHAT-35 asks for no duplicates across active, idle and away alike -
+//     except a ghost past GHOST_TTL_MS, which no longer reserves its name
+//     (CHAT-44): the original owner's session may never carry the same
+//     userId back, and nothing should hold their name hostage forever
 //   - watchers in room.queue, whose names show in the navbar queue chip
 //
 // Excluding excludeUserId is what makes returning cost nothing: a reconnect,
@@ -357,6 +360,11 @@ function isUsernameTakenInRoom(room, username, excludeUserId) {
   if (!target) return false;
   for (const u of room?.users || []) {
     if (u.id === excludeUserId) continue;
+    if (
+      u.departed &&
+      Date.now() - (u.departedAt || 0) >= CONFIG.TIMING.GHOST_TTL_MS
+    )
+      continue;
     if (normalize(u.username) === target) return true;
   }
   for (const q of room?.queue || []) {
@@ -1787,19 +1795,15 @@ async function leaveRoom(socket, userId) {
       // (joinRoom's reclaim check). If the queue is non-empty, this is
       // unchanged from before: remove and promote immediately.
       //
-      // Anonymous departures are excluded from ghosting entirely (CHAT-44):
-      // isAnonymousIdentity() already exempts them from the no-duplicates
-      // rule, so a ghost here reserves nothing worth reserving, and unlike a
-      // named ghost it can never actually be reclaimed by a future reconnect
-      // - there's nothing but userId (exactly what a lost session loses) to
-      // match it back to the same person. Ghosting it anyway just leaves an
-      // unreclaimable panel behind every time a session can't recover its
-      // identity, which is what let repeated reloads pile up indefinitely.
-      if (
-        (!room.queue || room.queue.length === 0) &&
-        leftUser &&
-        !isAnonymousIdentity(leftUser.username, leftUser.location)
-      ) {
+      // Anonymous departures are ghosted the same as named ones, giving them
+      // the same away grace period everyone else gets on a disconnect. They
+      // can't be reclaimed by a future reconnect (isAnonymousIdentity()
+      // exempts them from the no-duplicates rule, so there's no name to
+      // match back to), so the GHOST_TTL_MS sweep below reaps them
+      // specifically once stale - that's what stops repeated reloads from
+      // piling up "Anonymous" panels (CHAT-44). Named ghosts are left alone
+      // by that sweep; they're cleared lazily instead, see joinRoom.
+      if ((!room.queue || room.queue.length === 0) && leftUser) {
         ghosted = true;
         leftUser.departed = true;
         leftUser.departedAt = Date.now();
@@ -1989,6 +1993,21 @@ function joinRoom(socket, roomId, userId) {
           true,
         ),
       );
+    }
+
+    // The check above let a stale ghost's name through (CHAT-44) rather than
+    // treating it as taken - clear that ghost out now so its panel doesn't
+    // sit on screen next to the name it no longer reserves.
+    if (!isAnon) {
+      const target = normalize(username);
+      const staleNamesake = room.users.find(
+        (u) =>
+          u.departed &&
+          u.id !== userId &&
+          normalize(u.username) === target &&
+          Date.now() - (u.departedAt || 0) >= CONFIG.TIMING.GHOST_TTL_MS,
+      );
+      if (staleNamesake) evictGhost(room, staleNamesake);
     }
 
     // Staff bypass room capacity (can always enter a full room to handle a
@@ -3907,12 +3926,19 @@ function startCleanupIntervals() {
       const expiredGhosts = [];
       room.users = room.users.filter((u) => {
         // Departed users have no live socket by design - that's not
-        // staleness, it's the whole point of a ghost panel. Only sweep
-        // entries that never intended to be here without one; a ghost past
-        // GHOST_TTL_MS is handled separately below via evictGhost, so its
-        // name reservation and buffers actually let go (CHAT-44).
+        // staleness, it's the whole point of a ghost panel: it stays put
+        // (even past GHOST_TTL_MS) until something actually needs the seat
+        // or the name back, which is what FIFO capacity eviction and the
+        // stale-namesake check in joinRoom are for. Only Anonymous ghosts
+        // are swept here on a timer - isAnonymousIdentity() exempts them
+        // from the no-duplicates rule, so nothing ever reclaims one by name,
+        // and unlike a named ghost they'd otherwise pile up forever in a
+        // long-lived room (CHAT-44).
         if (u.departed) {
-          if (Date.now() - (u.departedAt || 0) >= CONFIG.TIMING.GHOST_TTL_MS) {
+          if (
+            isAnonymousIdentity(u.username, u.location) &&
+            Date.now() - (u.departedAt || 0) >= CONFIG.TIMING.GHOST_TTL_MS
+          ) {
             expiredGhosts.push(u);
           }
           return true;
