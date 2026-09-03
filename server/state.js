@@ -99,7 +99,7 @@ const CONFIG = {
     // on reconnect (CHAT-44) blocks that name forever - the sweep otherwise
     // never touches departed entries, and FIFO eviction only kicks in once
     // the room is at capacity.
-    GHOST_TTL_MS: 30 * 60 * 1000,
+    GHOST_TTL_MS: Number(process.env.GHOST_TTL_MS) || 30 * 60 * 1000,
   },
 
   // Usernames that only validate when the connection carries a dev or mod key,
