@@ -1825,8 +1825,9 @@ async function leaveRoom(socket, userId) {
         if (
           room.users.length === 0 ||
           room.users.every((u) => u.departed)
-        )
+        ) {
           startRoomDeletionTimer(roomId);
+        }
       }
     }
 
