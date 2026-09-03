@@ -93,12 +93,13 @@ const CONFIG = {
     BOT_BLOCK_DURATION: 300000,
     BOT_TOKEN_EXPIRY: 2592000000,
     BOT_TOKEN_CLEANUP_INTERVAL: 86400000,
-    // How long a departed user's ghost panel (and the name reservation that
-    // comes with it) survives unreclaimed before the ghost sweep releases it.
-    // Without this, a ghost whose owner's session identity didn't carry over
-    // on reconnect (CHAT-44) blocks that name forever - the sweep otherwise
-    // never touches departed entries, and FIFO eviction only kicks in once
-    // the room is at capacity.
+    // How long a departed user's ghost panel reserves its name before that
+    // reservation lapses (isUsernameTakenInRoom, joinRoom's stale-namesake
+    // check) and, for an Anonymous ghost specifically, before the periodic
+    // sweep releases the panel outright. Without this, a ghost whose owner's
+    // session identity didn't carry over on reconnect (CHAT-44) blocks that
+    // name forever - a named ghost's own panel otherwise persists until FIFO
+    // eviction needs the seat, same as before this reservation lapsed.
     GHOST_TTL_MS: Number(process.env.GHOST_TTL_MS) || 30 * 60 * 1000,
   },
 
