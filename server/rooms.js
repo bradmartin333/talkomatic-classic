@@ -3941,6 +3941,12 @@ function startCleanupIntervals() {
         console.log(`Ghost expired: "${ghost.username}" from "${room.name}"`);
         evictGhost(room, ghost);
       }
+      if (
+        room.users.length === 0 ||
+        room.users.every((u) => u.departed)
+      ) {
+        startRoomDeletionTimer(roomId);
+      }
       const removed = before - room.users.length;
       if (removed > 0) {
         ghostCount += removed;
