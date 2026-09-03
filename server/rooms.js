@@ -1822,7 +1822,11 @@ async function leaveRoom(socket, userId) {
         // A seat just opened - hand it to whoever has been waiting longest.
         promoteFromQueue(room);
 
-        if (room.users.length === 0) startRoomDeletionTimer(roomId);
+        if (
+          room.users.length === 0 ||
+          room.users.every((u) => u.departed)
+        )
+          startRoomDeletionTimer(roomId);
       }
     }
 
