@@ -15,7 +15,7 @@ const CONFIG = {
     MAX_LOCATION_LENGTH: 20,
     MAX_ROOM_NAME_LENGTH: 25,
     MAX_MESSAGE_LENGTH: 5000,
-    MAX_ROOM_CAPACITY: 10,
+    MAX_ROOM_CAPACITY: 9,
     BASE_MAX_ROOMS: 15,
     ROOM_SCALING_INCREMENT: 5,
     SOCKET_MAX_REQUESTS_WINDOW: 1,
@@ -125,9 +125,9 @@ const CONFIG = {
 // normal, and the app's own advertised room capacity should never be
 // unreachable from one network origin. Tied to MAX_ROOM_CAPACITY (rather
 // than a bare number) so the two can't quietly drift apart again the way
-// they had (8 vs. a 10-user room) - see CHAT-25. The x2 leaves headroom for
-// queue watchers, who hold a real socket too, and for a household running
-// a couple of tabs each.
+// they had historically - see CHAT-25. The x2 leaves headroom for queue
+// watchers, who hold a real socket too, and for a household running a
+// couple of tabs each.
 // NOTE: `|| ...` means MAX_CONNECTIONS_PER_IP=0 is silently ignored (0 is
 // falsy) and falls back to the computed default - there is no way to
 // configure a literal zero (block an IP entirely from here) this way; use
