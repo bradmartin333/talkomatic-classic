@@ -34,8 +34,8 @@ const {
 } = require("./security");
 
 // Effective capacity for a room: a per-room override (set by a dev inside the
-// room) wins over the global default, so raising one room to 50 never changes
-// the 10-person limit in other rooms.
+// room) wins over the global default, so raising one room never changes the
+// default capacity in other rooms.
 function roomCapacity(room) {
   const n = room && Number(room.maxSize);
   return Number.isFinite(n) && n >= 2
@@ -1981,7 +1981,7 @@ function joinRoom(socket, roomId, userId) {
     // room.users (the lobby socket full-joins before navigating to room.html);
     // the dedup filter just below removes it, but that runs AFTER this check.
     // Counting the phantom self would fill the last slot and bounce an
-    // otherwise-valid join at exactly capacity-1 (e.g. 9/10 -> "room full").
+    // otherwise-valid join at exactly capacity-1 (the room is already full).
     const joinableUserCount = (room.users || []).filter(
       (u) => u.id !== userId && !(u.isDev && u.isVanished),
     ).length;

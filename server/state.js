@@ -118,9 +118,9 @@ const CONFIG = {
 // normal, and the app's own advertised room capacity should never be
 // unreachable from one network origin. Tied to MAX_ROOM_CAPACITY (rather
 // than a bare number) so the two can't quietly drift apart again the way
-// they had (8 vs. a 10-user room) - see CHAT-25. The x2 leaves headroom for
-// queue watchers, who hold a real socket too, and for a household running
-// a couple of tabs each.
+// they had historically - see CHAT-25. The x2 leaves headroom for queue
+// watchers, who hold a real socket too, and for a household running a
+// couple of tabs each.
 // NOTE: `|| ...` means MAX_CONNECTIONS_PER_IP=0 is silently ignored (0 is
 // falsy) and falls back to the computed default - there is no way to
 // configure a literal zero (block an IP entirely from here) this way; use
