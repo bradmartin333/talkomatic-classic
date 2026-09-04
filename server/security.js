@@ -353,12 +353,32 @@ async function handleBotTokenInfo(req, res) {
   });
 }
 
+// TALKOMATIC_API_KEY must be set in .env to protect the /api/v1/rooms
+// endpoints. Without it a random key is generated for this process and
+// logged once, the same way SESSION_SECRET falls back in server.js - a
+// hardcoded default here would just be a public key committed to the repo.
+const API_KEY = process.env.TALKOMATIC_API_KEY;
+
+if (!API_KEY) {
+  console.warn(
+    "\n" +
+      "════════════════════════════════════════════════════════════\n" +
+      "  WARNING: TALKOMATIC_API_KEY is not set in .env\n" +
+      "  A temporary key will be generated for this process and is\n" +
+      "  NOT shared with any client - the /api/v1/rooms endpoints\n" +
+      "  will be unreachable via x-api-key until you set one.\n" +
+      "\n" +
+      "  Fix: add to .env →  TALKOMATIC_API_KEY=<long random string>\n" +
+      "  Generate one:       openssl rand -hex 32\n" +
+      "════════════════════════════════════════════════════════════\n",
+  );
+}
+
+const EFFECTIVE_API_KEY = API_KEY || crypto.randomBytes(32).toString("hex");
+
 function apiAuth(req, res, next) {
   const apiKey = req.header("x-api-key");
-  const validKey =
-    process.env.TALKOMATIC_API_KEY ||
-    "tK_public_key_4f8a9b2c7d6e3f1a5g8h9i0j4k5l6m7n8o9p";
-  if (!apiKey || apiKey !== validKey) {
+  if (!apiKey || apiKey !== EFFECTIVE_API_KEY) {
     return sendErrorResponse(
       res,
       ERROR_CODES.UNAUTHORIZED,
