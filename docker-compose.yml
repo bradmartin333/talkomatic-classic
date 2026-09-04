@@ -6,6 +6,7 @@ services:
     environment:
       # Set these in a .env file next to this compose file (see .env.example)
       - SESSION_SECRET=${SESSION_SECRET:-}
+      - TALKOMATIC_API_KEY=${TALKOMATIC_API_KEY:-}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
       - DEV_KEY_HASH=${DEV_KEY_HASH:-}
     volumes:

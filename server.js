@@ -116,7 +116,7 @@ const allowedOrigins = [
 ];
 const corsOptions = {
   origin: (origin, cb) =>
-    !origin || allowedOrigins.includes(origin) || origin.endsWith("github.io")
+    !origin || allowedOrigins.includes(origin) || origin.endsWith(".github.io")
       ? cb(null, true)
       : cb(new Error("CORS blocked"), false),
   methods: ["GET", "POST"],
@@ -314,7 +314,9 @@ app.use(enhancedSessionMiddleware);
 const io = socketIo(server, {
   cors: {
     origin: (origin, cb) =>
-      !origin || allowedOrigins.includes(origin) || origin.endsWith("github.io")
+      !origin ||
+      allowedOrigins.includes(origin) ||
+      origin.endsWith(".github.io")
         ? cb(null, true)
         : cb(new Error("Socket CORS"), false),
     methods: ["GET", "POST"],
