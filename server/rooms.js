@@ -397,10 +397,6 @@ function findNameHolder(username, excludeUserId) {
   return null;
 }
 
-function isUsernameTaken(username, excludeUserId) {
-  return !!findNameHolder(username, excludeUserId);
-}
-
 function getUserCurrentRoom(userId) {
   for (const [roomId, room] of state.rooms) {
     if (room.users && room.users.some((u) => u.id === userId)) return roomId;
