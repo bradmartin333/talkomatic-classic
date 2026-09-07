@@ -274,11 +274,6 @@ modalInput.addEventListener("keydown", (e) => {
 // bit of activity while away switches it to a mood emoji, escalating through
 // busier/louder emoji as activityCount piles up. Each tier has a small pool
 // of emoji so the same level doesn't always draw the identical glyph.
-// notificationsEnabled is the user's opt-in for the count accumulating at all.
-
-const notifyToggleButton = document.getElementById("notifyToggle");
-const notifyIcon = document.getElementById("notifyIcon");
-let notificationsEnabled = true;
 
 const faviconLink = document.querySelector('link[rel="icon"]');
 const FAVICON_SIZE = 32;
@@ -290,21 +285,9 @@ let activityCount = 0;
 const ACTIVITY_MAX_COUNT = 100; // message-equivalents needed to reach the top tier
 
 // Served by sendPage from CONFIG.VERSIONS.APP, so the version shown in the
-// navbar and the version stamped onto stored preferences are the same string
-// and neither is baked into this bundle.
+// navbar is not baked into this bundle.
 const APP_VERSION =
   document.querySelector('meta[name="tk-version"]')?.content || "0.0.0";
-
-// One stamp for all versioned preferences, not one per preference: storage
-// records the app version its prefs were written under, and anything listed
-// below is discarded when that version moves. This resets the opt-out on every
-// version bump - the tab-dot feature that shipped before this one wrote the
-// same key, so anyone who silenced the dot was silently opted out of the color
-// too, with no hint the feature had changed. The bell still turns it back off,
-// and that choice sticks until the next bump.
-const STORED_VERSION_KEY = "appVersion";
-const NOTIFY_PREF_KEY = "notificationsEnabled";
-const VERSIONED_PREF_KEYS = [NOTIFY_PREF_KEY];
 
 // Chat here is live-typed with no explicit "send", so a message only counts
 // as "completed" once its sender pauses - each diff restarts this timer per
@@ -413,7 +396,7 @@ function updateFavicon() {
 }
 
 function bumpActivity(amount) {
-  if (!notificationsEnabled || !document.hidden) return;
+  if (!document.hidden) return;
   activityCount = Math.min(ACTIVITY_MAX_COUNT, activityCount + amount);
   updateFavicon();
 }
@@ -432,51 +415,6 @@ window.addEventListener("focus", resetActivity);
 
 updateFavicon();
 
-function toggleNotifications() {
-  notificationsEnabled = !notificationsEnabled;
-  try {
-    localStorage.setItem(NOTIFY_PREF_KEY, JSON.stringify(notificationsEnabled));
-  } catch (_) {
-    // Storage blocked (private window, quota): the toggle still holds for this
-    // session, it just won't be remembered on the next load.
-  }
-  updateNotifyIcon();
-}
-
-// Drops every versioned preference when the stored stamp doesn't match this
-// build, then re-stamps. Deliberately the ONLY writer of the stamp: if each
-// preference's own loader wrote it, the first one to run would mark storage
-// current and every later loader would skip a reset it was owed.
-//
-// Called once at load, before any preference is read. Storage access is
-// guarded because this runs early in the load handler, where an uncaught throw
-// would take the rest of it (layout toggle, name button, viewport) down too.
-function migrateStoredPrefs() {
-  try {
-    if (localStorage.getItem(STORED_VERSION_KEY) === APP_VERSION) return;
-    for (const key of VERSIONED_PREF_KEYS) localStorage.removeItem(key);
-    localStorage.setItem(STORED_VERSION_KEY, APP_VERSION);
-  } catch (_) {
-    // Storage unavailable: every preference just falls back to its default.
-  }
-}
-
-function loadNotifyPreference() {
-  let saved = null;
-  try {
-    saved = localStorage.getItem(NOTIFY_PREF_KEY);
-  } catch (_) {
-    return; // storage unavailable: keep the default
-  }
-  if (saved === null) return; // never set, or just reset - default stays ON
-  try {
-    notificationsEnabled = JSON.parse(saved) === true;
-  } catch (_) {
-    notificationsEnabled = true;
-  }
-  updateNotifyIcon();
-}
-
 // Somebody typed your name in this room. One nudge per person per minute is
 // enforced server side, so this can just show it.
 socket.on("room mention", (data) => {
@@ -494,13 +432,6 @@ socket.on("room mention", (data) => {
     document.addEventListener("visibilitychange", restore);
   }
 });
-function updateNotifyIcon() {
-  notifyIcon.className = notificationsEnabled ? "fas fa-bell" : "fas fa-bell-slash";
-  notifyToggleButton.setAttribute(
-    "aria-label",
-    notificationsEnabled ? "Notifications On" : "Notifications Off",
-  );
-}
 
 // ── 5. CONTENTEDITABLE UTILITIES ────────────────────────────────────────────
 
@@ -4426,12 +4357,6 @@ window.addEventListener("load", () => {
   updateTimeLabels();
   adjustLayout();
   initializeAppDirectory();
-
-  // Tab notifications. Migration first: it decides what any loader below is
-  // still allowed to read.
-  migrateStoredPrefs();
-  loadNotifyPreference();
-  notifyToggleButton.addEventListener("click", toggleNotifications);
 
   // Layout toggle (desktop, client-side view preference). Shown only at <=4
   // users; refreshLayoutToggle() handles when it appears/disappears.
