@@ -4099,6 +4099,24 @@ socket.on("room closed", (data) => {
 socket.on("error", (error) => {
   console.log(error);
   if (error?.error?.code === "USERNAME_TAKEN") {
+    // CHAT-50: the server flags this specific case - the name is only held
+    // by a still-fresh ghost, nobody live - so offer to evict it and take
+    // the seat over, instead of just asking for a different name outright.
+    if (error.error.details?.ghostTakeoverAvailable && lastIdentityAttempt) {
+      const { uname, uloc, doJoin } = lastIdentityAttempt;
+      showConfirmModal(
+        `${error.error.message} It looks like it's held by an inactive ` +
+          "session (maybe you, on another device). Take over that seat?",
+        (confirmed) => {
+          if (confirmed) {
+            announceIdentityThenJoin(uname, uloc, doJoin, "takeover ghost");
+          } else {
+            repromptForName(error.error.message);
+          }
+        },
+      );
+      return;
+    }
     repromptForName(error.error.message);
     return;
   }
@@ -4211,17 +4229,25 @@ async function changeName() {
   window.location.reload();
 }
 
-// Announces identity via "join lobby", then calls doJoin() - but only once,
-// and only if the announce actually succeeded. The 1500ms fallback exists
-// because a successful "join lobby" has no ack of its own beyond
-// "signin status" firing eventually; without the fallback a missed event
-// would strand the caller. CHAT-50: that fallback used to fire regardless,
-// so a rejected announce (USERNAME_TAKEN - e.g. another device's still-fresh
-// ghost holding the name) would join/reconnect anyway a moment after the
-// error modal appeared, silently landing as Anonymous underneath it. A
-// USERNAME_TAKEN error now cancels the fallback instead; the caller's own
-// "error" handler is what tells the user why (see repromptForName).
-function announceIdentityThenJoin(uname, uloc, doJoin) {
+// The most recent announceIdentityThenJoin() call, so the global "error"
+// handler can retry it as a ghost takeover (CHAT-50) - it needs the same
+// uname/uloc/doJoin the original attempt used, which it has no other way to
+// reach from outside this function's closure.
+let lastIdentityAttempt = null;
+
+// Announces identity via "join lobby" (or "takeover ghost", for a confirmed
+// retry), then calls doJoin() - but only once, and only if the announce
+// actually succeeded. The 1500ms fallback exists because a successful
+// announce has no ack of its own beyond "signin status" firing eventually;
+// without the fallback a missed event would strand the caller. CHAT-50: that
+// fallback used to fire regardless, so a rejected announce (USERNAME_TAKEN -
+// e.g. another device's still-fresh ghost holding the name) would
+// join/reconnect anyway a moment after the error modal appeared, silently
+// landing as Anonymous underneath it. A USERNAME_TAKEN error now cancels the
+// fallback instead; the caller's own "error" handler is what tells the user
+// why (see repromptForName), and offers a takeover when the server says the
+// name is only held by a ghost.
+function announceIdentityThenJoin(uname, uloc, doJoin, eventName = "join lobby") {
   let settled = false;
   const cleanup = () => {
     socket.off("signin status", onSignInStatus);
@@ -4248,7 +4274,8 @@ function announceIdentityThenJoin(uname, uloc, doJoin) {
 
   socket.on("signin status", onSignInStatus);
   socket.on("error", onError);
-  socket.emit("join lobby", { username: uname, location: uloc, avatar: storedAvatar() });
+  lastIdentityAttempt = { uname, uloc, doJoin };
+  socket.emit(eventName, { username: uname, location: uloc, avatar: storedAvatar() });
 }
 
 async function joinRoom(roomId, accessCode = null) {

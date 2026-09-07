@@ -336,18 +336,23 @@ function isAnonymousIdentity(username, location) {
   return username === "Anonymous" && location === "On The Web";
 }
 
-// True when someone OTHER than excludeUserId already answers to this name in
-// this room. "Already answers to" deliberately spans every occupant the room
-// can put on screen, because each of them draws a named panel or chip:
+// Finds whoever OTHER than excludeUserId already answers to this name in this
+// room. "Already answers to" deliberately spans every occupant the room can
+// put on screen, because each of them draws a named panel or chip:
 //
-//   - live and idle users, and bots (all plain room.users entries)
+//   - live and idle users, and bots (all plain room.users entries) - kind
+//     "live"
 //   - departed ghosts, whose panel keeps their name and last-typed text until
 //     someone reclaims the seat - an away user can hold a name for hours, and
 //     CHAT-35 asks for no duplicates across active, idle and away alike -
 //     except a ghost past GHOST_TTL_MS, which no longer reserves its name
 //     (CHAT-44): the original owner's session may never carry the same
-//     userId back, and nothing should hold their name hostage forever
-//   - watchers in room.queue, whose names show in the navbar queue chip
+//     userId back, and nothing should hold their name hostage forever - kind
+//     "ghost". CHAT-50 offers a takeover prompt for exactly this kind: a
+//     fresh ghost's seat can be evicted by a confirmed request from whoever
+//     is actually asking for it, rather than making them wait out the TTL.
+//   - watchers in room.queue, whose names show in the navbar queue chip -
+//     kind "queued"
 //
 // Excluding excludeUserId is what makes returning cost nothing: a reconnect,
 // a rename, and a ghost reclaiming its own seat all match on userId, so a user
@@ -355,9 +360,9 @@ function isAnonymousIdentity(username, location) {
 //
 // Compared through normalize() (trim + lowercase), the same way reserved names
 // are, so "Brad", "brad" and "brad " cannot sit in one room together.
-function isUsernameTakenInRoom(room, username, excludeUserId) {
+function findNameHolderInRoom(room, username, excludeUserId) {
   const target = normalize(username);
-  if (!target) return false;
+  if (!target) return null;
   for (const u of room?.users || []) {
     if (u.id === excludeUserId) continue;
     if (
@@ -365,23 +370,35 @@ function isUsernameTakenInRoom(room, username, excludeUserId) {
       Date.now() - (u.departedAt || 0) >= CONFIG.TIMING.GHOST_TTL_MS
     )
       continue;
-    if (normalize(u.username) === target) return true;
+    if (normalize(u.username) === target)
+      return { kind: u.departed ? "ghost" : "live", room, user: u };
   }
   for (const q of room?.queue || []) {
     if (q.userId === excludeUserId) continue;
-    if (normalize(q.username) === target) return true;
+    if (normalize(q.username) === target)
+      return { kind: "queued", room, queueEntry: q };
   }
-  return false;
+  return null;
 }
 
-// The same test across every room, for the paths that settle on a name before
-// a room is picked ("join lobby"). One reachable room is the norm here, but
-// scoping by room keeps the rule honest if more become reachable again.
-function isUsernameTaken(username, excludeUserId) {
+function isUsernameTakenInRoom(room, username, excludeUserId) {
+  return !!findNameHolderInRoom(room, username, excludeUserId);
+}
+
+// The same search across every room, for the paths that settle on a name
+// before a room is picked ("join lobby"). One reachable room is the norm
+// here, but scoping by room keeps the rule honest if more become reachable
+// again.
+function findNameHolder(username, excludeUserId) {
   for (const [, room] of state.rooms) {
-    if (isUsernameTakenInRoom(room, username, excludeUserId)) return true;
+    const hit = findNameHolderInRoom(room, username, excludeUserId);
+    if (hit) return hit;
   }
-  return false;
+  return null;
+}
+
+function isUsernameTaken(username, excludeUserId) {
+  return !!findNameHolder(username, excludeUserId);
 }
 
 function getUserCurrentRoom(userId) {
@@ -1868,6 +1885,162 @@ async function leaveRoom(socket, userId) {
   }
 }
 
+// Handles both a normal sign-in ("join lobby") and a confirmed ghost-seat
+// takeover ("takeover ghost") - same validation and session-commit either
+// way. The only difference is what happens when the name is currently held
+// by a still-fresh ghost: a plain "join lobby" refuses and tells the client
+// a takeover is available (CHAT-50); "takeover ghost" is the client's
+// confirmed follow-up, which evicts that specific ghost's seat first. A name
+// held by a LIVE user or a queued watcher is never up for takeover, even
+// with confirmGhostTakeover set - only holder.kind === "ghost" qualifies, so
+// a race where the real owner reconnected in the meantime just falls through
+// to the ordinary refusal instead of evicting someone live.
+async function handleJoinLobby(socket, data, { confirmGhostTakeover = false } = {}) {
+  if (!data || typeof data !== "object")
+    return socket.emit(
+      "error",
+      createErrorResponse(ERROR_CODES.BAD_REQUEST, "Invalid data."),
+    );
+  const valErr = validateObject(data, {
+    username: { rule: "username" },
+    location: { rule: "location" },
+    avatar: { rule: "avatar" },
+  });
+  if (valErr) return socket.emit("validation_error", valErr);
+
+  // Optional Discord avatar. Only the validated snowflake + hash are
+  // kept; sending avatar:null (or omitting it) clears the stored one.
+  const pfpBlocked = false;
+  const avatar =
+    !pfpBlocked && data.avatar && typeof data.avatar === "object"
+      ? {
+          id: String(data.avatar.discordId),
+          hash: String(data.avatar.hash).toLowerCase(),
+          animated: !!data.avatar.animated,
+        }
+      : null;
+
+  // Identity fields are sanitized (zalgo/RTL stripped) before the
+  // word filter runs, so obfuscated slurs are cleaned then caught
+  let username = enforceUsernameLimit(sanitizeName(data.username));
+  let location = enforceLocationLimit(
+    sanitizeName(data.location || "On The Web"),
+  );
+
+  // Sanitization can empty a name made entirely of stripped
+  // characters; reject instead of admitting a blank user
+  if (!username) {
+    return socket.emit(
+      "error",
+      createErrorResponse(
+        ERROR_CODES.VALIDATION_ERROR,
+        "Username contains no valid characters.",
+      ),
+    );
+  }
+  if (!location) location = "On The Web";
+
+  if (CONFIG.FEATURES.ENABLE_WORD_FILTER) {
+    if (wordFilter.checkText(username).hasOffensiveWord)
+      return socket.emit(
+        "error",
+        createErrorResponse(
+          ERROR_CODES.VALIDATION_ERROR,
+          "Username contains forbidden words.",
+        ),
+      );
+    if (wordFilter.checkText(location).hasOffensiveWord)
+      return socket.emit(
+        "error",
+        createErrorResponse(
+          ERROR_CODES.VALIDATION_ERROR,
+          "Location contains forbidden words.",
+        ),
+      );
+  }
+
+  // Reserved staff names only validate for connections carrying a
+  // dev or mod key, so trolls cannot impersonate staff.
+  if (isReservedName(username) && !socket.isDev && !socket.isMod) {
+    return socket.emit(
+      "error",
+      createErrorResponse(
+        ERROR_CODES.VALIDATION_ERROR,
+        "That username is reserved. Please choose another.",
+      ),
+    );
+  }
+
+  const userId = socket.handshake.sessionID;
+  if (!socket.handshake.session)
+    return socket.emit(
+      "error",
+      createErrorResponse(ERROR_CODES.SERVER_ERROR, "Session not available."),
+    );
+  // No two people answer to the same name (CHAT-35). Checked here so the
+  // browser hears about it while the name prompt is still the thing on
+  // screen; joinRoom re-checks, and that is the check that actually
+  // guarantees it (see the note there).
+  if (!isAnonymousIdentity(username, location)) {
+    const holder = findNameHolder(username, userId);
+    if (holder) {
+      if (holder.kind === "ghost" && confirmGhostTakeover) {
+        evictGhost(holder.room, holder.user);
+      } else {
+        return socket.emit(
+          "error",
+          createErrorResponse(
+            ERROR_CODES.USERNAME_TAKEN,
+            `The name "${username}" is already taken. Please choose another.`,
+            holder.kind === "ghost" ? { ghostTakeoverAvailable: true } : null,
+            true,
+          ),
+        );
+      }
+    }
+  }
+
+  Object.assign(socket.handshake.session, {
+    username,
+    location,
+    userId,
+    isIPBased: false,
+    avatar,
+  });
+  await promisifySessionSave(socket.handshake.session);
+  state.users.set(userId, { id: userId, username, location });
+
+  // If they are already in a room, update their live user record so the
+  // avatar shows without a rejoin.
+  for (const room of state.rooms.values()) {
+    const u = (room.users || []).find((x) => x.id === userId);
+    if (u && u.avatar !== avatar) {
+      u.avatar = avatar;
+      emitRoomSnapshot(room);
+    }
+  }
+
+  if (socket.isDev) {
+    state.devUsers.add(userId);
+  }
+
+  socket.join("lobby");
+  updateLobby();
+  socket.emit("signin status", {
+    isSignedIn: true,
+    username,
+    location,
+    userId,
+    isIPBased: false,
+    isBot: !!socket.isBot,
+    isDev: !!socket.isDev,
+    isMod: !!socket.isMod,
+    modLevel: socket.isMod ? socket.modLevel || 2 : 0,
+    isHidden: !!socket.isHidden,
+    avatar,
+  });
+}
+
 function joinRoom(socket, roomId, userId) {
   try {
     if (!roomId || typeof roomId !== "string" || roomId.length !== 6) {
@@ -2341,151 +2514,18 @@ function registerSocketHandlers(opts) {
     // ── Join Lobby ──────────────────────────────────────────────────────
     socket.on(
       "join lobby",
-      safe(async (data) => {
-        if (!data || typeof data !== "object")
-          return socket.emit(
-            "error",
-            createErrorResponse(ERROR_CODES.BAD_REQUEST, "Invalid data."),
-          );
-        const valErr = validateObject(data, {
-          username: { rule: "username" },
-          location: { rule: "location" },
-          avatar: { rule: "avatar" },
-        });
-        if (valErr) return socket.emit("validation_error", valErr);
+      safe(async (data) => handleJoinLobby(socket, data)),
+    );
 
-        // Optional Discord avatar. Only the validated snowflake + hash are
-        // kept; sending avatar:null (or omitting it) clears the stored one.
-        const pfpBlocked = false;
-        const avatar =
-          !pfpBlocked && data.avatar && typeof data.avatar === "object"
-            ? {
-                id: String(data.avatar.discordId),
-                hash: String(data.avatar.hash).toLowerCase(),
-                animated: !!data.avatar.animated,
-              }
-            : null;
-
-        // Identity fields are sanitized (zalgo/RTL stripped) before the
-        // word filter runs, so obfuscated slurs are cleaned then caught
-        let username = enforceUsernameLimit(sanitizeName(data.username));
-        let location = enforceLocationLimit(
-          sanitizeName(data.location || "On The Web"),
-        );
-
-        // Sanitization can empty a name made entirely of stripped
-        // characters; reject instead of admitting a blank user
-        if (!username) {
-          return socket.emit(
-            "error",
-            createErrorResponse(
-              ERROR_CODES.VALIDATION_ERROR,
-              "Username contains no valid characters.",
-            ),
-          );
-        }
-        if (!location) location = "On The Web";
-
-        if (CONFIG.FEATURES.ENABLE_WORD_FILTER) {
-          if (wordFilter.checkText(username).hasOffensiveWord)
-            return socket.emit(
-              "error",
-              createErrorResponse(
-                ERROR_CODES.VALIDATION_ERROR,
-                "Username contains forbidden words.",
-              ),
-            );
-          if (wordFilter.checkText(location).hasOffensiveWord)
-            return socket.emit(
-              "error",
-              createErrorResponse(
-                ERROR_CODES.VALIDATION_ERROR,
-                "Location contains forbidden words.",
-              ),
-            );
-        }
-
-        // Reserved staff names only validate for connections carrying a
-        // dev or mod key, so trolls cannot impersonate staff.
-        if (isReservedName(username) && !socket.isDev && !socket.isMod) {
-          return socket.emit(
-            "error",
-            createErrorResponse(
-              ERROR_CODES.VALIDATION_ERROR,
-              "That username is reserved. Please choose another.",
-            ),
-          );
-        }
-
-        const userId = socket.handshake.sessionID;
-        if (!socket.handshake.session)
-          return socket.emit(
-            "error",
-            createErrorResponse(
-              ERROR_CODES.SERVER_ERROR,
-              "Session not available.",
-            ),
-          );
-        // No two people answer to the same name (CHAT-35). Checked here so the
-        // browser hears about it while the name prompt is still the thing on
-        // screen; joinRoom re-checks, and that is the check that actually
-        // guarantees it (see the note there).
-        if (
-          !isAnonymousIdentity(username, location) &&
-          isUsernameTaken(username, userId)
-        ) {
-          return socket.emit(
-            "error",
-            createErrorResponse(
-              ERROR_CODES.USERNAME_TAKEN,
-              `The name "${username}" is already taken. Please choose another.`,
-              null,
-              true,
-            ),
-          );
-        }
-
-        Object.assign(socket.handshake.session, {
-          username,
-          location,
-          userId,
-          isIPBased: false,
-          avatar,
-        });
-        await promisifySessionSave(socket.handshake.session);
-        state.users.set(userId, { id: userId, username, location });
-
-        // If they are already in a room, update their live user record so the
-        // avatar shows without a rejoin.
-        for (const room of state.rooms.values()) {
-          const u = (room.users || []).find((x) => x.id === userId);
-          if (u && u.avatar !== avatar) {
-            u.avatar = avatar;
-            emitRoomSnapshot(room);
-          }
-        }
-
-
-        if (socket.isDev) {
-          state.devUsers.add(userId);
-        }
-
-        socket.join("lobby");
-        updateLobby();
-        socket.emit("signin status", {
-          isSignedIn: true,
-          username,
-          location,
-          userId,
-          isIPBased: false,
-          isBot: !!socket.isBot,
-          isDev: !!socket.isDev,
-          isMod: !!socket.isMod,
-          modLevel: socket.isMod ? socket.modLevel || 2 : 0,
-          isHidden: !!socket.isHidden,
-          avatar,
-        });
-      }),
+    // ── Ghost Takeover (CHAT-50) ──────────────────────────────────────────
+    // The client's confirmed follow-up after "join lobby" refused with
+    // ghostTakeoverAvailable: true - same sign-in, but a still-fresh ghost's
+    // seat is evicted first instead of blocking. See handleJoinLobby.
+    socket.on(
+      "takeover ghost",
+      safe(async (data) =>
+        handleJoinLobby(socket, data, { confirmGhostTakeover: true }),
+      ),
     );
 
 
