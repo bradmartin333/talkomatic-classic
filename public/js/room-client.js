@@ -176,7 +176,13 @@ const closeModalBtn = document.querySelector(".close-modal-btn");
 let currentModalCallback = null;
 
 function showModal(title, message, options = {}) {
-  modalTitle.textContent = title;
+  modalTitle.textContent = title || "";
+  modalTitle.style.display = title ? "" : "none";
+  // #modalTitle normally supplies the top spacing; without it, the message
+  // would sit flush against the modal's own padding with no title's
+  // margin-bottom above it, so it needs its own top margin removed too -
+  // otherwise a paragraph's default top margin stacks on top of that padding.
+  modalMessage.style.marginTop = title ? "" : "0";
   modalMessage.textContent = message;
   modalInputContainer.style.display = "none";
   modalInput.value = "";
@@ -215,8 +221,8 @@ function showInfoModal(message, callback = null) {
   });
 }
 
-function showConfirmModal(message, callback) {
-  showModal("Confirmation", message, {
+function showConfirmModal(message, callback, title = "Confirmation") {
+  showModal(title, message, {
     confirmText: "Yes",
     cancelText: "No",
     callback,
@@ -3111,7 +3117,14 @@ function createUserRow(user, container) {
     chatInput = div;
     div.addEventListener("paste", (e) => {
       e.preventDefault();
-      const text = e.clipboardData?.getData("text/plain") || "";
+      // CHAT-47: whatever a URL was copied from often tacks on a trailing
+      // (sometimes leading) newline - insert that verbatim and pre-wrap
+      // renders it as a stray blank line nobody typed. Only the outer blank
+      // lines are trimmed; newlines in the middle of a real multi-line paste
+      // are left alone.
+      const text = (e.clipboardData?.getData("text/plain") || "")
+        .replace(/\r\n/g, "\n")
+        .replace(/^\n+|\n+$/g, "");
       document.execCommand("insertText", false, text);
     });
     div.addEventListener("input", () => {
@@ -3919,7 +3932,10 @@ socket.on("user joined", (data) => {
   }
   adjustLayout();
   updateRoomInfo(data);
-  bumpActivity(JOIN_ACTIVITY_UNITS);
+  // A rejoin (ghost reclaim, or a network blip that never got "user left"
+  // out) isn't new activity - only a genuine first-time join bumps the tab
+  // notification.
+  if (!data.isRejoin) bumpActivity(JOIN_ACTIVITY_UNITS);
 
   // A new join can cross the voting threshold
   updateVotesUI(currentVotes);
@@ -4089,6 +4105,24 @@ socket.on("room closed", (data) => {
 socket.on("error", (error) => {
   console.log(error);
   if (error?.error?.code === "USERNAME_TAKEN") {
+    // CHAT-50: the server flags this specific case - the name is only held
+    // by a still-fresh ghost, nobody live - so offer to evict it and take
+    // the seat over, instead of just asking for a different name outright.
+    if (error.error.details?.ghostTakeoverAvailable && lastIdentityAttempt) {
+      const { uname, uloc, doJoin } = lastIdentityAttempt;
+      showConfirmModal(
+        `"${uname}" is signed in on another device that's gone idle. Take over?`,
+        (confirmed) => {
+          if (confirmed) {
+            announceIdentityThenJoin(uname, uloc, doJoin, "takeover ghost");
+          } else {
+            repromptForName(error.error.message);
+          }
+        },
+        null,
+      );
+      return;
+    }
     repromptForName(error.error.message);
     return;
   }
@@ -4201,6 +4235,55 @@ async function changeName() {
   window.location.reload();
 }
 
+// The most recent announceIdentityThenJoin() call, so the global "error"
+// handler can retry it as a ghost takeover (CHAT-50) - it needs the same
+// uname/uloc/doJoin the original attempt used, which it has no other way to
+// reach from outside this function's closure.
+let lastIdentityAttempt = null;
+
+// Announces identity via "join lobby" (or "takeover ghost", for a confirmed
+// retry), then calls doJoin() - but only once, and only if the announce
+// actually succeeded. The 1500ms fallback exists because a successful
+// announce has no ack of its own beyond "signin status" firing eventually;
+// without the fallback a missed event would strand the caller. CHAT-50: that
+// fallback used to fire regardless, so a rejected announce (USERNAME_TAKEN -
+// e.g. another device's still-fresh ghost holding the name) would
+// join/reconnect anyway a moment after the error modal appeared, silently
+// landing as Anonymous underneath it. A USERNAME_TAKEN error now cancels the
+// fallback instead; the caller's own "error" handler is what tells the user
+// why (see repromptForName), and offers a takeover when the server says the
+// name is only held by a ghost.
+function announceIdentityThenJoin(uname, uloc, doJoin, eventName = "join lobby") {
+  let settled = false;
+  const cleanup = () => {
+    socket.off("signin status", onSignInStatus);
+    socket.off("error", onError);
+    clearTimeout(fallback);
+  };
+  const onSignInStatus = () => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    doJoin();
+  };
+  const onError = (err) => {
+    if (settled || err?.error?.code !== "USERNAME_TAKEN") return;
+    settled = true;
+    cleanup();
+  };
+  const fallback = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    doJoin();
+  }, 1500);
+
+  socket.on("signin status", onSignInStatus);
+  socket.on("error", onError);
+  lastIdentityAttempt = { uname, uloc, doJoin };
+  socket.emit(eventName, { username: uname, location: uloc, avatar: storedAvatar() });
+}
+
 async function joinRoom(roomId, accessCode = null) {
   // Re-announce identity from this browser before joining. "join room" carries
   // no name and trusts the server session, but the session is in-memory: a
@@ -4231,15 +4314,7 @@ async function joinRoom(roomId, accessCode = null) {
     joined = true;
     socket.emit("join room", { roomId, accessCode });
   };
-  const announceThenJoin = () => {
-    socket.once("signin status", doJoin);
-    setTimeout(doJoin, 1500);
-    socket.emit("join lobby", {
-      username: uname,
-      location: uloc,
-      avatar: storedAvatar(),
-    });
-  };
+  const announceThenJoin = () => announceIdentityThenJoin(uname, uloc, doJoin);
 
   if (socket.connected) announceThenJoin();
   else socket.once("connect", announceThenJoin);
@@ -4281,21 +4356,14 @@ socket.io.on("reconnect", () => {
     return;
   }
 
-  // Rejoin once the sign-in is acknowledged. The timeout is a fallback so a
-  // missed ack never strands the reconnect on the "updating" overlay.
+  // Rejoin once the sign-in is acknowledged (see announceIdentityThenJoin).
   let rejoined = false;
   const doJoin = () => {
     if (rejoined) return;
     rejoined = true;
     socket.emit("join room", { roomId: currentRoomId });
   };
-  socket.once("signin status", doJoin);
-  setTimeout(doJoin, 1500);
-  socket.emit("join lobby", {
-    username: uname,
-    location: uloc,
-    avatar: storedAvatar(),
-  });
+  announceIdentityThenJoin(uname, uloc, doJoin);
 });
 
 // Reads roomId from the URL and scrubs any legacy ?accessCode= parameter
