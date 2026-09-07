@@ -176,7 +176,13 @@ const closeModalBtn = document.querySelector(".close-modal-btn");
 let currentModalCallback = null;
 
 function showModal(title, message, options = {}) {
-  modalTitle.textContent = title;
+  modalTitle.textContent = title || "";
+  modalTitle.style.display = title ? "" : "none";
+  // #modalTitle normally supplies the top spacing; without it, the message
+  // would sit flush against the modal's own padding with no title's
+  // margin-bottom above it, so it needs its own top margin removed too -
+  // otherwise a paragraph's default top margin stacks on top of that padding.
+  modalMessage.style.marginTop = title ? "" : "0";
   modalMessage.textContent = message;
   modalInputContainer.style.display = "none";
   modalInput.value = "";
@@ -215,8 +221,8 @@ function showInfoModal(message, callback = null) {
   });
 }
 
-function showConfirmModal(message, callback) {
-  showModal("Confirmation", message, {
+function showConfirmModal(message, callback, title = "Confirmation") {
+  showModal(title, message, {
     confirmText: "Yes",
     cancelText: "No",
     callback,
@@ -4105,8 +4111,7 @@ socket.on("error", (error) => {
     if (error.error.details?.ghostTakeoverAvailable && lastIdentityAttempt) {
       const { uname, uloc, doJoin } = lastIdentityAttempt;
       showConfirmModal(
-        `${error.error.message} It looks like it's held by an inactive ` +
-          "session (maybe you, on another device). Take over that seat?",
+        `"${uname}" is signed in on another device that's gone idle. Take over?`,
         (confirmed) => {
           if (confirmed) {
             announceIdentityThenJoin(uname, uloc, doJoin, "takeover ghost");
@@ -4114,6 +4119,7 @@ socket.on("error", (error) => {
             repromptForName(error.error.message);
           }
         },
+        null,
       );
       return;
     }

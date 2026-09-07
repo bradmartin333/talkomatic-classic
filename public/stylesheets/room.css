@@ -730,6 +730,10 @@ html {
   line-height: 1.6;
   color: #f0f0f0;
   font-size: 16px;
+  /* Matches #modalTitle's own clearance for the X button - needed here too
+     when a modal has no title (see showModal), since then this is the
+     first thing in the top-right corner. */
+  margin-right: 30px;
 }
 
 #modalInputContainer {
