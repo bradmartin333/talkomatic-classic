@@ -4204,6 +4204,46 @@ async function changeName() {
   window.location.reload();
 }
 
+// Announces identity via "join lobby", then calls doJoin() - but only once,
+// and only if the announce actually succeeded. The 1500ms fallback exists
+// because a successful "join lobby" has no ack of its own beyond
+// "signin status" firing eventually; without the fallback a missed event
+// would strand the caller. CHAT-50: that fallback used to fire regardless,
+// so a rejected announce (USERNAME_TAKEN - e.g. another device's still-fresh
+// ghost holding the name) would join/reconnect anyway a moment after the
+// error modal appeared, silently landing as Anonymous underneath it. A
+// USERNAME_TAKEN error now cancels the fallback instead; the caller's own
+// "error" handler is what tells the user why (see repromptForName).
+function announceIdentityThenJoin(uname, uloc, doJoin) {
+  let settled = false;
+  const cleanup = () => {
+    socket.off("signin status", onSignInStatus);
+    socket.off("error", onError);
+    clearTimeout(fallback);
+  };
+  const onSignInStatus = () => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    doJoin();
+  };
+  const onError = (err) => {
+    if (settled || err?.error?.code !== "USERNAME_TAKEN") return;
+    settled = true;
+    cleanup();
+  };
+  const fallback = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    doJoin();
+  }, 1500);
+
+  socket.on("signin status", onSignInStatus);
+  socket.on("error", onError);
+  socket.emit("join lobby", { username: uname, location: uloc, avatar: storedAvatar() });
+}
+
 async function joinRoom(roomId, accessCode = null) {
   // Re-announce identity from this browser before joining. "join room" carries
   // no name and trusts the server session, but the session is in-memory: a
@@ -4234,15 +4274,7 @@ async function joinRoom(roomId, accessCode = null) {
     joined = true;
     socket.emit("join room", { roomId, accessCode });
   };
-  const announceThenJoin = () => {
-    socket.once("signin status", doJoin);
-    setTimeout(doJoin, 1500);
-    socket.emit("join lobby", {
-      username: uname,
-      location: uloc,
-      avatar: storedAvatar(),
-    });
-  };
+  const announceThenJoin = () => announceIdentityThenJoin(uname, uloc, doJoin);
 
   if (socket.connected) announceThenJoin();
   else socket.once("connect", announceThenJoin);
@@ -4284,21 +4316,14 @@ socket.io.on("reconnect", () => {
     return;
   }
 
-  // Rejoin once the sign-in is acknowledged. The timeout is a fallback so a
-  // missed ack never strands the reconnect on the "updating" overlay.
+  // Rejoin once the sign-in is acknowledged (see announceIdentityThenJoin).
   let rejoined = false;
   const doJoin = () => {
     if (rejoined) return;
     rejoined = true;
     socket.emit("join room", { roomId: currentRoomId });
   };
-  socket.once("signin status", doJoin);
-  setTimeout(doJoin, 1500);
-  socket.emit("join lobby", {
-    username: uname,
-    location: uloc,
-    avatar: storedAvatar(),
-  });
+  announceIdentityThenJoin(uname, uloc, doJoin);
 });
 
 // Reads roomId from the URL and scrubs any legacy ?accessCode= parameter
