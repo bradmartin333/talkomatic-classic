@@ -1457,6 +1457,42 @@ roomTypeRadios.forEach((radio) => {
   });
 });
 
+// CHAT-50: "join lobby" below assumes success optimistically (button flips to
+// "Change", room list shows, localStorage updates) before the server has
+// actually confirmed the name - if it comes back USERNAME_TAKEN instead (e.g.
+// another device's still-fresh ghost holds it), the "error" handler must undo
+// exactly that, or the page is left looking signed in under a name the server
+// just refused. This snapshot is what that revert restores; cleared once
+// "signin status" confirms either outcome.
+let pendingSignInRevert = null;
+let pendingSignInButtonReset = null;
+
+function revertOptimisticSignIn() {
+  const prev = pendingSignInRevert;
+  if (!prev) return;
+  pendingSignInRevert = null;
+  if (pendingSignInButtonReset) {
+    clearTimeout(pendingSignInButtonReset);
+    pendingSignInButtonReset = null;
+  }
+
+  currentUsername = prev.username;
+  currentLocation = prev.location;
+  isSignedIn = prev.isSignedIn;
+
+  if (prev.lsUsername === null) localStorage.removeItem("talkomaticUsername");
+  else localStorage.setItem("talkomaticUsername", prev.lsUsername);
+  if (prev.lsLocation === null) localStorage.removeItem("talkomaticLocation");
+  else localStorage.setItem("talkomaticLocation", prev.lsLocation);
+
+  // The typed name is deliberately left in the input so the user can just
+  // fix it and resubmit - only the "signed in" illusion elsewhere reverts.
+  signInButton.innerHTML = prev.signInButtonHTML;
+  createRoomForm.classList.toggle("hidden", prev.createRoomHidden);
+  signInMessage.style.display = prev.signInMessageDisplay;
+  roomListContainer.style.display = prev.roomListDisplay;
+}
+
 logForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const newUsername = usernameInput.value.trim().slice(0, MAX_USERNAME_LENGTH);
@@ -1464,6 +1500,18 @@ logForm.addEventListener("submit", async (e) => {
     locationInput.value.trim().slice(0, MAX_LOCATION_LENGTH) || "On The Web";
 
   if (newUsername) {
+    const prevSignInState = {
+      username: currentUsername,
+      location: currentLocation,
+      isSignedIn,
+      lsUsername: localStorage.getItem("talkomaticUsername"),
+      lsLocation: localStorage.getItem("talkomaticLocation"),
+      signInButtonHTML: signInButton.innerHTML,
+      createRoomHidden: createRoomForm.classList.contains("hidden"),
+      signInMessageDisplay: signInMessage.style.display,
+      roomListDisplay: roomListContainer.style.display,
+    };
+
     localStorage.setItem("talkomaticUsername", newUsername);
     localStorage.setItem("talkomaticLocation", newLocation);
 
@@ -1499,9 +1547,11 @@ logForm.addEventListener("submit", async (e) => {
     }
     updatePfpPreview();
 
+    if (pendingSignInButtonReset) clearTimeout(pendingSignInButtonReset);
     if (currentUsername) {
       signInButton.textContent = "Changed";
-      setTimeout(() => {
+      pendingSignInButtonReset = setTimeout(() => {
+        pendingSignInButtonReset = null;
         setSignedInButtonState();
       }, 2000);
     } else {
@@ -1513,6 +1563,7 @@ logForm.addEventListener("submit", async (e) => {
     currentLocation = newLocation;
     isSignedIn = true;
 
+    pendingSignInRevert = prevSignInState;
     emitJoinLobby(currentUsername, currentLocation);
 
     showRoomList();
@@ -1707,6 +1758,8 @@ socket.on("room joined", () => {
 // ============================================================================
 
 socket.on("signin status", (data) => {
+  // Authoritative either way - a pending optimistic snapshot is now moot.
+  pendingSignInRevert = null;
   currentUserIsDev = !!data.isDev;
   currentUserIsMod = !!data.isMod;
   currentUserModLevel = data.modLevel || 0;
@@ -1770,6 +1823,7 @@ socket.on("lobby update", (rooms) => {
 
 socket.on("error", (error) => {
   console.log(error);
+  if (error?.error?.code === "USERNAME_TAKEN") revertOptimisticSignIn();
   window.showErrorModal(
     (error.error.replaceDefaultText ? "" : `An error occurred: `) +
       error.error.message,
