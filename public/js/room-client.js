@@ -3111,7 +3111,14 @@ function createUserRow(user, container) {
     chatInput = div;
     div.addEventListener("paste", (e) => {
       e.preventDefault();
-      const text = e.clipboardData?.getData("text/plain") || "";
+      // CHAT-47: whatever a URL was copied from often tacks on a trailing
+      // (sometimes leading) newline - insert that verbatim and pre-wrap
+      // renders it as a stray blank line nobody typed. Only the outer blank
+      // lines are trimmed; newlines in the middle of a real multi-line paste
+      // are left alone.
+      const text = (e.clipboardData?.getData("text/plain") || "")
+        .replace(/\r\n/g, "\n")
+        .replace(/^\n+|\n+$/g, "");
       document.execCommand("insertText", false, text);
     });
     div.addEventListener("input", () => {
