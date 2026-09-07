@@ -3919,7 +3919,10 @@ socket.on("user joined", (data) => {
   }
   adjustLayout();
   updateRoomInfo(data);
-  bumpActivity(JOIN_ACTIVITY_UNITS);
+  // A rejoin (ghost reclaim, or a network blip that never got "user left"
+  // out) isn't new activity - only a genuine first-time join bumps the tab
+  // notification.
+  if (!data.isRejoin) bumpActivity(JOIN_ACTIVITY_UNITS);
 
   // A new join can cross the voting threshold
   updateVotesUI(currentVotes);

@@ -939,7 +939,7 @@ function emitRoomUserLeft(roomId, userId, leftUser) {
   }
 }
 
-function emitRoomUserJoined(room, joinedUser) {
+function emitRoomUserJoined(room, joinedUser, isRejoin) {
   if (!io()) return;
   for (const [, recipient] of io().sockets.sockets) {
     if (!recipient.connected || recipient.roomId !== room.id) continue;
@@ -961,6 +961,10 @@ function emitRoomUserJoined(room, joinedUser) {
       // sitting blank until their next keystroke. Empty for an ordinary
       // first-time join, since nothing is buffered yet.
       text: state.userMessageBuffers.get(joinedUser.id) || "",
+      // Lets the client skip its tab/favicon activity bump for a rejoin
+      // (ghost reclaim or a network blip that never got "user left" out) -
+      // that's the same person coming back, not new activity to flag.
+      isRejoin: !!isRejoin,
     });
   }
 }
@@ -2044,6 +2048,13 @@ function joinRoom(socket, roomId, userId) {
       }
     }
 
+    // A ghost reclaiming its seat, or a network blip that never got a "user
+    // left" broadcast (see the client's "user joined" handler), both leave a
+    // pre-existing entry for this userId here - that's a rejoin, not a first
+    // arrival, and downstream (emitRoomUserJoined) uses it to skip the tab
+    // notification a genuine new join gets.
+    const isRejoin = room.users.some((u) => u.id === userId);
+
     dequeueUser(room, userId);
     room.users = room.users.filter((u) => u.id !== userId);
     socket.join(roomId);
@@ -2109,10 +2120,10 @@ function joinRoom(socket, roomId, userId) {
               "Session save failed.",
             ),
           );
-        emitJoinSuccess(socket, room, userId, username, location);
+        emitJoinSuccess(socket, room, userId, username, location, isRejoin);
       });
     } else {
-      emitJoinSuccess(socket, room, userId, username, location);
+      emitJoinSuccess(socket, room, userId, username, location, isRejoin);
     }
     debouncedSaveRooms().catch(() => { });
   } catch (err) {
@@ -2127,7 +2138,7 @@ function joinRoom(socket, roomId, userId) {
   }
 }
 
-function emitJoinSuccess(socket, room, userId, username, location) {
+function emitJoinSuccess(socket, room, userId, username, location, isRejoin) {
   const joinedUser = room.users?.find((u) => u.id === userId) || {
     id: userId,
     username,
@@ -2171,7 +2182,7 @@ function emitJoinSuccess(socket, room, userId, username, location) {
 
   socket.leave("lobby");
 
-  emitRoomUserJoined(room, joinedUser);
+  emitRoomUserJoined(room, joinedUser, isRejoin);
   updateRoom(room.id);
   updateLobby();
 
