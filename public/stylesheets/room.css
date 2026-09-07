@@ -772,6 +772,9 @@ html {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+  /* Without this the button row sits flush against whatever's above it (an
+     error line has no bottom margin of its own), reading as cramped. */
+  margin-top: 20px;
 }
 
 .modal-btn {
