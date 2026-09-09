@@ -217,8 +217,51 @@ function printBotCtlResult(result) {
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
   if (!result.ok) {
-    console.error(result.error);
+    // result.error is just result.stderr.trim() when stderr was set (see
+    // bot-ctl.js) - only fall back to printing it when stderr was empty
+    // (script not found, failed to spawn, or exited with no output), so a
+    // failure isn't shown twice.
+    if (!result.stderr) console.error(result.error);
     process.exitCode = 1;
+  }
+}
+
+// Every current bot seat, across every room, regardless of which container
+// holds it - the operator API has no way to tell one bot container's seat
+// from another's, so this is the only granularity available.
+async function kickAllBots() {
+  const rooms = await operatorClient.listRooms();
+  const seats = [];
+  for (const room of rooms) {
+    for (const u of room.users || []) {
+      if (u.isBot) seats.push({ roomId: room.roomId, roomName: room.roomName, userId: u.id, username: u.username });
+    }
+  }
+  for (const seat of seats) {
+    await operatorClient.kickUser(seat.userId, seat.roomId);
+  }
+  return seats;
+}
+
+// Loading a persona (bot-ctl.sh load) hot-swaps the config and SIGHUPs the
+// container, but that changes what the bot SAYS, not the socket/seat it
+// already holds - a bot mid-room keeps its old username and identity until
+// something makes it reconnect. Kicking every bot seat right after a
+// successful load is that something: only one persona should ever be
+// speaking at a time, so every existing bot seat is stale the moment a new
+// one loads, and forcing the reconnect is what actually surfaces the swap.
+async function loadBotPersona(profile, container) {
+  const result = botCtl.load(profile, container);
+  printBotCtlResult(result);
+  if (!result.ok) return;
+  try {
+    const kicked = await kickAllBots();
+    if (kicked.length) {
+      console.log(`Kicked ${kicked.length} existing bot seat(s) so they reconnect under the new persona:`);
+      for (const seat of kicked) console.log(`  ${seat.username} from ${seat.roomName || seat.roomId}`);
+    }
+  } catch (e) {
+    console.error(`Persona loaded, but could not kick existing bot seats: ${String(e.message || e)}`);
   }
 }
 
@@ -232,7 +275,7 @@ async function doBots(rest) {
       process.exitCode = 1;
       return;
     }
-    return printBotCtlResult(botCtl.load(args[0], args[1]));
+    return loadBotPersona(args[0], args[1]);
   }
   console.error("Usage: node tools/ops.js bots list|status [container]|load <profile> [container]");
   process.exitCode = 1;
@@ -430,7 +473,7 @@ async function menuBots() {
       const profile = await ask("profile: ");
       if (!profile) continue;
       const container = (await ask("container (blank = default): ")) || undefined;
-      printBotCtlResult(botCtl.load(profile, container));
+      await loadBotPersona(profile, container);
     } else if (choice === "4" || /^b/i.test(choice)) {
       return;
     } else {
