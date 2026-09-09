@@ -111,12 +111,14 @@ function load(profile, container) {
     target = d.name;
   }
 
-  const running = docker(["inspect", "-f", "{{.State.Running}}", target]);
-  if (!running.ok) return { ok: false, error: `no such container: ${target}` };
-  if (running.stdout !== "true") return { ok: false, error: `container '${target}' is not running` };
-
-  const canonical = canonicalName(target);
-  if (!canonical) return { ok: false, error: `no such container: ${target}` };
+  // One inspect for both the running-state check and the canonical name -
+  // querying them separately would mean two subprocess round trips to
+  // resolve the same container.
+  const inspect = docker(["inspect", "-f", "{{.State.Running}}\t{{.Name}}", target]);
+  if (!inspect.ok) return { ok: false, error: `no such container: ${target}` };
+  const [running, name] = inspect.stdout.split("\t");
+  if (running !== "true") return { ok: false, error: `container '${target}' is not running` };
+  const canonical = name.replace(/^\//, "");
 
   const activeDir = path.join(botsDir(), "active");
   fs.mkdirSync(activeDir, { recursive: true });

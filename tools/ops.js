@@ -33,6 +33,11 @@ const botCtl = require("./ops/bot-ctl");
 // none was given.
 const DEFAULT_ROOM_ID = "000001";
 
+// The simulate session currently spawning/REPL'd, if any - lets SIGINT tear
+// it down gracefully (emit "leave room" for every simulated socket) instead
+// of just killing the process out from under it.
+let activeSimulateSession = null;
+
 // ── Shared readline + log() redraw helper ───────────────────────────────────
 // One Interface for the whole process, so async output (socket events, bot
 // personas) never clobbers whatever prompt happens to be showing. ask() is
@@ -237,9 +242,7 @@ async function kickAllBots() {
       if (u.isBot) seats.push({ roomId: room.roomId, roomName: room.roomName, userId: u.id, username: u.username });
     }
   }
-  for (const seat of seats) {
-    await operatorClient.kickUser(seat.userId, seat.roomId);
-  }
+  await Promise.all(seats.map((seat) => operatorClient.kickUser(seat.userId, seat.roomId)));
   return seats;
 }
 
@@ -335,8 +338,12 @@ async function startSimulate(opts) {
 
   const session = simulateEngine.createSession({ server, roomId, accessCode, asBot, chatIntervalMs, log });
   await session.spawnBatch(token, count, idleCount);
-  const outcome = await runSimulateRepl(session, token);
-  return outcome;
+  activeSimulateSession = session;
+  try {
+    return await runSimulateRepl(session, token);
+  } finally {
+    activeSimulateSession = null;
+  }
 }
 
 async function doSimulate(rest) {
@@ -586,6 +593,13 @@ async function main() {
 
 process.on("SIGINT", () => {
   console.log("\nExiting.");
+  if (activeSimulateSession) {
+    try {
+      activeSimulateSession.shutdown();
+    } catch (_) {
+      // Best-effort: still exit below either way.
+    }
+  }
   process.exit(0);
 });
 

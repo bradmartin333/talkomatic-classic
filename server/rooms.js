@@ -1592,6 +1592,15 @@ function trimRoomToCapacity(rid, room, capacity) {
     .slice()
     .sort((a, b) => (b.joinedAt || 0) - (a.joinedAt || 0));
 
+  const socketsByUserId = new Map();
+  for (const [, s] of io()?.sockets.sockets || []) {
+    if (s.roomId !== rid) continue;
+    const uid = s.handshake?.session?.userId;
+    if (!uid) continue;
+    if (!socketsByUserId.has(uid)) socketsByUserId.set(uid, []);
+    socketsByUserId.get(uid).push(s);
+  }
+
   const evicted = [];
   for (const user of byRecency) {
     if (excess <= 0) break;
@@ -1600,8 +1609,7 @@ function trimRoomToCapacity(rid, room, capacity) {
     excess--;
     evicted.push({ roomId: rid, roomName: room.name, userId: user.id, username: user.username, wasGhost });
 
-    for (const [, s] of io()?.sockets.sockets || []) {
-      if (s.handshake?.session?.userId !== user.id || s.roomId !== rid) continue;
+    for (const s of socketsByUserId.get(user.id) || []) {
       try {
         s.emit("kicked", { message: "Room capacity was reduced by an operator." });
         s.disconnect(true);
@@ -1646,11 +1654,18 @@ function adminSetCapacity(capacity, { roomId = null } = {}) {
     room.maxSize = n;
     const evicted = trimRoomToCapacity(roomId, room, n);
     updateRoom(roomId);
+    updateLobby();
     debouncedSaveRooms();
     return { ok: true, scope: "room", roomId, roomName: room.name, capacity: n, evicted };
   }
 
   CONFIG.LIMITS.MAX_ROOM_CAPACITY = n;
+  // Re-derive MAX_CONNECTIONS_PER_IP the same way state.js computes it at
+  // startup, so raising/lowering the global default can't drift the two
+  // apart again (CHAT-25). An explicit MAX_CONNECTIONS_PER_IP env override
+  // still wins, same as it does at startup.
+  CONFIG.LIMITS.MAX_CONNECTIONS_PER_IP =
+    Number(process.env.MAX_CONNECTIONS_PER_IP) || n * 2;
   const evicted = [];
   for (const [rid, room] of state.rooms) {
     if (room.maxSize != null) continue;
