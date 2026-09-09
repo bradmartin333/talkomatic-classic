@@ -28,6 +28,11 @@ const operatorClient = require("./ops/operator-client");
 const simulateEngine = require("./ops/simulate");
 const botCtl = require("./ops/bot-ctl");
 
+// The app's own permanent, always-present room (see MAIN_ROOM_ID in
+// server/rooms.js) - the sensible default whenever a room id is needed and
+// none was given.
+const DEFAULT_ROOM_ID = "000001";
+
 // ── Shared readline + log() redraw helper ───────────────────────────────────
 // One Interface for the whole process, so async output (socket events, bot
 // personas) never clobbers whatever prompt happens to be showing. ask() is
@@ -143,6 +148,12 @@ function printCapacityResult(result) {
     console.log(
       `Global default room capacity set to ${result.capacity}. This is in memory ` +
         "only and resets to the server's built-in default when it restarts.",
+    );
+  }
+  for (const seat of result.evicted || []) {
+    console.log(
+      `  kicked ${seat.wasGhost ? "ghost" : "user"} ${seat.username} ` +
+        `from ${seat.roomName || seat.roomId} (over new capacity, most recently joined first)`,
     );
   }
 }
@@ -286,15 +297,7 @@ async function startSimulate(opts) {
 }
 
 async function doSimulate(rest) {
-  const roomId = optFrom(rest, "room", null);
-  if (!roomId) {
-    console.error(
-      "Missing --room <roomId>. Example: node tools/ops.js simulate --room 000001\n" +
-        "Via npm, remember the -- separator: npm run simulate -- --room 000001",
-    );
-    process.exitCode = 1;
-    return;
-  }
+  const roomId = optFrom(rest, "room", DEFAULT_ROOM_ID);
   await startSimulate({
     server: optFrom(rest, "server", "http://localhost:3000"),
     roomId,
@@ -393,14 +396,13 @@ async function menuCapacity() {
 }
 
 async function menuSimulate() {
-  const roomId = await ask("room id: ");
-  if (!roomId) return;
-  const count = Number((await ask("how many users? [3]: ")) || 3);
-  const idleCount = Number((await ask("how many start idle? [0]: ")) || 0);
+  const roomId = (await ask(`room id [${DEFAULT_ROOM_ID}]: `)) || DEFAULT_ROOM_ID;
+  const count = Number(await ask("how many users? [3]: ")) || 3;
+  const idleCount = Number(await ask("how many start idle? [0]: ")) || 0;
   const asBot = /^y/i.test(await ask("connect as bots (exempt from idle-eviction)? [y/N]: "));
   try {
     await startSimulate({
-      server: "http://localhost:3000",
+      server: `http://localhost:${process.env.PORT || 3000}`,
       roomId,
       accessCode: null,
       asBot,
@@ -455,8 +457,8 @@ function printHelp() {
 
 async function interactiveMenu() {
   ensureRl();
-  printHelp();
   for (;;) {
+    printHelp();
     const choice = await ask("\n> ");
     if (choice === null || choice === "0" || /^q/i.test(choice)) {
       rl.close();

@@ -1574,16 +1574,58 @@ function adminKickUser(userId, { roomId = null } = {}) {
   return { userId, seats, disconnected };
 }
 
+// Kick the most-recently-joined occupants first (LIFO) until room is at or
+// under `capacity` - e.g. after an operator shrinks it below current
+// occupancy. Ghost seats count the same as live ones since both occupy a
+// slot; a ghost has no socket to disconnect, so that half of the teardown is
+// a no-op for it, same as it is for evictGhost's other callers.
+function trimRoomToCapacity(rid, room, capacity) {
+  let excess = getJoinableUserCount(room) - capacity;
+  if (excess <= 0) return [];
+
+  const byRecency = (room.users || [])
+    .filter((u) => !(u.isDev && u.isVanished))
+    .slice()
+    .sort((a, b) => (b.joinedAt || 0) - (a.joinedAt || 0));
+
+  const evicted = [];
+  for (const user of byRecency) {
+    if (excess <= 0) break;
+    const wasGhost = !!user.departed;
+    evictGhost(room, user);
+    excess--;
+    evicted.push({ roomId: rid, roomName: room.name, userId: user.id, username: user.username, wasGhost });
+
+    for (const [, s] of io()?.sockets.sockets || []) {
+      if (s.handshake?.session?.userId !== user.id || s.roomId !== rid) continue;
+      try {
+        s.emit("kicked", { message: "Room capacity was reduced by an operator." });
+        s.disconnect(true);
+      } catch (_) {
+        // Already gone.
+      }
+    }
+  }
+
+  sendDevRoomContext(rid);
+  updateRoomSoloTracking(rid);
+  if (room.users.length === 0) startRoomDeletionTimer(rid);
+  return evicted;
+}
+
 // Change the effective capacity used by the join check (isStaff && ... near
 // joinRoom) and shown in room snapshots (roomCapacity(room) above). Mirrors
 // adminKickUser: validate, mutate state, then reuse the same broadcast path a
-// normal capacity-affecting event would use.
+// normal capacity-affecting event would use. Shrinking below current
+// occupancy trims the excess via trimRoomToCapacity above - the join check
+// alone only ever stops NEW arrivals, it does nothing about people already
+// seated when the ceiling drops under them.
 //
 // Without roomId, this changes the GLOBAL default in memory only - it is
 // never written to disk, so a restart resets it to the
 // CONFIG.LIMITS.MAX_ROOM_CAPACITY literal in server/state.js. Only rooms with
-// no per-room override are re-broadcast, since an overridden room's effective
-// capacity does not change when the default does.
+// no per-room override are re-broadcast/trimmed, since an overridden room's
+// effective capacity does not change when the default does.
 //
 // With roomId, this sets that one room's persisted override (room.maxSize)
 // instead, which survives a restart via the normal saveRooms()/loadRooms()
@@ -1598,17 +1640,22 @@ function adminSetCapacity(capacity, { roomId = null } = {}) {
     const room = state.rooms.get(roomId);
     if (!room) return { ok: false, error: `no such room: ${roomId}` };
     room.maxSize = n;
+    const evicted = trimRoomToCapacity(roomId, room, n);
     updateRoom(roomId);
     debouncedSaveRooms();
-    return { ok: true, scope: "room", roomId, roomName: room.name, capacity: n };
+    return { ok: true, scope: "room", roomId, roomName: room.name, capacity: n, evicted };
   }
 
   CONFIG.LIMITS.MAX_ROOM_CAPACITY = n;
+  const evicted = [];
   for (const [rid, room] of state.rooms) {
-    if (room.maxSize == null) updateRoom(rid);
+    if (room.maxSize != null) continue;
+    evicted.push(...trimRoomToCapacity(rid, room, n));
+    updateRoom(rid);
   }
   updateLobby();
-  return { ok: true, scope: "global", capacity: n };
+  if (evicted.length) debouncedSaveRooms();
+  return { ok: true, scope: "global", capacity: n, evicted };
 }
 
 // ── Chat Processing ─────────────────────────────────────────────────────────
