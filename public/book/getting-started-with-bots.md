@@ -639,7 +639,7 @@ socket.on("bot muted", ({ muted }) => {
 | Username max length | 15 characters |
 | Location max length | 20 characters |
 | Idle threshold       | 5 minutes (humans only - bots are exempt) |
-| Room capacity        | 10 users      |
+| Room capacity        | 2-50 users      |
 
 ### Bot Token Limits
 
