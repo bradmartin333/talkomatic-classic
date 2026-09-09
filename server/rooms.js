@@ -914,8 +914,12 @@ function recomputeBotMuteState(room, targetUserId) {
   const votesFor = Object.values(room.muteVotes || {}).filter(
     (v) => v === targetUserId,
   ).length;
+  // Ghosts don't get a say: their own cast vote is already deleted the
+  // moment they disconnect (see the leaveRoom ghost branch), but they stay
+  // in room.users for their away grace period, so leaving them in this count
+  // would inflate the majority threshold against nobody actually present.
   const eligibleVoters = room.users.filter(
-    (u) => u.id !== targetUserId,
+    (u) => u.id !== targetUserId && !u.departed,
   ).length;
   const isMuted = votesFor > Math.floor(eligibleVoters / 2);
   const wasMuted = room.mutedBotIds.has(targetUserId);
