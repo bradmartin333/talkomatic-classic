@@ -1493,7 +1493,7 @@ function evictGhost(room, ghost) {
 }
 
 // ── Operator Tools ──────────────────────────────────────────────────────────
-// Backing for tools/admin.js. Seats are addressed by user id, never by name:
+// Backing for tools/ops.js. Seats are addressed by user id, never by name:
 // a ghost and the fresh session of the same person share a username but never
 // an id, and that collision is the usual reason an operator needs this at all.
 
@@ -1572,6 +1572,43 @@ function adminKickUser(userId, { roomId = null } = {}) {
     debouncedSaveRooms();
   }
   return { userId, seats, disconnected };
+}
+
+// Change the effective capacity used by the join check (isStaff && ... near
+// joinRoom) and shown in room snapshots (roomCapacity(room) above). Mirrors
+// adminKickUser: validate, mutate state, then reuse the same broadcast path a
+// normal capacity-affecting event would use.
+//
+// Without roomId, this changes the GLOBAL default in memory only - it is
+// never written to disk, so a restart resets it to the
+// CONFIG.LIMITS.MAX_ROOM_CAPACITY literal in server/state.js. Only rooms with
+// no per-room override are re-broadcast, since an overridden room's effective
+// capacity does not change when the default does.
+//
+// With roomId, this sets that one room's persisted override (room.maxSize)
+// instead, which survives a restart via the normal saveRooms()/loadRooms()
+// round-trip, same as any other room field.
+function adminSetCapacity(capacity, { roomId = null } = {}) {
+  const n = Number(capacity);
+  if (!Number.isInteger(n) || n < 2 || n > 50) {
+    return { ok: false, error: "capacity must be an integer between 2 and 50" };
+  }
+
+  if (roomId) {
+    const room = state.rooms.get(roomId);
+    if (!room) return { ok: false, error: `no such room: ${roomId}` };
+    room.maxSize = n;
+    updateRoom(roomId);
+    debouncedSaveRooms();
+    return { ok: true, scope: "room", roomId, roomName: room.name, capacity: n };
+  }
+
+  CONFIG.LIMITS.MAX_ROOM_CAPACITY = n;
+  for (const [rid, room] of state.rooms) {
+    if (room.maxSize == null) updateRoom(rid);
+  }
+  updateLobby();
+  return { ok: true, scope: "global", capacity: n };
 }
 
 // ── Chat Processing ─────────────────────────────────────────────────────────
@@ -4165,6 +4202,7 @@ module.exports = {
   joinRoom,
   adminListUsers,
   adminKickUser,
+  adminSetCapacity,
   roomCapacity,
   ensureMainRoom,
   MAIN_ROOM_ID,
