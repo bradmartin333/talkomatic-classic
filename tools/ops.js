@@ -243,7 +243,7 @@ async function kickAllBots() {
   return seats;
 }
 
-// Loading a persona (bot-ctl.sh load) hot-swaps the config and SIGHUPs the
+// Loading a persona (bots load) hot-swaps the config and SIGHUPs the
 // container, but that changes what the bot SAYS, not the socket/seat it
 // already holds - a bot mid-room keeps its old username and identity until
 // something makes it reconnect. Kicking every bot seat right after a
