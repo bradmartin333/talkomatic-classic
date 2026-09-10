@@ -31,8 +31,19 @@
 
 const readline = require("readline");
 const operatorClient = require("./ops/operator-client");
-const simulateEngine = require("./ops/simulate");
 const botCtl = require("./ops/bot-ctl");
+
+// Lazy: ./ops/simulate pulls in socket.io-client, the only npm dependency
+// anything in this file needs. Loading it only when a simulate command
+// actually runs means `list`/`kick`/`capacity`/`bots` work with a bare `node`
+// binary and no `npm install` - the bots subcommand already has to run
+// outside the container (see requireRepo in bot-ctl.js), often on a host
+// with neither installed.
+let _simulateEngine = null;
+function simulateEngine() {
+  if (!_simulateEngine) _simulateEngine = require("./ops/simulate");
+  return _simulateEngine;
+}
 
 // The app's own permanent, always-present room (see MAIN_ROOM_ID in
 // server/rooms.js) - the sensible default whenever a room id is needed and
@@ -334,7 +345,7 @@ async function runSimulateRepl(session, token) {
 
 async function startSimulate(opts) {
   const { server, roomId, accessCode, asBot, chatIntervalMs, count, idleCount, token: presetToken } = opts;
-  const token = asBot ? presetToken || (await simulateEngine.requestToken(server)) : null;
+  const token = asBot ? presetToken || (await simulateEngine().requestToken(server)) : null;
   console.log(`Server: ${server}`);
   console.log(`Room:   ${roomId}`);
   console.log(
@@ -342,7 +353,7 @@ async function startSimulate(opts) {
   );
   console.log(`Spawning ${count} users (${idleCount} idle)...\n`);
 
-  const session = simulateEngine.createSession({ server, roomId, accessCode, asBot, chatIntervalMs, log });
+  const session = simulateEngine().createSession({ server, roomId, accessCode, asBot, chatIntervalMs, log });
   await session.spawnBatch(token, count, idleCount);
   activeSimulateSession = session;
   try {
@@ -511,6 +522,34 @@ function printHelp() {
   );
 }
 
+function printExtendedHelp() {
+  console.log(
+    [
+      "",
+      "List/kick/capacity/simulate need to run inside the container (loopback",
+      "auth on /operator/*, see operatorOnly in server.js):",
+      "  docker compose exec talkomatic npm run ops",
+      "",
+      "Bot personas need the opposite: the homelab host's own Docker daemon and",
+      "its bind-mounted talkomatic-bot checkout (see requireRepo in",
+      "tools/ops/bot-ctl.js), neither visible from inside the container. Run",
+      "this same file directly on the host shell instead:",
+      "  node tools/ops.js",
+      "",
+      "If that host has no `node`, install one (any Node >=18 works):",
+      "  nvm (no root):",
+      "    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash",
+      "    source ~/.bashrc && nvm install 22",
+      "  Debian/Ubuntu:",
+      "    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -",
+      "    sudo apt-get install -y nodejs",
+      "list/kick/capacity/bots use only Node core modules, so `node tools/ops.js`",
+      "works there with no `npm install`. Only `simulate` needs node_modules",
+      "(socket.io-client), and it's loaded lazily so it won't get in the way.",
+    ].join("\n"),
+  );
+}
+
 async function interactiveMenu() {
   ensureRl();
   for (;;) {
@@ -526,7 +565,7 @@ async function interactiveMenu() {
       else if (choice === "3") await menuCapacity();
       else if (choice === "4") await menuSimulate();
       else if (choice === "5") await menuBots();
-      else if (choice === "6") printHelp();
+      else if (choice === "6") printExtendedHelp();
       else console.log(`Unknown option: ${choice}`);
     } catch (e) {
       console.error(String(e.message || e));
