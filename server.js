@@ -596,7 +596,7 @@ for (const page of PAGES) {
 app.get("/", (req, res) => res.redirect("/room.html"));
 
 // ── Operator Routes ─────────────────────────────────────────────────────────
-// Backing for tools/admin.js (see its header for usage). Reachable only from
+// Backing for tools/ops.js (see its header for usage). Reachable only from
 // inside the container, so shell access to the container IS the credential and
 // there is no key to store or rotate.
 //
@@ -628,6 +628,16 @@ app.post("/operator/kick", operatorOnly, (req, res) => {
     return res.status(400).json({ error: "userId is required" });
   const roomId = typeof req.body?.roomId === "string" ? req.body.roomId : null;
   res.json(rooms.adminKickUser(userId.trim(), { roomId }));
+});
+
+// Change room capacity, globally (in memory only - resets on restart) or for
+// one room (persisted, like any other room field). See adminSetCapacity for
+// the validation range and broadcast behavior.
+app.post("/operator/capacity", operatorOnly, (req, res) => {
+  const roomId = typeof req.body?.roomId === "string" ? req.body.roomId : null;
+  const result = rooms.adminSetCapacity(req.body?.capacity, { roomId });
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json(result);
 });
 
 // ── API Routes ──────────────────────────────────────────────────────────────

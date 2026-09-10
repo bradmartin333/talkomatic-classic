@@ -25,5 +25,3 @@ Talkomatic offers three different types of chat rooms.
 - Best for private conversations
 
 > **Tip:** Private rooms are ideal when you want complete control over who joins.
-
-Each type has a 5-user maximum capacity.
