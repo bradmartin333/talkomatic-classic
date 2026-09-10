@@ -3,16 +3,19 @@
  * Unified operator tool: list/kick seats, change room capacity, simulate
  * load, and hot-swap bot personas - one entry point, interactive or scripted.
  *
- * Run it inside the container, which is what authorizes the REST-backed
+ * Run it inside a container, which is what authorizes the REST-backed
  * commands (list/kick/capacity) - those endpoints only answer loopback
  * connections (see operatorOnly in server.js), so shell access to the
- * container is the credential and there is no key to pass.
+ * container is the credential and there is no key to pass:
+ *   docker compose exec talkomatic npm run ops
  *
- * The `bots` subcommand is the opposite: it needs the homelab host's own
- * Docker daemon and its bind-mounted talkomatic-bot checkout (see
- * tools/ops/bot-ctl.js), neither visible from inside the talkomatic
- * container. Run it as `node tools/ops.js` on the host shell, not via
- * `docker compose exec`.
+ * The `bots` subcommand needs different mounts instead - the talkomatic-bot
+ * bots directory and the Docker socket (see tools/ops/bot-ctl.js) - which
+ * the public-facing talkomatic container above deliberately doesn't carry.
+ * Run it from a container that has both mounted and shares talkomatic's
+ * network namespace (so list/kick/capacity still work there too, and the
+ * same `docker compose exec ... npm run ops` habit still applies) - how
+ * that container is wired up is deployment-specific.
  *
  *   node tools/ops.js                                    interactive menu
  *   node tools/ops.js list
@@ -31,8 +34,17 @@
 
 const readline = require("readline");
 const operatorClient = require("./ops/operator-client");
-const simulateEngine = require("./ops/simulate");
 const botCtl = require("./ops/bot-ctl");
+
+// Lazy: ./ops/simulate pulls in socket.io-client, the only npm dependency
+// anything in this file needs. Loading it only when a simulate command
+// actually runs keeps startup cheap for the other subcommands, though the
+// image already has node_modules baked in regardless.
+let _simulateEngine = null;
+function simulateEngine() {
+  if (!_simulateEngine) _simulateEngine = require("./ops/simulate");
+  return _simulateEngine;
+}
 
 // The app's own permanent, always-present room (see MAIN_ROOM_ID in
 // server/rooms.js) - the sensible default whenever a room id is needed and
@@ -260,7 +272,7 @@ async function kickAllBots() {
 // speaking at a time, so every existing bot seat is stale the moment a new
 // one loads, and forcing the reconnect is what actually surfaces the swap.
 async function loadBotPersona(profile, container) {
-  const result = botCtl.load(profile, container);
+  const result = await botCtl.load(profile, container);
   printBotCtlResult(result);
   if (!result.ok) return;
   try {
@@ -277,7 +289,7 @@ async function loadBotPersona(profile, container) {
 async function doBots(rest) {
   const [sub, ...args] = rest;
   if (sub === "list") return printBotCtlResult(botCtl.list());
-  if (sub === "status") return printBotCtlResult(botCtl.status(args[0]));
+  if (sub === "status") return printBotCtlResult(await botCtl.status(args[0]));
   if (sub === "load") {
     if (!args[0]) {
       console.error("bots load needs a profile name.");
@@ -334,7 +346,7 @@ async function runSimulateRepl(session, token) {
 
 async function startSimulate(opts) {
   const { server, roomId, accessCode, asBot, chatIntervalMs, count, idleCount, token: presetToken } = opts;
-  const token = asBot ? presetToken || (await simulateEngine.requestToken(server)) : null;
+  const token = asBot ? presetToken || (await simulateEngine().requestToken(server)) : null;
   console.log(`Server: ${server}`);
   console.log(`Room:   ${roomId}`);
   console.log(
@@ -342,7 +354,7 @@ async function startSimulate(opts) {
   );
   console.log(`Spawning ${count} users (${idleCount} idle)...\n`);
 
-  const session = simulateEngine.createSession({ server, roomId, accessCode, asBot, chatIntervalMs, log });
+  const session = simulateEngine().createSession({ server, roomId, accessCode, asBot, chatIntervalMs, log });
   await session.spawnBatch(token, count, idleCount);
   activeSimulateSession = session;
   try {
@@ -481,7 +493,7 @@ async function menuBots() {
       printBotCtlResult(botCtl.list());
     } else if (choice === "2") {
       const container = (await ask("container (blank = default): ")) || undefined;
-      printBotCtlResult(botCtl.status(container));
+      printBotCtlResult(await botCtl.status(container));
     } else if (choice === "3") {
       const profile = await ask("profile: ");
       if (!profile) continue;
@@ -511,6 +523,24 @@ function printHelp() {
   );
 }
 
+function printExtendedHelp() {
+  console.log(
+    [
+      "",
+      "List/kick/capacity/simulate need loopback auth on /operator/* (see",
+      "operatorOnly in server.js), so run them inside the app container:",
+      "  docker compose exec talkomatic npm run ops",
+      "",
+      "Bot personas need different mounts instead - the talkomatic-bot bots",
+      "directory and the Docker socket (see tools/ops/bot-ctl.js) - which the",
+      "public-facing talkomatic container deliberately doesn't carry. Run it",
+      "from a container that has both mounted and shares talkomatic's network",
+      "namespace (so list/kick/capacity still work there too); how that",
+      "container is set up is deployment-specific.",
+    ].join("\n"),
+  );
+}
+
 async function interactiveMenu() {
   ensureRl();
   for (;;) {
@@ -526,7 +556,7 @@ async function interactiveMenu() {
       else if (choice === "3") await menuCapacity();
       else if (choice === "4") await menuSimulate();
       else if (choice === "5") await menuBots();
-      else if (choice === "6") printHelp();
+      else if (choice === "6") printExtendedHelp();
       else console.log(`Unknown option: ${choice}`);
     } catch (e) {
       console.error(String(e.message || e));
@@ -547,6 +577,10 @@ function usage() {
       "  node tools/ops.js simulate [--server u] [--room r] [--count n] [--idle n]",
       "                             [--access-code c] [--chat-interval ms] [--as-bot] [--token t]",
       "  node tools/ops.js bots list|status [container]|load <profile> [container]",
+      "",
+      "  list/kick/capacity/simulate run via `docker compose exec talkomatic ...`;",
+      "  bots needs different mounts instead - see the module doc comment at the",
+      "  top of this file, or option 6 in the interactive menu.",
       "",
       "  The -- is required through npm whenever you pass a flag: without it npm",
       "  keeps the flag for itself and the tool never sees it, e.g.:",

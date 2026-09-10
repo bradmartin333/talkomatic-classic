@@ -9,15 +9,22 @@
 // container's active-config slot and sends it SIGHUP, which the bot process
 // picks up live - no restart, no rebuild.
 //
-// This only works run on the same host as the container: it reads/writes
-// files bind-mounted into the container (see BOT_CONFIG_PATH in
-// talkomatic-bot/docker-compose.yml) and talks to the local docker daemon.
+// Talks to the Docker Engine API directly over /var/run/docker.sock (see
+// dockerApi below) rather than shelling out to a `docker` binary, which the
+// image doesn't carry. That means this only works from a container that has
+// both that socket and the bots directory bind-mounted in - how such a
+// container is wired up (and whether it shares talkomatic's network
+// namespace, needed for list/kick/capacity to keep working there too) is
+// deployment-specific.
 // HOMELAB_DIR overrides the homelab checkout location (default /opt/homelab,
-// matching the deleted script's own default).
+// matching the deleted script's own default) - keep it in sync with whatever
+// path the bots directory is mounted at.
 
-const { spawnSync } = require("child_process");
+const http = require("http");
 const fs = require("fs");
 const path = require("path");
+
+const DOCKER_SOCKET = process.env.DOCKER_SOCKET || "/var/run/docker.sock";
 
 function botsDir() {
   return path.join(process.env.HOMELAB_DIR || "/opt/homelab", "talkomatic-bot", "bots");
@@ -26,34 +33,56 @@ function botsDir() {
 function requireRepo() {
   const dir = botsDir();
   if (!fs.existsSync(dir)) {
-    // Unlike list/kick/capacity, bot personas need the host's Docker daemon
-    // and its bind-mounted talkomatic-bot checkout - both invisible from
-    // inside the talkomatic container - so a container-exec run gets a
-    // pointer to the right shell instead of a bare ENOENT.
-    const hint = fs.existsSync("/.dockerenv")
-      ? " - this needs the homelab host shell (not `docker compose exec`); run `node tools/ops.js` there instead"
-      : " (set HOMELAB_DIR to override)";
-    return { ok: false, error: `${dir} not found${hint}` };
+    return {
+      ok: false,
+      error: `${dir} not found - mount it into this container, or set HOMELAB_DIR to override`,
+    };
   }
   return null;
 }
 
-function docker(args) {
-  const result = spawnSync("docker", args, { encoding: "utf8" });
-  if (result.error) return { ok: false, error: `Could not run docker: ${result.error.message}` };
-  return {
-    ok: result.status === 0,
-    stdout: (result.stdout || "").trim(),
-    stderr: (result.stderr || "").trim(),
-  };
+// Docker Engine API request. Unversioned path: the daemon serves whatever its
+// highest supported API version is when none is given, which is all three
+// calls below need. Some endpoints (kill) reply with an empty body on
+// success, so a JSON parse failure there isn't an error.
+function dockerApi(method, reqPath) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ socketPath: DOCKER_SOCKET, path: reqPath, method }, (res) => {
+      let data = "";
+      res.on("data", (c) => (data += c));
+      res.on("end", () => {
+        let body = null;
+        try {
+          body = data ? JSON.parse(data) : null;
+        } catch (_) {
+          // empty/non-JSON body on success (e.g. kill) - leave body null.
+        }
+        resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, body });
+      });
+    });
+    req.on("error", (e) =>
+      reject(
+        new Error(
+          `Could not reach the Docker daemon at ${DOCKER_SOCKET} (${e.code || e.message}). ` +
+            "Is docker.sock bind-mounted into this container?",
+        ),
+      ),
+    );
+    req.end();
+  });
 }
 
-// First running container matching "talkomatic-bot*", used whenever none was
-// given explicitly.
-function defaultContainer() {
-  const ps = docker(["ps", "--filter", "name=talkomatic-bot", "--format", "{{.Names}}"]);
-  if (!ps.ok) return { error: ps.stderr || ps.error || "docker ps failed" };
-  const names = ps.stdout.split("\n").filter(Boolean).sort();
+// First running container whose name contains "talkomatic-bot", used
+// whenever none was given explicitly. Substring match (not anchored) to match
+// the old `docker ps --filter name=talkomatic-bot` behavior.
+async function defaultContainer() {
+  const res = await dockerApi("GET", "/containers/json");
+  if (!res.ok) return { error: `docker ps failed (HTTP ${res.status})` };
+  const names = (res.body || [])
+    .flatMap((c) => c.Names || [])
+    .map((n) => n.replace(/^\//, ""))
+    .filter((n) => n.includes("talkomatic-bot"))
+    .sort();
   if (!names.length) return { error: "no running talkomatic-bot container found (pass one explicitly)" };
   return { name: names[0] };
 }
@@ -63,10 +92,10 @@ function defaultContainer() {
 // regardless of what identified the container on the command line - passing
 // a container ID would otherwise write an active file the running bot never
 // reads, silently reporting success while doing nothing.
-function canonicalName(container) {
-  const result = docker(["inspect", "-f", "{{.Name}}", container]);
-  if (!result.ok) return null;
-  return result.stdout.replace(/^\//, "");
+async function canonicalName(container) {
+  const res = await dockerApi("GET", `/containers/${encodeURIComponent(container)}/json`);
+  if (!res.ok || !res.body) return null;
+  return res.body.Name.replace(/^\//, "");
 }
 
 function list() {
@@ -82,17 +111,17 @@ function list() {
   return { ok: true, stdout: names.join("\n") + "\n" };
 }
 
-function status(container) {
+async function status(container) {
   const err = requireRepo();
   if (err) return err;
 
   let target = container;
   if (!target) {
-    const d = defaultContainer();
+    const d = await defaultContainer();
     if (d.error) return { ok: false, error: d.error };
     target = d.name;
   }
-  const canonical = canonicalName(target);
+  const canonical = await canonicalName(target);
   if (!canonical) return { ok: false, error: `no such container: ${target}` };
 
   const active = path.join(botsDir(), "active", `${canonical}.env`);
@@ -103,7 +132,7 @@ function status(container) {
   return { ok: true, stdout: firstLine.replace(/^# /, "") + "\n" };
 }
 
-function load(profile, container) {
+async function load(profile, container) {
   const err = requireRepo();
   if (err) return err;
   if (!profile) return { ok: false, error: "load needs a profile name." };
@@ -113,19 +142,18 @@ function load(profile, container) {
 
   let target = container;
   if (!target) {
-    const d = defaultContainer();
+    const d = await defaultContainer();
     if (d.error) return { ok: false, error: d.error };
     target = d.name;
   }
 
   // One inspect for both the running-state check and the canonical name -
-  // querying them separately would mean two subprocess round trips to
-  // resolve the same container.
-  const inspect = docker(["inspect", "-f", "{{.State.Running}}\t{{.Name}}", target]);
-  if (!inspect.ok) return { ok: false, error: `no such container: ${target}` };
-  const [running, name] = inspect.stdout.split("\t");
-  if (running !== "true") return { ok: false, error: `container '${target}' is not running` };
-  const canonical = name.replace(/^\//, "");
+  // querying them separately would mean two round trips to resolve the same
+  // container.
+  const inspect = await dockerApi("GET", `/containers/${encodeURIComponent(target)}/json`);
+  if (!inspect.ok || !inspect.body) return { ok: false, error: `no such container: ${target}` };
+  if (!inspect.body.State?.Running) return { ok: false, error: `container '${target}' is not running` };
+  const canonical = inspect.body.Name.replace(/^\//, "");
 
   const activeDir = path.join(botsDir(), "active");
   fs.mkdirSync(activeDir, { recursive: true });
@@ -136,8 +164,8 @@ function load(profile, container) {
   fs.writeFileSync(tmp, header + fs.readFileSync(src, "utf8"));
   fs.renameSync(tmp, active);
 
-  const kill = docker(["kill", "-s", "HUP", target]);
-  if (!kill.ok) return { ok: false, error: kill.stderr || `docker kill failed for ${target}` };
+  const kill = await dockerApi("POST", `/containers/${encodeURIComponent(target)}/kill?signal=HUP`);
+  if (!kill.ok) return { ok: false, error: `docker kill failed for ${target} (HTTP ${kill.status})` };
 
   return { ok: true, stdout: `loaded '${profile}' onto '${canonical}'\n` };
 }
