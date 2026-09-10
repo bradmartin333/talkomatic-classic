@@ -26,7 +26,14 @@ function botsDir() {
 function requireRepo() {
   const dir = botsDir();
   if (!fs.existsSync(dir)) {
-    return { ok: false, error: `${dir} not found (set HOMELAB_DIR to override)` };
+    // Unlike list/kick/capacity, bot personas need the host's Docker daemon
+    // and its bind-mounted talkomatic-bot checkout - both invisible from
+    // inside the talkomatic container - so a container-exec run gets a
+    // pointer to the right shell instead of a bare ENOENT.
+    const hint = fs.existsSync("/.dockerenv")
+      ? " - this needs the homelab host shell (not `docker compose exec`); run `node tools/ops.js` there instead"
+      : " (set HOMELAB_DIR to override)";
+    return { ok: false, error: `${dir} not found${hint}` };
   }
   return null;
 }

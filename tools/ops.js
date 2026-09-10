@@ -8,6 +8,12 @@
  * connections (see operatorOnly in server.js), so shell access to the
  * container is the credential and there is no key to pass.
  *
+ * The `bots` subcommand is the opposite: it needs the homelab host's own
+ * Docker daemon and its bind-mounted talkomatic-bot checkout (see
+ * tools/ops/bot-ctl.js), neither visible from inside the talkomatic
+ * container. Run it as `node tools/ops.js` on the host shell, not via
+ * `docker compose exec`.
+ *
  *   node tools/ops.js                                    interactive menu
  *   node tools/ops.js list
  *   node tools/ops.js kick <userId> [--room <roomId>]
