@@ -3,16 +3,19 @@
  * Unified operator tool: list/kick seats, change room capacity, simulate
  * load, and hot-swap bot personas - one entry point, interactive or scripted.
  *
- * Run it inside the container, which is what authorizes the REST-backed
+ * Run it inside a container, which is what authorizes the REST-backed
  * commands (list/kick/capacity) - those endpoints only answer loopback
  * connections (see operatorOnly in server.js), so shell access to the
- * container is the credential and there is no key to pass.
+ * container is the credential and there is no key to pass:
+ *   docker compose exec talkomatic npm run ops
  *
- * The `bots` subcommand is the opposite: it needs the homelab host's own
- * Docker daemon and its bind-mounted talkomatic-bot checkout (see
- * tools/ops/bot-ctl.js), neither visible from inside the talkomatic
- * container. Run it as `node tools/ops.js` on the host shell, not via
- * `docker compose exec`.
+ * The `bots` subcommand needs different mounts instead - the talkomatic-bot
+ * bots directory and the Docker socket (see tools/ops/bot-ctl.js) - which
+ * the public-facing talkomatic container above deliberately doesn't carry.
+ * Run it from a container that has both mounted and shares talkomatic's
+ * network namespace (so list/kick/capacity still work there too, and the
+ * same `docker compose exec ... npm run ops` habit still applies) - how
+ * that container is wired up is deployment-specific.
  *
  *   node tools/ops.js                                    interactive menu
  *   node tools/ops.js list
@@ -35,10 +38,8 @@ const botCtl = require("./ops/bot-ctl");
 
 // Lazy: ./ops/simulate pulls in socket.io-client, the only npm dependency
 // anything in this file needs. Loading it only when a simulate command
-// actually runs means `list`/`kick`/`capacity`/`bots` work with a bare `node`
-// binary and no `npm install` - the bots subcommand already has to run
-// outside the container (see requireRepo in bot-ctl.js), often on a host
-// with neither installed.
+// actually runs keeps startup cheap for the other subcommands, though the
+// image already has node_modules baked in regardless.
 let _simulateEngine = null;
 function simulateEngine() {
   if (!_simulateEngine) _simulateEngine = require("./ops/simulate");
@@ -271,7 +272,7 @@ async function kickAllBots() {
 // speaking at a time, so every existing bot seat is stale the moment a new
 // one loads, and forcing the reconnect is what actually surfaces the swap.
 async function loadBotPersona(profile, container) {
-  const result = botCtl.load(profile, container);
+  const result = await botCtl.load(profile, container);
   printBotCtlResult(result);
   if (!result.ok) return;
   try {
@@ -288,7 +289,7 @@ async function loadBotPersona(profile, container) {
 async function doBots(rest) {
   const [sub, ...args] = rest;
   if (sub === "list") return printBotCtlResult(botCtl.list());
-  if (sub === "status") return printBotCtlResult(botCtl.status(args[0]));
+  if (sub === "status") return printBotCtlResult(await botCtl.status(args[0]));
   if (sub === "load") {
     if (!args[0]) {
       console.error("bots load needs a profile name.");
@@ -492,7 +493,7 @@ async function menuBots() {
       printBotCtlResult(botCtl.list());
     } else if (choice === "2") {
       const container = (await ask("container (blank = default): ")) || undefined;
-      printBotCtlResult(botCtl.status(container));
+      printBotCtlResult(await botCtl.status(container));
     } else if (choice === "3") {
       const profile = await ask("profile: ");
       if (!profile) continue;
@@ -526,26 +527,16 @@ function printExtendedHelp() {
   console.log(
     [
       "",
-      "List/kick/capacity/simulate need to run inside the container (loopback",
-      "auth on /operator/*, see operatorOnly in server.js):",
+      "List/kick/capacity/simulate need loopback auth on /operator/* (see",
+      "operatorOnly in server.js), so run them inside the app container:",
       "  docker compose exec talkomatic npm run ops",
       "",
-      "Bot personas need the opposite: the homelab host's own Docker daemon and",
-      "its bind-mounted talkomatic-bot checkout (see requireRepo in",
-      "tools/ops/bot-ctl.js), neither visible from inside the container. Run",
-      "this same file directly on the host shell instead:",
-      "  node tools/ops.js",
-      "",
-      "If that host has no `node`, install one (any Node >=18 works):",
-      "  nvm (no root):",
-      "    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash",
-      "    source ~/.bashrc && nvm install 22",
-      "  Debian/Ubuntu:",
-      "    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -",
-      "    sudo apt-get install -y nodejs",
-      "list/kick/capacity/bots use only Node core modules, so `node tools/ops.js`",
-      "works there with no `npm install`. Only `simulate` needs node_modules",
-      "(socket.io-client), and it's loaded lazily so it won't get in the way.",
+      "Bot personas need different mounts instead - the talkomatic-bot bots",
+      "directory and the Docker socket (see tools/ops/bot-ctl.js) - which the",
+      "public-facing talkomatic container deliberately doesn't carry. Run it",
+      "from a container that has both mounted and shares talkomatic's network",
+      "namespace (so list/kick/capacity still work there too); how that",
+      "container is set up is deployment-specific.",
     ].join("\n"),
   );
 }
@@ -586,6 +577,10 @@ function usage() {
       "  node tools/ops.js simulate [--server u] [--room r] [--count n] [--idle n]",
       "                             [--access-code c] [--chat-interval ms] [--as-bot] [--token t]",
       "  node tools/ops.js bots list|status [container]|load <profile> [container]",
+      "",
+      "  list/kick/capacity/simulate run via `docker compose exec talkomatic ...`;",
+      "  bots needs different mounts instead - see the module doc comment at the",
+      "  top of this file, or option 6 in the interactive menu.",
       "",
       "  The -- is required through npm whenever you pass a flag: without it npm",
       "  keeps the flag for itself and the tool never sees it, e.g.:",
