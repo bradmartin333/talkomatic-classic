@@ -314,16 +314,27 @@ class StatsModal {
   }
 
   updateStatsDisplay(healthData, configData) {
-    const stats = healthData.roomStatistics || {};
+    // roomStatistics is on /api/v1/config, not /health - health carries its own
+    // condensed rooms/users shape instead. Every figure in this modal was being
+    // read off healthData, so the whole card sat at its fallbacks: 0 users,
+    // 0/15 rooms, 0% utilization, and no room-type breakdown at all. Config is
+    // fetched best-effort above, so fall back to health's condensed numbers
+    // rather than showing zeroes when only that request succeeded.
+    const stats = configData?.roomStatistics || {};
+    const totalRooms = stats.totalRooms ?? healthData.rooms?.active ?? 0;
+    const currentLimit = stats.currentLimit ?? healthData.rooms?.limit ?? 15;
+    const totalUsers = stats.totalUsers ?? healthData.users?.inRooms ?? 0;
 
-    this.elements.rooms.textContent = `${stats.totalRooms || 0}/${
-      stats.currentLimit || 15
-    }`;
-    this.elements.users.textContent = stats.totalUsers || 0;
-    this.elements.version.textContent = healthData.version || "Unknown";
+    this.elements.rooms.textContent = `${totalRooms}/${currentLimit}`;
+    this.elements.users.textContent = totalUsers;
+    // /health reports version as { server, api, protocol }, so the bare object
+    // used to stringify into "[object Object]" here.
+    this.elements.version.textContent = healthData.version?.server || "Unknown";
 
-    const uptime = healthData.uptime || 0;
-    this.elements.uptime.textContent = this.formatUptime(uptime);
+    // ...and the uptime field is uptimeSeconds, which formatUptime wants.
+    this.elements.uptime.textContent = this.formatUptime(
+      healthData.uptimeSeconds || 0,
+    );
 
     const utilization = stats.utilizationPercentage || 0;
     this.elements.utilizationPercentage.textContent = `${utilization}%`;
