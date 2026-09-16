@@ -314,27 +314,50 @@ class StatsModal {
   }
 
   updateStatsDisplay(healthData, configData) {
-    const stats = healthData.roomStatistics || {};
+    // roomStatistics is on /api/v1/config, not /health - health carries its own
+    // condensed rooms/users shape instead. Every figure in this modal was being
+    // read off healthData, so the whole card sat at its fallbacks: 0 users,
+    // 0/15 rooms, 0% utilization, and no room-type breakdown at all.
+    //
+    // The two requests can fail independently: /health is registered before
+    // antibotMiddleware and enhancedRateLimit, /config after both, so hammering
+    // this modal's refresh button past the rate limit gives several minutes of
+    // health-only responses. Room and user counts fall back to health's
+    // condensed numbers, but utilization and the room-type split have no
+    // equivalent there - health has no utilization field, and the capacity it
+    // would be computed from lives in the config payload we just lost. Those
+    // two blank out rather than render a confident 0% over real user counts.
+    const stats = configData?.roomStatistics || {};
+    const haveStats = Boolean(configData?.roomStatistics);
+    const totalRooms = stats.totalRooms ?? healthData.rooms?.active ?? 0;
+    const currentLimit = stats.currentLimit ?? healthData.rooms?.limit ?? 15;
+    const totalUsers = stats.totalUsers ?? healthData.users?.inRooms ?? 0;
 
-    this.elements.rooms.textContent = `${stats.totalRooms || 0}/${
-      stats.currentLimit || 15
-    }`;
-    this.elements.users.textContent = stats.totalUsers || 0;
-    this.elements.version.textContent = healthData.version || "Unknown";
+    this.elements.rooms.textContent = `${totalRooms}/${currentLimit}`;
+    this.elements.users.textContent = totalUsers;
+    // /health reports version as { server, api, protocol }, so the bare object
+    // used to stringify into "[object Object]" here.
+    this.elements.version.textContent = healthData.version?.server || "Unknown";
 
-    const uptime = healthData.uptime || 0;
-    this.elements.uptime.textContent = this.formatUptime(uptime);
+    // ...and the uptime field is uptimeSeconds, which formatUptime wants.
+    this.elements.uptime.textContent = this.formatUptime(
+      healthData.uptimeSeconds || 0,
+    );
 
-    const utilization = stats.utilizationPercentage || 0;
-    this.elements.utilizationPercentage.textContent = `${utilization}%`;
-    this.elements.utilizationFill.style.width = `${Math.min(utilization, 100)}%`;
+    const utilization = haveStats ? stats.utilizationPercentage || 0 : null;
+    this.elements.utilizationPercentage.textContent =
+      utilization === null ? "—" : `${utilization}%`;
+    this.elements.utilizationFill.style.width = `${Math.min(utilization ?? 0, 100)}%`;
 
-    if (stats.roomTypes) {
-      this.elements.public.textContent = stats.roomTypes.public || 0;
-      this.elements.semiPrivate.textContent =
-        stats.roomTypes["semi-private"] || 0;
-      this.elements.private.textContent = stats.roomTypes.private || 0;
-    }
+    const roomTypes = stats.roomTypes;
+    // Blank these too when config is missing - leaving the previous fetch's
+    // numbers sitting there would read as current, since the card stamps
+    // itself "Last updated <now>" either way.
+    this.elements.public.textContent = roomTypes ? roomTypes.public || 0 : "—";
+    this.elements.semiPrivate.textContent = roomTypes
+      ? roomTypes["semi-private"] || 0
+      : "—";
+    this.elements.private.textContent = roomTypes ? roomTypes.private || 0 : "—";
 
     this.lastUpdateTime = new Date();
     this.elements.lastUpdated.textContent = `Last updated ${this.formatTime(
