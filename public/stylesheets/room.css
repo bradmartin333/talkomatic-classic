@@ -150,9 +150,26 @@ html {
   align-items: baseline;
   gap: 6px;
 }
+/* A link to CHANGELOG.md on GitHub, but it has to keep reading as navbar chrome:
+   inherit the surrounding color instead of going link-blue, and carry no
+   underline at rest so it doesn't draw the eye away from the clock. The hover
+   state is opacity + underline only - nothing that changes its box, since a
+   width change here would shove the clock sideways (see the note above). */
 .date-time .app-version {
   font-size: 10px;
   opacity: 0.65;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.date-time .app-version:hover,
+.date-time .app-version:focus-visible {
+  opacity: 1;
+  text-decoration: underline;
+}
+.date-time .app-version:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
 }
 /* Fixed-width digits so the clock does not wobble within its own box either. */
 .date-time .time {

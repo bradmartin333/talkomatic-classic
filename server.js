@@ -576,8 +576,8 @@ function sendPage(req, res, file) {
         (m) =>
           m +
           `\n    <meta name="tk-build" content="${BUILD_ID}" />` +
-          // One source of truth for the version the client displays and stamps
-          // its stored preferences with - no copy baked into the client bundle.
+          // One source of truth for the version the client displays - no copy
+          // baked into the client bundle.
           `\n    <meta name="tk-version" content="${CONFIG.VERSIONS.APP}" />`,
       );
       res.type("html").send(out);
