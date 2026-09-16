@@ -12,3 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The app version in the room navbar is now a link — clicking it opens this
   changelog on GitHub in a new tab.
 - This changelog. Versions before 0.1.0 were tracked only in commit messages.
+
+### Fixed
+
+- The lobby's server stats modal showed no real data: room and user counts sat
+  at zero, uptime at `0m`, and the version read `[object Object]`. It was
+  reading every figure from the wrong endpoint.
