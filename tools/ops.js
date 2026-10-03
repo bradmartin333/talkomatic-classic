@@ -23,6 +23,7 @@
  *   node tools/ops.js capacity <n> [--room <roomId>]
  *   node tools/ops.js simulate [--server u] [--room r] [--count n] ...
  *   node tools/ops.js bots list|status [container]|load <profile> [container]
+ *   node tools/ops.js users | adduser <n> <pw> | passwd <n> <pw> | deluser <n>
  *
  * Via npm, put -- before any flag: npm consumes flags like --room itself and
  * forwards only their value, which the strict parsers below reject rather
@@ -193,6 +194,41 @@ async function doKick(userId, roomId) {
 
 async function doCapacity(capacity, roomId) {
   printCapacityResult(await operatorClient.setCapacity(capacity, roomId));
+}
+
+// ── accounts: who can get past the login page ─────────────────────────────
+
+async function doAccounts(cmd, rest) {
+  const [name, password, extra] = rest;
+  const needsPassword = cmd === "adduser" || cmd === "passwd";
+  if (!name || (needsPassword && !password) || (needsPassword ? extra : password)) {
+    console.error(
+      needsPassword
+        ? `Usage: node tools/ops.js ${cmd} <name> <password>`
+        : `Usage: node tools/ops.js ${cmd} <name>`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (cmd === "adduser") {
+    const r = await operatorClient.addAccount(name, password);
+    console.log(`Added ${r.name}.`);
+  } else if (cmd === "passwd") {
+    const r = await operatorClient.setAccountPassword(name, password);
+    console.log(`Changed ${r.name}'s password and signed them out everywhere.`);
+  } else {
+    const r = await operatorClient.deleteAccount(name);
+    console.log(`Deleted ${r.name} and signed them out everywhere.`);
+  }
+}
+
+async function doUsers() {
+  const users = await operatorClient.listAccounts();
+  if (!users.length) return console.log("No accounts. Add one: npm run ops -- adduser <name> <password>");
+  for (const u of users) {
+    const created = u.created ? new Date(u.created).toISOString().slice(0, 10) : "";
+    console.log(`  ${u.name.padEnd(30)} ${created}  ${u.sessions} signed-in browser(s)`);
+  }
 }
 
 // Strict on purpose. `npm run ops kick <id> --room <rid>` does NOT reach us
@@ -577,6 +613,10 @@ function usage() {
       "  node tools/ops.js simulate [--server u] [--room r] [--count n] [--idle n]",
       "                             [--access-code c] [--chat-interval ms] [--as-bot] [--token t]",
       "  node tools/ops.js bots list|status [container]|load <profile> [container]",
+      "  node tools/ops.js users                              login accounts",
+      "  node tools/ops.js adduser <name> <password>",
+      "  node tools/ops.js passwd  <name> <password>         also signs them out",
+      "  node tools/ops.js deluser <name>                     also signs them out",
       "",
       "  list/kick/capacity/simulate run via `docker compose exec talkomatic ...`;",
       "  bots needs different mounts instead - see the module doc comment at the",
@@ -626,6 +666,9 @@ async function main() {
 
   if (cmd === "simulate") return doSimulate(rest);
   if (cmd === "bots") return doBots(rest);
+  if (cmd === "users") return doUsers();
+  if (cmd === "adduser" || cmd === "passwd" || cmd === "deluser")
+    return doAccounts(cmd, rest);
 
   usage();
   process.exitCode = 1;

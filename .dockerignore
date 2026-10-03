@@ -21,6 +21,8 @@ rooms.json.tmp
 board.json
 board.json.tmp
 users.json
+accounts.json
+accounts.json.tmp
 mod-keys.json
 modlog.txt
 audit-log.jsonl
