@@ -45,6 +45,8 @@ const {
   validateObject,
 } = require("./server/security");
 const rooms = require("./server/rooms");
+const accounts = require("./server/accounts");
+const metrics = require("./server/metrics");
 const communityThemes = require("./server/themes");
 
 // ── Global Error Handlers ───────────────────────────────────────────────────
@@ -186,6 +188,45 @@ const helmetMiddleware = helmet({
   crossOriginOpenerPolicy: false,
 });
 
+// ── Operator: login accounts ────────────────────────────────────────────────
+// Registered ahead of xss() on purpose: it HTML-escapes every body string, so
+// a password set with a < or & in it would be stored as &lt; / &amp; and could
+// never be typed back in at the login form. operatorOnly is defined with the
+// other operator routes below.
+
+// Server-side so a signed-out user's open chat closes now, not on next reload.
+function signOutSockets(name) {
+  for (const s of io.sockets.sockets.values()) {
+    if (s.authUser !== name) continue;
+    s.emit("signed out");
+    s.disconnect(true);
+  }
+}
+
+app.get("/operator/accounts", operatorOnly, (req, res) => {
+  res.json({ users: accounts.listUsers() });
+});
+
+app.post("/operator/accounts", operatorOnly, (req, res) => {
+  const result = accounts.addUser(req.body?.name, req.body?.password);
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json(result);
+});
+
+app.post("/operator/accounts/password", operatorOnly, (req, res) => {
+  const result = accounts.setPassword(req.body?.name, req.body?.password);
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  signOutSockets(result.name);
+  res.json(result);
+});
+
+app.post("/operator/accounts/delete", operatorOnly, (req, res) => {
+  const result = accounts.deleteUser(req.body?.name);
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  signOutSockets(result.name);
+  res.json(result);
+});
+
 app.use(xss());
 app.use(hpp());
 
@@ -233,6 +274,138 @@ app.use((req, res, next) => {
   // external icon images, and iframes - exempt it from the strict CSP
   if (req.path === "/browser.html") return next();
   return helmetMiddleware(req, res, next);
+});
+
+// ── Login gate ──────────────────────────────────────────────────────────────
+// Every page, asset, API call, and socket needs a signed-in account (see
+// server/accounts.js; the operator hands them out with `npm run ops -- adduser`).
+// Sits ahead of the session store so an unauthenticated hit never mints one.
+
+const AUTH_COOKIE = "tk_auth";
+const LOGIN_PAGE = path.join(__dirname, "server", "login.html");
+// Health for the Docker HEALTHCHECK, metrics (behind their own token), and the
+// favicon the login page shows.
+const OPEN_PATHS = new Set([
+  "/login",
+  "/healthz",
+  "/metrics",
+  "/images/icons/favicon.png",
+]);
+
+// Only same-site paths, so ?next= can't bounce someone to another host
+// ("//evil.example" and "/\evil.example" are both read as hosts by browsers).
+function safeNext(next) {
+  return typeof next === "string" && /^\/(?![\/\\])/.test(next) ? next : "/";
+}
+
+function escapeHtml(s) {
+  return String(s).replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+  );
+}
+
+function renderLogin(res, { next = "/", error = "", status = 200 } = {}) {
+  fs.readFile(LOGIN_PAGE, "utf8")
+    .then((html) => {
+      res
+        .status(status)
+        .set(PAGE_HEADERS)
+        .type("html")
+        .send(
+          html
+            .replace("{{next}}", escapeHtml(safeNext(next)))
+            .replace("{{error}}", escapeHtml(error)),
+        );
+    })
+    .catch(() => res.status(500).end());
+}
+
+// Ten wrong guesses per address per 15 minutes; a successful sign-in (a
+// redirect) does not count against it.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => getClientIP(req),
+  handler: (req, res) =>
+    renderLogin(res, {
+      next: req.body?.next,
+      error: "Too many tries. Wait a few minutes.",
+      status: 429,
+    }),
+});
+
+app.get("/login", (req, res) => {
+  if (accounts.userForToken(req.cookies[AUTH_COOKIE]))
+    return res.redirect(safeNext(req.query.next));
+  renderLogin(res, { next: req.query.next });
+});
+
+// The form body is parsed here rather than globally, after xss() has already
+// run, so a password is compared exactly as it was typed.
+app.post(
+  "/login",
+  express.urlencoded({ extended: false, limit: "4kb" }),
+  loginLimiter,
+  (req, res) => {
+    const token = accounts.login(req.body?.name, req.body?.password);
+    metrics.countLogin(!!token);
+    if (!token)
+      return renderLogin(res, {
+        next: req.body?.next,
+        error: "Wrong name or password.",
+        status: 401,
+      });
+    res.cookie(AUTH_COOKIE, token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: req.secure,
+      maxAge: accounts.TOKEN_TTL_MS,
+    });
+    res.redirect(303, safeNext(req.body?.next));
+  },
+);
+
+// cookie-parser only runs for HTTP routes; the socket handshake needs its own.
+function readCookie(header, name) {
+  for (const part of String(header || "").split(";")) {
+    const i = part.indexOf("=");
+    if (i === -1 || part.slice(0, i).trim() !== name) continue;
+    try {
+      return decodeURIComponent(part.slice(i + 1).trim());
+    } catch (_) {
+      return null;
+    }
+  }
+  return null;
+}
+
+app.get("/logout", (req, res) => {
+  accounts.logout(req.cookies[AUTH_COOKIE]);
+  res.clearCookie(AUTH_COOKIE);
+  res.redirect("/login");
+});
+
+app.use((req, res, next) => {
+  // /operator/* has its own loopback-only gate (operatorOnly) and is how the
+  // ops tool, which has no account, does its job.
+  if (OPEN_PATHS.has(req.path) || req.path.startsWith("/operator/"))
+    return next();
+  const name = accounts.userForToken(req.cookies[AUTH_COOKIE]);
+  if (name) {
+    req.authUser = name;
+    return next();
+  }
+  if (
+    req.method === "GET" &&
+    !req.path.startsWith("/api/") &&
+    req.accepts(["html", "json"]) === "html"
+  )
+    return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
+  sendErrorResponse(res, ERROR_CODES.UNAUTHORIZED, "Sign in required.", 401);
 });
 
 // ── Session ─────────────────────────────────────────────────────────────────
@@ -338,6 +511,28 @@ const io = socketIo(server, {
 
 // Store io reference in shared state
 state.io = io;
+
+// The login gate for sockets (see "Login gate" above). The ops tool's simulate
+// command connects from inside the container with no account, so a loopback
+// peer is let through - the same raw-peer test operatorOnly relies on.
+io.use((socket, next) => {
+  if (isLoopbackPeer(socket.handshake.address)) return next();
+  const name = accounts.userForToken(
+    readCookie(socket.handshake.headers.cookie, AUTH_COOKIE),
+  );
+  if (!name) return next(new Error("Sign in required"));
+  socket.authUser = name;
+  next();
+});
+
+// Counted here, ahead of every handler and rate limiter, for /metrics.
+io.use((socket, next) => {
+  socket.use((packet, nextMw) => {
+    metrics.countSocketEvent(packet[0]);
+    nextMw();
+  });
+  next();
+});
 
 io.use(sharedsession(sessionMiddleware, { autoSave: true }));
 
@@ -605,12 +800,13 @@ app.get("/", (req, res) => res.redirect("/room.html"));
 // send, but the socket's peer is whoever actually opened the connection. A
 // reverse proxy fronting this app connects from its own address, never
 // loopback, so nothing arriving over the public listener can pass.
+function isLoopbackPeer(peer) {
+  return peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
+}
+
 function operatorOnly(req, res, next) {
-  const peer = req.socket.remoteAddress || "";
-  const isLoopback =
-    peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
   // 404 rather than 403: an outsider should not learn the route exists.
-  if (!isLoopback) return res.status(404).end();
+  if (!isLoopbackPeer(req.socket.remoteAddress || "")) return res.status(404).end();
   next();
 }
 
@@ -652,6 +848,29 @@ const API = `/api/${CONFIG.VERSIONS.API}`;
 // Liveness probe: is the process up at all. Used by the Docker HEALTHCHECK.
 app.get("/healthz", (req, res) => {
   res.json({ status: "ok", uptime: process.uptime() });
+});
+
+// Prometheus scrape target. Open to anyone holding TALKOMATIC_METRICS_TOKEN as
+// a bearer token (it sits outside the login gate - Prometheus has no account),
+// and a 404 when the token isn't set, so the route doesn't exist by default.
+const METRICS_TOKEN = process.env.TALKOMATIC_METRICS_TOKEN || "";
+app.get("/metrics", (req, res) => {
+  if (!METRICS_TOKEN) return res.status(404).end();
+  const sent = Buffer.from(String(req.get("authorization") || ""));
+  const want = Buffer.from(`Bearer ${METRICS_TOKEN}`);
+  if (sent.length !== want.length || !crypto.timingSafeEqual(sent, want))
+    return res.status(401).end();
+  const stats = rooms.getRoomStatistics();
+  const acct = accounts.stats();
+  res.type("text/plain; version=0.0.4").send(
+    metrics.render({
+      sockets: io.engine.clientsCount,
+      usersInRooms: stats.totalUsers,
+      rooms: stats.totalRooms,
+      accounts: acct.accounts,
+      signedInBrowsers: acct.signedIn,
+    }),
+  );
 });
 
 // Detailed health: stable shape for keyword monitors ("status":"ok" only when

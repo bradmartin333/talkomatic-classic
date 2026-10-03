@@ -23,6 +23,16 @@ window.socket = socket;
 // reconnect handler below rejoins the room) instead of bouncing to the lobby.
 if (window.TalkomaticConnection)
   window.TalkomaticConnection.attach(socket, { rejoinInPlace: true });
+// The login account was removed, its password changed, or its sign-in expired:
+// retrying would only fail again, so go back to the login page.
+function backToLogin() {
+  location.href =
+    "/login?next=" + encodeURIComponent(location.pathname + location.search);
+}
+socket.on("signed out", backToLogin);
+socket.on("connect_error", (err) => {
+  if (err && err.message === "Sign in required") backToLogin();
+});
 // The Desk (staff chat) rides the same socket; it stays dormant for non-staff.
 if (window.TalkoDesk) window.TalkoDesk.init(socket);
 

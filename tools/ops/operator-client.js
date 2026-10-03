@@ -77,4 +77,29 @@ async function setCapacity(capacity, roomId) {
   return request("POST", "/operator/capacity", { capacity, roomId });
 }
 
-module.exports = { listRooms, kickUser, setCapacity };
+async function listAccounts() {
+  const { users } = await request("GET", "/operator/accounts");
+  return users;
+}
+
+async function addAccount(name, password) {
+  return request("POST", "/operator/accounts", { name, password });
+}
+
+async function setAccountPassword(name, password) {
+  return request("POST", "/operator/accounts/password", { name, password });
+}
+
+async function deleteAccount(name) {
+  return request("POST", "/operator/accounts/delete", { name });
+}
+
+module.exports = {
+  listRooms,
+  kickUser,
+  setCapacity,
+  listAccounts,
+  addAccount,
+  setAccountPassword,
+  deleteAccount,
+};

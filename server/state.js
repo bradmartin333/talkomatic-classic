@@ -111,7 +111,7 @@ const CONFIG = {
     SERVER: "5.5.0",
     // User-facing app version, shown next to the navbar clock, where it links
     // out to CHANGELOG.md. Bump it and add a matching entry there together.
-    APP: "0.1.0",
+    APP: "0.2.0",
     // Socket message-shape version. Restarts are invisible while this matches
     // the client's baked-in copy; bump it ONLY when a client<->server payload
     // shape changes, which makes still-open clients reload once to pick up the

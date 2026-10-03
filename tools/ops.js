@@ -1,28 +1,20 @@
 #!/usr/bin/env node
 /**
  * Unified operator tool: list/kick seats, change room capacity, simulate
- * load, and hot-swap bot personas - one entry point, interactive or scripted.
+ * load, and manage login accounts - one entry point, interactive or scripted.
  *
- * Run it inside a container, which is what authorizes the REST-backed
- * commands (list/kick/capacity) - those endpoints only answer loopback
- * connections (see operatorOnly in server.js), so shell access to the
+ * Run it inside the app container. The REST-backed commands only answer
+ * loopback connections (see operatorOnly in server.js), and simulate's
+ * sockets get past the login gate the same way, so shell access to the
  * container is the credential and there is no key to pass:
- *   docker compose exec talkomatic npm run ops
- *
- * The `bots` subcommand needs different mounts instead - the talkomatic-bot
- * bots directory and the Docker socket (see tools/ops/bot-ctl.js) - which
- * the public-facing talkomatic container above deliberately doesn't carry.
- * Run it from a container that has both mounted and shares talkomatic's
- * network namespace (so list/kick/capacity still work there too, and the
- * same `docker compose exec ... npm run ops` habit still applies) - how
- * that container is wired up is deployment-specific.
+ *   docker exec -it talkomatic npm run ops
  *
  *   node tools/ops.js                                    interactive menu
  *   node tools/ops.js list
  *   node tools/ops.js kick <userId> [--room <roomId>]
  *   node tools/ops.js capacity <n> [--room <roomId>]
  *   node tools/ops.js simulate [--server u] [--room r] [--count n] ...
- *   node tools/ops.js bots list|status [container]|load <profile> [container]
+ *   node tools/ops.js users | adduser <n> <pw> | passwd <n> <pw> | deluser <n>
  *
  * Via npm, put -- before any flag: npm consumes flags like --room itself and
  * forwards only their value, which the strict parsers below reject rather
@@ -34,7 +26,6 @@
 
 const readline = require("readline");
 const operatorClient = require("./ops/operator-client");
-const botCtl = require("./ops/bot-ctl");
 
 // Lazy: ./ops/simulate pulls in socket.io-client, the only npm dependency
 // anything in this file needs. Loading it only when a simulate command
@@ -57,8 +48,8 @@ const DEFAULT_ROOM_ID = "000001";
 let activeSimulateSession = null;
 
 // ── Shared readline + log() redraw helper ───────────────────────────────────
-// One Interface for the whole process, so async output (socket events, bot
-// personas) never clobbers whatever prompt happens to be showing. ask() is
+// One Interface for the whole process, so async output (simulated users'
+// socket events) never clobbers whatever prompt happens to be showing. ask() is
 // the single way anything in this tool reads a line: it sets the visible
 // prompt via setPrompt (so log()'s redraw always matches it) then resolves on
 // the next line via a one-shot listener.
@@ -94,6 +85,30 @@ async function ask(promptText) {
   }
   const { value, done } = await lineIterator.next();
   return done ? null : value.trim();
+}
+
+// Like ask(), but the typed characters are not echoed - a password typed into
+// the menu stays off the screen and out of shell history, unlike one passed as
+// an adduser/passwd argument.
+let muted = false;
+async function askSecret(promptText) {
+  ensureRl();
+  if (!rl._muteHooked) {
+    const write = rl._writeToOutput.bind(rl);
+    rl._writeToOutput = (str) => {
+      if (!muted) write(str);
+    };
+    rl._muteHooked = true;
+  }
+  process.stdout.write(promptText);
+  muted = true;
+  try {
+    const { value, done } = await lineIterator.next();
+    return done ? null : value;
+  } finally {
+    muted = false;
+    process.stdout.write("\n");
+  }
 }
 
 function log(message) {
@@ -195,6 +210,41 @@ async function doCapacity(capacity, roomId) {
   printCapacityResult(await operatorClient.setCapacity(capacity, roomId));
 }
 
+// ── accounts: who can get past the login page ─────────────────────────────
+
+async function doAccounts(cmd, rest) {
+  const [name, password, extra] = rest;
+  const needsPassword = cmd === "adduser" || cmd === "passwd";
+  if (!name || (needsPassword && !password) || (needsPassword ? extra : password)) {
+    console.error(
+      needsPassword
+        ? `Usage: node tools/ops.js ${cmd} <name> <password>`
+        : `Usage: node tools/ops.js ${cmd} <name>`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (cmd === "adduser") {
+    const r = await operatorClient.addAccount(name, password);
+    console.log(`Added ${r.name}.`);
+  } else if (cmd === "passwd") {
+    const r = await operatorClient.setAccountPassword(name, password);
+    console.log(`Changed ${r.name}'s password and signed them out everywhere.`);
+  } else {
+    const r = await operatorClient.deleteAccount(name);
+    console.log(`Deleted ${r.name} and signed them out everywhere.`);
+  }
+}
+
+async function doUsers() {
+  const users = await operatorClient.listAccounts();
+  if (!users.length) return console.log("No accounts. Add one: npm run ops -- adduser <name> <password>");
+  for (const u of users) {
+    const created = u.created ? new Date(u.created).toISOString().slice(0, 10) : "";
+    console.log(`  ${u.name.padEnd(30)} ${created}  ${u.sessions} signed-in browser(s)`);
+  }
+}
+
 // Strict on purpose. `npm run ops kick <id> --room <rid>` does NOT reach us
 // intact: npm consumes --room as one of its own options and forwards only its
 // value, as a bare positional. Parsed loosely, that silently becomes an
@@ -232,74 +282,6 @@ function parseRoomScopedArgs(rest, { requirePositional, label }) {
     };
   }
   return { value: positional[0] || null, roomId };
-}
-
-// ── bots ─────────────────────────────────────────────────────────────────
-
-function printBotCtlResult(result) {
-  if (result.stdout) process.stdout.write(result.stdout);
-  if (result.stderr) process.stderr.write(result.stderr);
-  if (!result.ok) {
-    // result.error is just result.stderr.trim() when stderr was set (see
-    // bot-ctl.js) - only fall back to printing it when stderr was empty
-    // (script not found, failed to spawn, or exited with no output), so a
-    // failure isn't shown twice.
-    if (!result.stderr) console.error(result.error);
-    process.exitCode = 1;
-  }
-}
-
-// Every current bot seat, across every room, regardless of which container
-// holds it - the operator API has no way to tell one bot container's seat
-// from another's, so this is the only granularity available.
-async function kickAllBots() {
-  const rooms = await operatorClient.listRooms();
-  const seats = [];
-  for (const room of rooms) {
-    for (const u of room.users || []) {
-      if (u.isBot) seats.push({ roomId: room.roomId, roomName: room.roomName, userId: u.id, username: u.username });
-    }
-  }
-  await Promise.all(seats.map((seat) => operatorClient.kickUser(seat.userId, seat.roomId)));
-  return seats;
-}
-
-// Loading a persona (bots load) hot-swaps the config and SIGHUPs the
-// container, but that changes what the bot SAYS, not the socket/seat it
-// already holds - a bot mid-room keeps its old username and identity until
-// something makes it reconnect. Kicking every bot seat right after a
-// successful load is that something: only one persona should ever be
-// speaking at a time, so every existing bot seat is stale the moment a new
-// one loads, and forcing the reconnect is what actually surfaces the swap.
-async function loadBotPersona(profile, container) {
-  const result = await botCtl.load(profile, container);
-  printBotCtlResult(result);
-  if (!result.ok) return;
-  try {
-    const kicked = await kickAllBots();
-    if (kicked.length) {
-      console.log(`Kicked ${kicked.length} existing bot seat(s) so they reconnect under the new persona:`);
-      for (const seat of kicked) console.log(`  ${seat.username} from ${seat.roomName || seat.roomId}`);
-    }
-  } catch (e) {
-    console.error(`Persona loaded, but could not kick existing bot seats: ${String(e.message || e)}`);
-  }
-}
-
-async function doBots(rest) {
-  const [sub, ...args] = rest;
-  if (sub === "list") return printBotCtlResult(botCtl.list());
-  if (sub === "status") return printBotCtlResult(await botCtl.status(args[0]));
-  if (sub === "load") {
-    if (!args[0]) {
-      console.error("bots load needs a profile name.");
-      process.exitCode = 1;
-      return;
-    }
-    return loadBotPersona(args[0], args[1]);
-  }
-  console.error("Usage: node tools/ops.js bots list|status [container]|load <profile> [container]");
-  process.exitCode = 1;
 }
 
 // ── simulate ─────────────────────────────────────────────────────────────
@@ -484,25 +466,47 @@ async function menuSimulate() {
   }
 }
 
-async function menuBots() {
+async function menuAccounts() {
   for (;;) {
-    console.log("\nBot personas\n  1) list\n  2) status\n  3) load\n  4) back\n");
+    console.log(
+      "\nLogin accounts\n  1) list\n  2) add\n  3) change password\n  4) delete\n  5) back\n",
+    );
     const choice = await ask("select> ");
-    if (choice === null) return;
-    if (choice === "1") {
-      printBotCtlResult(botCtl.list());
-    } else if (choice === "2") {
-      const container = (await ask("container (blank = default): ")) || undefined;
-      printBotCtlResult(await botCtl.status(container));
-    } else if (choice === "3") {
-      const profile = await ask("profile: ");
-      if (!profile) continue;
-      const container = (await ask("container (blank = default): ")) || undefined;
-      await loadBotPersona(profile, container);
-    } else if (choice === "4" || /^b/i.test(choice)) {
-      return;
-    } else {
-      console.log(`Unknown option: ${choice}`);
+    if (choice === null || choice === "5" || /^b/i.test(choice)) return;
+    try {
+      if (choice === "1") {
+        await doUsers();
+      } else if (choice === "2" || choice === "3") {
+        const name = await ask("name: ");
+        if (!name) continue;
+        const password = await askSecret("password: ");
+        if (!password) continue;
+        if ((await askSecret("again: ")) !== password) {
+          console.log("Passwords don't match. Nothing changed.");
+          continue;
+        }
+        await doAccounts(choice === "2" ? "adduser" : "passwd", [name, password]);
+      } else if (choice === "4") {
+        const users = await operatorClient.listAccounts();
+        if (!users.length) {
+          console.log("No accounts.");
+          continue;
+        }
+        users.forEach((u, i) => console.log(`  ${String(i + 1).padStart(2)}) ${u.name}`));
+        const pick = await ask("\ndelete which #? (blank to cancel): ");
+        const user = pick ? users[Number(pick) - 1] : null;
+        if (!user) {
+          if (pick) console.log("No such selection.");
+          continue;
+        }
+        const confirm = await ask(`delete ${user.name} and sign them out? [y/N]: `);
+        if (/^y/i.test(confirm)) await doAccounts("deluser", [user.name]);
+        else console.log("Cancelled.");
+      } else {
+        console.log(`Unknown option: ${choice}`);
+      }
+    } catch (e) {
+      console.error(String(e.message || e));
     }
   }
 }
@@ -516,7 +520,7 @@ function printHelp() {
       "  2) Kick a user",
       "  3) Set room capacity",
       "  4) Simulate users",
-      "  5) Bot personas",
+      "  5) Login accounts",
       "  6) Help",
       "  0) Quit",
     ].join("\n"),
@@ -527,16 +531,13 @@ function printExtendedHelp() {
   console.log(
     [
       "",
-      "List/kick/capacity/simulate need loopback auth on /operator/* (see",
-      "operatorOnly in server.js), so run them inside the app container:",
-      "  docker compose exec talkomatic npm run ops",
+      "Everything here only answers loopback (see operatorOnly in server.js),",
+      "so run it inside the app container:",
+      "  docker exec -it talkomatic npm run ops",
       "",
-      "Bot personas need different mounts instead - the talkomatic-bot bots",
-      "directory and the Docker socket (see tools/ops/bot-ctl.js) - which the",
-      "public-facing talkomatic container deliberately doesn't carry. Run it",
-      "from a container that has both mounted and shares talkomatic's network",
-      "namespace (so list/kick/capacity still work there too); how that",
-      "container is set up is deployment-specific.",
+      "Login accounts are who can get past the sign-in page. Changing a",
+      "password or deleting an account signs that person out everywhere,",
+      "open chats included.",
     ].join("\n"),
   );
 }
@@ -555,7 +556,7 @@ async function interactiveMenu() {
       else if (choice === "2") await menuKick();
       else if (choice === "3") await menuCapacity();
       else if (choice === "4") await menuSimulate();
-      else if (choice === "5") await menuBots();
+      else if (choice === "5") await menuAccounts();
       else if (choice === "6") printExtendedHelp();
       else console.log(`Unknown option: ${choice}`);
     } catch (e) {
@@ -576,11 +577,14 @@ function usage() {
       "  node tools/ops.js capacity <n> [--room <roomId>]",
       "  node tools/ops.js simulate [--server u] [--room r] [--count n] [--idle n]",
       "                             [--access-code c] [--chat-interval ms] [--as-bot] [--token t]",
-      "  node tools/ops.js bots list|status [container]|load <profile> [container]",
+      "  node tools/ops.js users                              login accounts",
+      "  node tools/ops.js adduser <name> <password>",
+      "  node tools/ops.js passwd  <name> <password>         also signs them out",
+      "  node tools/ops.js deluser <name>                     also signs them out",
       "",
-      "  list/kick/capacity/simulate run via `docker compose exec talkomatic ...`;",
-      "  bots needs different mounts instead - see the module doc comment at the",
-      "  top of this file, or option 6 in the interactive menu.",
+      "  Run inside the app container: docker exec talkomatic npm run ops -- ...",
+      "  adduser/passwd put the password in shell history; the menu's",
+      "  Login accounts option asks for it without echoing instead.",
       "",
       "  The -- is required through npm whenever you pass a flag: without it npm",
       "  keeps the flag for itself and the tool never sees it, e.g.:",
@@ -625,7 +629,9 @@ async function main() {
   }
 
   if (cmd === "simulate") return doSimulate(rest);
-  if (cmd === "bots") return doBots(rest);
+  if (cmd === "users") return doUsers();
+  if (cmd === "adduser" || cmd === "passwd" || cmd === "deluser")
+    return doAccounts(cmd, rest);
 
   usage();
   process.exitCode = 1;
