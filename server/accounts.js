@@ -160,9 +160,19 @@ function listUsers() {
     }));
 }
 
+// Headline numbers for /metrics.
+function stats() {
+  const now = Date.now();
+  let signedIn = 0;
+  for (const rec of Object.values(store.tokens))
+    if (rec.expires >= now && store.users[rec.name]) signedIn++;
+  return { accounts: Object.keys(store.users).length, signedIn };
+}
+
 load();
 
 module.exports = {
+  stats,
   TOKEN_TTL_MS,
   login,
   logout,

@@ -9,6 +9,7 @@ services:
       - TALKOMATIC_API_KEY=${TALKOMATIC_API_KEY:-}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
       - DEV_KEY_HASH=${DEV_KEY_HASH:-}
+      - TALKOMATIC_METRICS_TOKEN=${TALKOMATIC_METRICS_TOKEN:-}
     volumes:
       - talkomatic-data:/app/data
     restart: unless-stopped

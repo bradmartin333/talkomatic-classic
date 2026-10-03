@@ -46,6 +46,7 @@ const {
 } = require("./server/security");
 const rooms = require("./server/rooms");
 const accounts = require("./server/accounts");
+const metrics = require("./server/metrics");
 const communityThemes = require("./server/themes");
 
 // ── Global Error Handlers ───────────────────────────────────────────────────
@@ -282,8 +283,14 @@ app.use((req, res, next) => {
 
 const AUTH_COOKIE = "tk_auth";
 const LOGIN_PAGE = path.join(__dirname, "server", "login.html");
-// Health for the Docker HEALTHCHECK, plus the favicon the login page shows.
-const OPEN_PATHS = new Set(["/login", "/healthz", "/images/icons/favicon.png"]);
+// Health for the Docker HEALTHCHECK, metrics (behind their own token), and the
+// favicon the login page shows.
+const OPEN_PATHS = new Set([
+  "/login",
+  "/healthz",
+  "/metrics",
+  "/images/icons/favicon.png",
+]);
 
 // Only same-site paths, so ?next= can't bounce someone to another host
 // ("//evil.example" and "/\evil.example" are both read as hosts by browsers).
@@ -345,6 +352,7 @@ app.post(
   loginLimiter,
   (req, res) => {
     const token = accounts.login(req.body?.name, req.body?.password);
+    metrics.countLogin(!!token);
     if (!token)
       return renderLogin(res, {
         next: req.body?.next,
@@ -514,6 +522,15 @@ io.use((socket, next) => {
   );
   if (!name) return next(new Error("Sign in required"));
   socket.authUser = name;
+  next();
+});
+
+// Counted here, ahead of every handler and rate limiter, for /metrics.
+io.use((socket, next) => {
+  socket.use((packet, nextMw) => {
+    metrics.countSocketEvent(packet[0]);
+    nextMw();
+  });
   next();
 });
 
@@ -831,6 +848,29 @@ const API = `/api/${CONFIG.VERSIONS.API}`;
 // Liveness probe: is the process up at all. Used by the Docker HEALTHCHECK.
 app.get("/healthz", (req, res) => {
   res.json({ status: "ok", uptime: process.uptime() });
+});
+
+// Prometheus scrape target. Open to anyone holding TALKOMATIC_METRICS_TOKEN as
+// a bearer token (it sits outside the login gate - Prometheus has no account),
+// and a 404 when the token isn't set, so the route doesn't exist by default.
+const METRICS_TOKEN = process.env.TALKOMATIC_METRICS_TOKEN || "";
+app.get("/metrics", (req, res) => {
+  if (!METRICS_TOKEN) return res.status(404).end();
+  const sent = Buffer.from(String(req.get("authorization") || ""));
+  const want = Buffer.from(`Bearer ${METRICS_TOKEN}`);
+  if (sent.length !== want.length || !crypto.timingSafeEqual(sent, want))
+    return res.status(401).end();
+  const stats = rooms.getRoomStatistics();
+  const acct = accounts.stats();
+  res.type("text/plain; version=0.0.4").send(
+    metrics.render({
+      sockets: io.engine.clientsCount,
+      usersInRooms: stats.totalUsers,
+      rooms: stats.totalRooms,
+      accounts: acct.accounts,
+      signedInBrowsers: acct.signedIn,
+    }),
+  );
 });
 
 // Detailed health: stable shape for keyword monitors ("status":"ok" only when
