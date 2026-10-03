@@ -284,12 +284,15 @@ app.use((req, res, next) => {
 const AUTH_COOKIE = "tk_auth";
 const LOGIN_PAGE = path.join(__dirname, "server", "login.html");
 // Health for the Docker HEALTHCHECK, metrics (behind their own token), and the
-// favicon the login page shows.
+// favicon and fonts the login page shows (Inter's latin subset is one variable
+// file covering every weight; dited is the chat font its inputs use).
 const OPEN_PATHS = new Set([
   "/login",
   "/healthz",
   "/metrics",
   "/images/icons/favicon.png",
+  "/fonts/inter/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7.woff2",
+  "/fonts/dited.otf",
 ]);
 
 // Only same-site paths, so ?next= can't bounce someone to another host
