@@ -285,7 +285,7 @@ const AUTH_COOKIE = "tk_auth";
 const LOGIN_PAGE = path.join(__dirname, "server", "login.html");
 // Health for the Docker HEALTHCHECK, metrics (behind their own token), and the
 // favicon and fonts the login page shows (Inter's latin subset is one variable
-// file covering every weight; dited is the chat font its inputs use).
+// file covering every weight; dited is the chat font stack's fallback).
 const OPEN_PATHS = new Set([
   "/login",
   "/healthz",
