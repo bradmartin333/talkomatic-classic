@@ -2750,6 +2750,7 @@ const DEVICE_META = {
   projector: { icon: "fas fa-film", title: "Projector" },
   refrigerator: { icon: "fas fa-snowflake", title: "Refrigerator" },
   bot: { icon: "fas fa-robot", title: "Bot" },
+  server: { icon: "fas fa-server", title: "Homelab server" },
   unknown: { icon: "fas fa-circle-question", title: "Unknown" },
 };
 function deviceIconFor(type) {

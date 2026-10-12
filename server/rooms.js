@@ -52,6 +52,11 @@ function deviceTypeFromUA(ua) {
 
   // highest priority
 
+  // The homelab's status user (talkomatic-status/bot.js in bradmartin333/homelab)
+  // sends this UA so its seat gets a server icon rather than the generic robot.
+  if (/homelab-status/i.test(s))
+    return "server";
+
   if (/(talkobot|robot|crawler|spider|slurp|curl|wget|node)/i.test(s))
     return "bot";
 
