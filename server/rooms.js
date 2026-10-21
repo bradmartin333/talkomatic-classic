@@ -1143,20 +1143,33 @@ function sendDevLobbyContext() {
 
 async function saveRooms(force = false) {
   const now = Date.now();
-  // The throttle keeps routine saves cheap; a forced save (clean shutdown)
-  // bypasses it so the very latest room state survives the restart.
+  // The throttle keeps routine saves cheap; a forced save (clean shutdown, or
+  // debouncedSaveRooms() once it has waited the throttle out) bypasses it so
+  // the very latest room state survives the restart.
   if (!force && now - state.lastSaveTimestamp < state.SAVE_INTERVAL_MIN) return;
   try {
     const data = Array.from(state.rooms.entries()).map(([id, room]) => {
+      // A vanished dev's seat is left out entirely: isVanished is ephemeral
+      // and never persisted, so loadRooms() would otherwise bring them back
+      // as a ghost everyone can see.
+      const users = (room.users || []).filter((u) => !(u.isDev && u.isVanished));
+      // Each seat's last-typed text, so loadRooms() can put it back on the
+      // ghost panels. Lives in userMessageBuffers, not on the user objects.
+      const messages = {};
+      for (const u of users) {
+        const text = state.userMessageBuffers.get(u.id);
+        if (text) messages[u.id] = text;
+      }
       return [
         id,
         {
           ...room,
-          users: (room.users || []).map((u) => {
+          users: users.map((u) => {
             const clean = { ...u };
             delete clean.isVanished; // ephemeral, never persisted
             return clean;
           }),
+          messages,
           bannedUserIds: Array.from(room.bannedUserIds || []),
           mutedBotIds: Array.from(room.mutedBotIds || []),
         },
@@ -1176,18 +1189,24 @@ async function saveRooms(force = false) {
   }
 }
 
+// Also waits out whatever is left of the SAVE_INTERVAL_MIN throttle, then
+// forces the save. Firing inside the throttle used to make saveRooms() return
+// without writing, and nothing rescheduled it - so a change made just after a
+// save (typing right after joining, say) wasn't on disk until the next one.
 const debouncedSaveRooms = async () => {
   if (state.saveRoomsPending) return;
   state.saveRoomsPending = true;
+  const throttleLeft =
+    state.SAVE_INTERVAL_MIN - (Date.now() - state.lastSaveTimestamp);
   setTimeout(async () => {
     try {
-      await saveRooms();
+      await saveRooms(true);
     } catch (e) {
       console.error("Debounced save error:", e);
     } finally {
       state.saveRoomsPending = false;
     }
-  }, 10000);
+  }, Math.max(10000, throttleLeft));
 };
 
 async function loadRooms() {
@@ -1204,15 +1223,37 @@ async function loadRooms() {
       return;
     }
 
+    const restoredAt = Date.now();
     state.rooms = new Map(
       arr.map((item) => {
         if (item[1]) {
-          if (item[1].users && item[1].users.length > 0) {
+          // Every seat comes back as a ghost, exactly as if its owner had
+          // just disconnected: the panel and last-typed text stay put, and the
+          // owner's next join reclaims it by userId (stable across restarts,
+          // thanks to the session store). Seats that were live at shutdown get
+          // their away grace period from now; ghosts keep their departedAt.
+          const users = Array.isArray(item[1].users) ? item[1].users : [];
+          for (const u of users) {
+            if (u.departed) continue;
+            u.departed = true;
+            u.departedAt = restoredAt;
+          }
+          if (users.length > 0) {
             console.log(
-              `Clearing ${item[1].users.length} stale user(s) from room: ${item[1].name || item[0]}`,
+              `Restoring ${users.length} seat(s) as ghosts in room: ${item[1].name || item[0]}`,
             );
           }
-          item[1].users = [];
+          item[1].users = users;
+          const messages = item[1].messages || {};
+          for (const u of users) {
+            if (typeof messages[u.id] === "string")
+              state.userMessageBuffers.set(u.id, messages[u.id]);
+          }
+          delete item[1].messages;
+          // Votes belong to people present, and nobody is yet - leaveRoom()
+          // drops a departing user's votes the same way.
+          item[1].votes = {};
+          item[1].muteVotes = {};
           item[1].queue = [];
           item[1].lastActiveTime = Date.now();
           item[1].bannedUserIds = new Set(
@@ -1237,7 +1278,7 @@ async function loadRooms() {
         return item;
       }),
     );
-    console.log(`Loaded ${state.rooms.size} rooms from disk (users cleared).`);
+    console.log(`Loaded ${state.rooms.size} rooms from disk.`);
     for (const [roomId] of state.rooms) {
       startRoomDeletionTimer(roomId);
     }
@@ -1807,6 +1848,8 @@ async function processPendingChatUpdates(userId, socket) {
 
     msg = sanitizeMessage(msg);
     state.userMessageBuffers.set(userId, msg);
+    // Typed text is persisted with the room, so it survives a restart too.
+    debouncedSaveRooms().catch(() => { });
 
     // Typing "@someone" in a room nudges that person. Their name may contain
     // spaces, so this matches against the actual roster rather than trying to
