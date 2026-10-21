@@ -295,6 +295,12 @@ const OPEN_PATHS = new Set([
   "/fonts/dited.otf",
 ]);
 
+// /operator/* has its own loopback-only gate (operatorOnly) and is how the
+// ops tool, which has no account, does its job.
+function isOpenPath(req) {
+  return OPEN_PATHS.has(req.path) || req.path.startsWith("/operator/");
+}
+
 // Only same-site paths, so ?next= can't bounce someone to another host
 // ("//evil.example" and "/\evil.example" are both read as hosts by browsers).
 function safeNext(next) {
@@ -393,10 +399,7 @@ app.get("/logout", (req, res) => {
 });
 
 app.use((req, res, next) => {
-  // /operator/* has its own loopback-only gate (operatorOnly) and is how the
-  // ops tool, which has no account, does its job.
-  if (OPEN_PATHS.has(req.path) || req.path.startsWith("/operator/"))
-    return next();
+  if (isOpenPath(req)) return next();
   const name = accounts.userForToken(req.cookies[AUTH_COOKIE]);
   if (name) {
     req.authUser = name;
@@ -465,8 +468,15 @@ const sessionMiddleware = session({
   },
 });
 
-// Optionally auto-assigns IP-based guest identities to browser requests
+// Optionally auto-assigns IP-based guest identities to browser requests.
+//
+// Open paths skip the session store entirely: nothing behind them reads a
+// session, and their regular callers (the Docker healthcheck, Prometheus, the
+// ops tool) never send the cookie back - with saveUninitialized, every one of
+// those hits wrote a fresh, empty session file that sat on disk for the full
+// 14-day TTL (~240 an hour from the healthcheck and the scrape alone).
 function enhancedSessionMiddleware(req, res, next) {
+  if (isOpenPath(req)) return next();
   sessionMiddleware(req, res, () => {
     if (CONFIG.FEATURES.ENABLE_IP_BASED_USERS && !req.session.username) {
       const browser = detectBrowserRequest(req);
