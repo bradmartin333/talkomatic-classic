@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A server restart no longer empties the room. Everyone's seat comes back as an
+  away ghost with their last-typed text, and each person takes their own seat
+  back when they reconnect. Typed text is saved to disk as it changes, so a
+  crash or power cut loses at most about 30 seconds of it.
+
 ## [0.2.0] - 2026-10-02
 
 ### Added
