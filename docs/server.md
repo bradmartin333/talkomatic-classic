@@ -406,8 +406,8 @@ Bots are never kicked for idling, and never yield their seat to the queue - no h
 
 ### Requirements
 
-- Node.js 14.x or higher
-- NPM 6.x or higher
+- Node.js 24.x or higher
+- npm 11.x or higher
 
 ### Installation
 

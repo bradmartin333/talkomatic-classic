@@ -10,7 +10,7 @@
     "admin": "node tools/ops.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=24"
   },
   "keywords": [],
   "author": "",
