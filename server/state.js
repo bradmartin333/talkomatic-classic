@@ -5,6 +5,7 @@ const path = require("path");
 const fs = require("fs").promises;
 const crypto = require("crypto");
 const util = require("util");
+const proxyaddr = require("proxy-addr");
 const WordFilter = require("../public/js/word-filter.js");
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -249,14 +250,19 @@ const state = {
 
 // ── Utility Functions ───────────────────────────────────────────────────────
 
+// Number of reverse-proxy hops in front of us (traefik = 1). Set TRUST_PROXY=0
+// when exposed directly. Shared with Express's "trust proxy" so req.ip agrees.
+const TRUST_PROXY_HOPS = Number(process.env.TRUST_PROXY ?? 1);
+const trustProxyHop = (_addr, i) => i < TRUST_PROXY_HOPS;
+
+// Client IP for bans, rate limits, antibot and connection caps. Walks
+// X-Forwarded-For from the right and stops after TRUST_PROXY_HOPS proxies, so
+// only addresses our own proxy appended are believed. Never read CF-Connecting-IP,
+// X-Real-IP or the leftmost X-Forwarded-For: the client sets those freely.
+// `req` needs `headers` and `socket.remoteAddress` (an Express request or a
+// Socket.IO handshake shim).
 function getClientIP(req) {
-  const cfIP = req.headers["cf-connecting-ip"];
-  if (cfIP) return cfIP;
-  const realIP = req.headers["x-real-ip"];
-  if (realIP) return realIP;
-  const forwarded = req.headers["x-forwarded-for"];
-  if (forwarded) return forwarded.split(",")[0].trim();
-  return req.socket?.remoteAddress || req.connection?.remoteAddress;
+  return proxyaddr(req, trustProxyHop);
 }
 
 function createErrorResponse(
@@ -407,6 +413,7 @@ module.exports = {
   ERROR_CODES,
   wordFilter,
   state,
+  TRUST_PROXY_HOPS,
   getClientIP,
   createErrorResponse,
   sendErrorResponse,

@@ -22,6 +22,7 @@ const {
   CONFIG,
   ERROR_CODES,
   state,
+  TRUST_PROXY_HOPS,
   getClientIP,
   createErrorResponse,
   sendErrorResponse,
@@ -104,7 +105,7 @@ const server = http.createServer(app);
 // Behind a reverse proxy (Dokploy/Traefik, Cloudflare, nginx) the proxy is the
 // TCP peer; trust one hop so req.ip, req.protocol, and secure cookies reflect
 // the real client. Set TRUST_PROXY=0 to disable when exposed directly.
-app.set("trust proxy", Number(process.env.TRUST_PROXY ?? 1));
+app.set("trust proxy", TRUST_PROXY_HOPS);
 
 // Extra origins (e.g. the domain you deploy on) via ALLOWED_ORIGINS, comma-separated.
 const allowedOrigins = [
