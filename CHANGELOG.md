@@ -5,13 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.3] - 2026-11-04
 
 ### Added
 
 - On phones and tablets, your own chat box has a big Clear button, so text
   from voice dictation can be wiped in one tap instead of backspaced away. The
   keyboard stays open.
+- For contributors: a `run-talkomatic-classic` Claude Code skill
+  (`.claude/skills/`) that starts an isolated dev server and drives the room
+  in headless Chrome as several phone or desktop users, to check chat changes
+  end to end.
+
+### Security
+
+- Dropped the last copy of `cookie` 0.1.3, which has a known vulnerability. It
+  came in through `express-socket.io-session`, an unmaintained package that
+  shared the login session with the live chat connection. That job is now a
+  small module in the server with the same behavior, so the package and its
+  outdated dependencies are gone.
 
 ## [0.2.2] - 2026-10-27
 
