@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shared the login session with the live chat connection. That job is now a
   small module in the server with the same behavior, so the package and its
   outdated dependencies are gone.
+- Bans, rate limits, connection caps and bot checks can no longer be dodged
+  with a fake IP header. The server used to take the visitor's IP from
+  headers the visitor controls (`CF-Connecting-IP`, `X-Real-IP`, or the first
+  `X-Forwarded-For` entry). It now trusts only the number of proxy hops set by
+  `TRUST_PROXY` (1, for Traefik) and reads the address the proxy itself
+  recorded. `CF-Connecting-IP` is no longer used.
+- Updated Express to 4.22.3, which pulls in fixed versions of `proxy-addr`
+  (IP spoofing through IPv4-mapped IPv6 addresses), `body-parser` (a
+  denial-of-service from trailing bytes after a compressed body) and `qs`.
 
 ## [0.2.2] - 2026-10-27
 
