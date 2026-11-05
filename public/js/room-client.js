@@ -1394,7 +1394,7 @@ function renderChatInputFromRaw() {
 // HOMELAB-92: one-tap "Clear" for your own box. Phone dictation leaves a lot
 // of text that is tedious to backspace away. CSS only shows it on touch
 // devices. Tapping keeps focus in the box so the keyboard and dictation stay
-// up, and a toast offers an undo in case it was a mis-tap.
+// up. (An undo toast is written but commented out in clearOwnMessage.)
 function buildClearButton(div) {
   const btn = document.createElement("button");
   btn.type = "button";
@@ -1427,29 +1427,31 @@ function clearOwnMessage(div) {
   hideAutocomplete();
   div.focus();
 
-  if (!previous || !window.StaffUI) return;
-  const t = window.StaffUI.toast("Text cleared.", { type: "info", timeout: 6000 });
-  if (!t) return;
-  const undo = document.createElement("button");
-  undo.type = "button";
-  undo.className = "chat-clear-undo";
-  undo.textContent = "Undo";
-  // Same as the Clear pill: keep the keyboard up.
-  undo.addEventListener("pointerdown", (e) => e.preventDefault());
-  undo.addEventListener("mousedown", (e) => e.preventDefault());
-  undo.addEventListener("click", () => {
-    t.classList.add("tk-tout");
-    setTimeout(() => t.remove(), 160);
-    // Only restore into an empty box, so a late tap never overwrites
-    // whatever was typed after the clear.
-    if (!chatInput || !chatInput.isContentEditable) return;
-    if (selfRawText || getPlainText(chatInput) !== "") return;
-    selfRawText = previous;
-    selfIsFiltered = wordFilterEnabled && clientWordFilter?.ready;
-    renderChatInputFromRaw();
-    updateSentMessage();
-  });
-  (t.querySelector(".tk-ttext") || t).appendChild(undo);
+  // Undo toast: switched off for now. Uncomment to bring it back (its
+  // .chat-clear-undo styles are still in room.css).
+  // if (!previous || !window.StaffUI) return;
+  // const t = window.StaffUI.toast("Text cleared.", { type: "info", timeout: 6000 });
+  // if (!t) return;
+  // const undo = document.createElement("button");
+  // undo.type = "button";
+  // undo.className = "chat-clear-undo";
+  // undo.textContent = "Undo";
+  // // Same as the Clear pill: keep the keyboard up.
+  // undo.addEventListener("pointerdown", (e) => e.preventDefault());
+  // undo.addEventListener("mousedown", (e) => e.preventDefault());
+  // undo.addEventListener("click", () => {
+  //   t.classList.add("tk-tout");
+  //   setTimeout(() => t.remove(), 160);
+  //   // Only restore into an empty box, so a late tap never overwrites
+  //   // whatever was typed after the clear.
+  //   if (!chatInput || !chatInput.isContentEditable) return;
+  //   if (selfRawText || getPlainText(chatInput) !== "") return;
+  //   selfRawText = previous;
+  //   selfIsFiltered = wordFilterEnabled && clientWordFilter?.ready;
+  //   renderChatInputFromRaw();
+  //   updateSentMessage();
+  // });
+  // (t.querySelector(".tk-ttext") || t).appendChild(undo);
 }
 
 // Reads the input, reconstructs the raw text if the display is filtered,

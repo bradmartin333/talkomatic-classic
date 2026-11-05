@@ -11,8 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - On phones and tablets, your own chat box has a big Clear button, so text
   from voice dictation can be wiped in one tap instead of backspaced away. The
-  keyboard stays open, and a toast offers Undo for a few seconds in case of a
-  mis-tap.
+  keyboard stays open.
 
 ## [0.2.2] - 2026-10-27
 
