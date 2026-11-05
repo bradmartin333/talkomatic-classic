@@ -10,7 +10,6 @@ const fs = require("fs").promises;
 const session = require("express-session");
 const FileStore = require("session-file-store")(session);
 const cookieParser = require("cookie-parser");
-const sharedsession = require("express-socket.io-session");
 const helmet = require("helmet");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
@@ -31,6 +30,7 @@ const {
   wordFilter,
 } = require("./server/state");
 const { DATA_DIR } = require("./server/datadir");
+const { socketSession } = require("./server/socket-session");
 const {
   antibotMiddleware,
   enhancedRateLimit,
@@ -548,7 +548,7 @@ io.use((socket, next) => {
   next();
 });
 
-io.use(sharedsession(sessionMiddleware, { autoSave: true }));
+io.use(socketSession(sessionMiddleware));
 
 // Socket.IO security middleware: IP blocks, dev key validation, antibot,
 // connection caps, and per-socket event rate limiting
